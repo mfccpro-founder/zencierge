@@ -3,11 +3,14 @@ import OpenAI from "openai";
 
 export const runtime = "nodejs";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY || "",
-});
-
 const VOICES = new Set(["alloy", "ash", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer"]);
+
+/** Lazily create the client only when a key exists so the route never throws at module scope (build/collect time). */
+function createOpenAI(): OpenAI | null {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return null;
+  return new OpenAI({ apiKey });
+}
 
 export async function GET() {
   return NextResponse.json({ status: "ok", message: "TTS API online" });
@@ -15,7 +18,8 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    if (!process.env.OPENAI_API_KEY) {
+    const openai = createOpenAI();
+    if (!openai) {
       return NextResponse.json(
         { error: "Falta OPENAI_API_KEY en variables de entorno" },
         { status: 500 },

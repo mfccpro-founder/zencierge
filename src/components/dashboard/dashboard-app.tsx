@@ -84,10 +84,10 @@ export function DashboardApp({ initialTab = "overview" }: { initialTab?: NavId }
 
   useEffect(() => {
     const supabase = createAuthBrowserClient();
-    void supabase.auth.getUser().then(({ data }) => {
+    void supabase.auth.getUser().then(({ data }: { data: { user: { user_metadata?: Record<string, unknown> } | null } }) => {
       setHostName(hostDisplayName(data.user));
     });
-    const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: subscription } = supabase.auth.onAuthStateChange((_event: string, session: { user: { user_metadata?: Record<string, unknown> } | null } | null) => {
       setHostName(hostDisplayName(session?.user ?? null));
     });
     return () => subscription.subscription.unsubscribe();

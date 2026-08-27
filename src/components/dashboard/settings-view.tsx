@@ -93,7 +93,7 @@ export function SettingsView() {
     setQuietFrom(window.localStorage.getItem(STORAGE.quietFrom) ?? "22:00");
     setQuietTo(window.localStorage.getItem(STORAGE.quietTo) ?? "08:00");
     const supabase = createAuthBrowserClient();
-    void supabase.auth.getUser().then(({ data }) => {
+    void supabase.auth.getUser().then(({ data }: { data: { user: { user_metadata?: Record<string, unknown> } | null } }) => {
       setCurrentPlan(planFromMetadata(data.user?.user_metadata));
     });
   }, []);
@@ -530,7 +530,7 @@ function AccountProfileCard() {
 
   useEffect(() => {
     const supabase = createAuthBrowserClient();
-    void supabase.auth.getUser().then(({ data }) => {
+    void supabase.auth.getUser().then(({ data }: { data: { user: { user_metadata?: Record<string, unknown> } | null } }) => {
       setFullName(hostFullName(data.user));
     });
   }, []);
