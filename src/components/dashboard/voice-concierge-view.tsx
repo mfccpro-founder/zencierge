@@ -10,7 +10,9 @@ import { answerGuestQuestion } from "@/lib/receptionist-replies";
 import {
   VOICE_PROFILES,
   getVoiceProfile,
+  keepAudioChannelAlive,
   primeVoices,
+  resumePersistentAudio,
   speakHumanVoice,
   stopHumanVoice,
   unlockSpeechAudio,
@@ -75,6 +77,7 @@ export function VoiceConciergeView() {
   const [showKeys, setShowKeys] = useState(false);
   const [previewing, setPreviewing] = useState<VoiceProfileId | null>(null);
   const [engineLabel, setEngineLabel] = useState("Browser Neural");
+  const [tapToListen, setTapToListen] = useState(false);
 
   const profile = getVoiceProfile(voiceId);
   const selectedProperty =
@@ -88,6 +91,7 @@ export function VoiceConciergeView() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const callActiveRef = useRef(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const unlockedRef = useRef(false);
   const speedRef = useRef(0.85);
 
   const nextId = () => {
@@ -157,6 +161,7 @@ export function VoiceConciergeView() {
     setSpeaking(false);
     setPreviewing(null);
     setPartialAi("");
+    setTapToListen(false);
   };
 
   const endCall = () => {
@@ -175,8 +180,31 @@ export function VoiceConciergeView() {
   const applySpeed = (value: number) => {
     speedRef.current = value;
     setSpeed(value);
-    if (audioRef.current) {
-      audioRef.current.playbackRate = value;
+  };
+
+  const ensureAudioUnlocked = () => {
+    const audio = audioRef.current;
+    if (!audio || unlockedRef.current) return;
+    unlockSpeechAudio(audio);
+    unlockedRef.current = true;
+  };
+
+  const playQueuedStudio = async () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    setTapToListen(false);
+    setSpeaking(true);
+    audio.loop = false;
+    audio.volume = 1;
+    audio.onended = () => {
+      keepAudioChannelAlive(audio);
+      setSpeaking(false);
+    };
+    try {
+      await resumePersistentAudio(audio);
+    } catch (cause) {
+      console.error("[voice] Tocar para escuchar failed", cause);
+      setSpeaking(false);
     }
   };
 
@@ -186,12 +214,15 @@ export function VoiceConciergeView() {
       text,
       profile: forProfile,
       language,
-      speed: speedRef.current,
+      speed: 1,
       stability,
       elevenKey,
       openaiKey,
       audioRef,
       shouldCancel: () => gen !== genRef.current,
+      onAutoplayBlocked: () => {
+        if (gen === genRef.current) setTapToListen(true);
+      },
       onEngine: (engine) => {
         setEngineLabel(
           engine === "elevenlabs"
@@ -273,7 +304,7 @@ export function VoiceConciergeView() {
   };
 
   const startCall = () => {
-    unlockSpeechAudio();
+    ensureAudioUnlocked();
     const greeting = buildGreeting({
       profile,
       language,
@@ -295,7 +326,7 @@ export function VoiceConciergeView() {
   };
 
   const playPreview = async (item: VoiceProfile) => {
-    unlockSpeechAudio();
+    ensureAudioUnlocked();
     cancelSpeech();
     setVoiceId(item.id);
     setPreviewing(item.id);
@@ -311,7 +342,7 @@ export function VoiceConciergeView() {
   };
 
   const toggleListen = () => {
-    unlockSpeechAudio();
+    ensureAudioUnlocked();
     if (listening) {
       const leftover = partialGuest.trim();
       stopListening();
@@ -384,7 +415,18 @@ export function VoiceConciergeView() {
         </p>
       </div>
 
+      <audio ref={audioRef} className="sr-only" preload="auto" playsInline />
       <div id="ai-receptionist">
+        {tapToListen ? (
+          <button
+            type="button"
+            onClick={() => void playQueuedStudio()}
+            className="mb-3 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-white py-3 text-sm font-bold text-slate-950 hover:bg-slate-100"
+          >
+            <Play className="h-4 w-4" />
+            Tocar para escuchar
+          </button>
+        ) : null}
         <AiReceptionistStudio
           phase={phase}
           voiceName={profile.name}

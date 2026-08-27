@@ -8,6 +8,7 @@ import {
   Copy,
   MapPin,
   Mic,
+  Play,
   VolumeX,
   Wifi,
   ShoppingBag,
@@ -18,9 +19,10 @@ import { groceryFromHandbook } from "@/lib/receptionist-intent";
 import { answerGuestQuestion, HOST_EMERGENCY_NUMBER } from "@/lib/receptionist-replies";
 import {
   getVoiceProfile,
+  keepAudioChannelAlive,
   primeVoices,
+  resumePersistentAudio,
   speakHumanVoice,
-  speakWithSpeechSynthesis,
   stopHumanVoice,
   unlockSpeechAudio,
 } from "@/lib/human-voice";
@@ -61,10 +63,13 @@ export function GuestPortal({ propertyId }: { propertyId: string }) {
   const [copied, setCopied] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
 
+  const [tapToListen, setTapToListen] = useState(false);
+
   const profile = getVoiceProfile("elena");
   const recRef = useRef<SpeechRec | null>(null);
   const genRef = useRef(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const unlockedRef = useRef(false);
   const idRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const propertyRef = useRef<Property | null>(null);
@@ -121,9 +126,36 @@ export function GuestPortal({ propertyId }: { propertyId: string }) {
     setListening(false);
   };
 
+  const ensureAudioUnlocked = () => {
+    const audio = audioRef.current;
+    if (!audio || unlockedRef.current) return;
+    unlockSpeechAudio(audio);
+    unlockedRef.current = true;
+  };
+
+  const playQueuedStudio = async () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    setTapToListen(false);
+    setSpeaking(true);
+    audio.loop = false;
+    audio.volume = 1;
+    audio.onended = () => {
+      keepAudioChannelAlive(audio);
+      setSpeaking(false);
+    };
+    try {
+      await resumePersistentAudio(audio);
+    } catch (cause) {
+      console.error("[guest] Tocar para escuchar failed", cause);
+      setSpeaking(false);
+    }
+  };
+
   const stopSpeech = () => {
     genRef.current += 1;
     stopHumanVoice(audioRef);
+    setTapToListen(false);
     setSpeaking(false);
   };
 
@@ -140,21 +172,15 @@ export function GuestPortal({ propertyId }: { propertyId: string }) {
         stability: 48,
         audioRef,
         shouldCancel: () => gen !== genRef.current,
+        onAutoplayBlocked: () => {
+          if (gen === genRef.current) setTapToListen(true);
+        },
         onEngine: () => {
           if (gen === genRef.current) setSpeaking(true);
         },
       });
     } catch (cause) {
-      console.error("[guest] Elena voice failed; retrying speechSynthesis", cause);
-      if (gen === genRef.current) {
-        await speakWithSpeechSynthesis({
-          text,
-          profile,
-          language: "auto",
-          speed: 1,
-          shouldCancel: () => gen !== genRef.current,
-        });
-      }
+      console.error("[guest] Elena studio voice failed", cause);
     }
     if (gen === genRef.current) setSpeaking(false);
   };
@@ -181,7 +207,7 @@ export function GuestPortal({ propertyId }: { propertyId: string }) {
   };
 
   const toggleTalk = () => {
-    unlockSpeechAudio();
+    ensureAudioUnlocked();
     if (listening) {
       const leftover = partialGuest.trim();
       stopListening();
@@ -279,6 +305,7 @@ export function GuestPortal({ propertyId }: { propertyId: string }) {
         </p>
 
         <section className="mt-8 rounded-[2rem] border border-emerald-500/20 bg-gradient-to-b from-slate-900/90 to-slate-950 p-6 shadow-[0_0_60px_rgb(16_185_129_/_0.12)]">
+          <audio ref={audioRef} className="sr-only" preload="auto" playsInline />
           <ReceptionistAvatar phase={phase} size="lg" name="Elena" />
           <button
             type="button"
@@ -295,6 +322,16 @@ export function GuestPortal({ propertyId }: { propertyId: string }) {
               {listening ? "Escuchando…" : "Hablar con tu Conserje"}
             </span>
           </button>
+          {tapToListen ? (
+            <button
+              type="button"
+              onClick={() => void playQueuedStudio()}
+              className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-white py-3 text-sm font-bold text-slate-950 hover:bg-slate-100"
+            >
+              <Play className="h-4 w-4" />
+              Tocar para escuchar
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={stopSpeech}

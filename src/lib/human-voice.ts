@@ -80,6 +80,60 @@ export function getVoiceProfile(id: VoiceProfileId): VoiceProfile {
   return VOICE_PROFILES.find((profile) => profile.id === id) ?? VOICE_PROFILES[0]!;
 }
 
+export class AutoplayBlockedError extends Error {
+  constructor() {
+    super("autoplay-blocked");
+    this.name = "AutoplayBlockedError";
+  }
+}
+
+function isAutoplayError(cause: unknown) {
+  const name = cause instanceof DOMException ? cause.name : cause instanceof Error ? cause.name : "";
+  const message = cause instanceof Error ? cause.message : String(cause);
+  return name === "NotAllowedError" || /not allowed|user didn't interact|autoplay/i.test(message);
+}
+
+const blobUrls = new WeakMap<HTMLAudioElement, string>();
+let lockedBrowserVoice: SpeechSynthesisVoice | null = null;
+
+const SILENT_WAV =
+  "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
+
+function rememberBrowserVoice(voice: SpeechSynthesisVoice | null) {
+  if (voice) lockedBrowserVoice = voice;
+  return voice ?? lockedBrowserVoice;
+}
+
+function assignAudioSrc(audio: HTMLAudioElement, url: string) {
+  const previous = blobUrls.get(audio);
+  if (previous && previous !== url && previous.startsWith("blob:")) {
+    URL.revokeObjectURL(previous);
+  }
+  blobUrls.set(audio, url);
+  audio.src = url;
+}
+
+export function keepAudioChannelAlive(audio: HTMLAudioElement) {
+  try {
+    audio.loop = true;
+    audio.volume = 0;
+    audio.playbackRate = 1;
+    assignAudioSrc(audio, SILENT_WAV);
+    void audio.play().catch((cause) => {
+      console.error("[voice] keep-alive play failed", cause);
+    });
+  } catch (cause) {
+    console.error("[voice] keep-alive failed", cause);
+  }
+}
+
+export async function resumePersistentAudio(audio: HTMLAudioElement) {
+  audio.loop = false;
+  audio.volume = 1;
+  audio.playbackRate = 1;
+  await audio.play();
+}
+
 export function isPremiumVoice(voice: SpeechSynthesisVoice) {
   const label = `${voice.name} ${voice.voiceURI}`.toLowerCase();
   if (ROBOT_HINT.test(label)) return false;
@@ -138,7 +192,7 @@ export function pickSpanishVoice(
     );
   });
 
-  return ranked[0] ?? null;
+  return rememberBrowserVoice(ranked[0] ?? lockedBrowserVoice);
 }
 
 export function pickNeuralVoice(
@@ -162,7 +216,7 @@ export function pickNeuralVoice(
     return voiceNaturalnessScore(b, profile.gender) + extraB - (voiceNaturalnessScore(a, profile.gender) + extraA);
   });
 
-  return ranked[0] ?? null;
+  return rememberBrowserVoice(ranked[0] ?? lockedBrowserVoice);
 }
 
 let cachedVoices: SpeechSynthesisVoice[] = [];
@@ -261,6 +315,8 @@ export async function speakHumanVoice(options: {
   audioRef: { current: HTMLAudioElement | null };
   shouldCancel: () => boolean;
   onEngine?: (engine: "elevenlabs" | "openai" | "browser-neural") => void;
+  onAutoplayBlocked?: () => void;
+  fallbackToBrowser?: boolean;
 }): Promise<void> {
   const lang = detectReplyLang(options.text, options.language);
   const eleven = options.elevenKey?.trim() ?? "";
@@ -287,9 +343,18 @@ export async function speakHumanVoice(options: {
       options.onEngine?.(item.provider === "auto" ? "elevenlabs" : item.provider);
       return;
     } catch (cause) {
+      if (cause instanceof AutoplayBlockedError) {
+        console.error("[voice] Studio audio ready but autoplay blocked; waiting for tap", cause);
+        options.onAutoplayBlocked?.();
+        return;
+      }
       console.error("[voice] Studio TTS failed, will try next engine", item.provider, cause);
       if (options.shouldCancel()) return;
     }
+  }
+
+  if (options.fallbackToBrowser === false) {
+    return;
   }
 
   options.onEngine?.("browser-neural");
@@ -313,23 +378,24 @@ export function stopHumanVoice(audioRef: { current: HTMLAudioElement | null }) {
   const audio = audioRef.current;
   if (audio) {
     audio.pause();
-    if (audio !== unlockedAudio) {
-      audio.removeAttribute("src");
-    }
-    audioRef.current = null;
+    keepAudioChannelAlive(audio);
   }
 }
-
-const SILENT_WAV =
-  "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
 
 let speechUnlocked = false;
 let unlockedAudio: HTMLAudioElement | null = null;
 
 /** Call from the first user tap so later TTS/MP3 and speechSynthesis are allowed. */
-export function unlockSpeechAudio() {
+export function unlockSpeechAudio(persistent?: HTMLAudioElement | null) {
   if (typeof window === "undefined") return;
   primeVoices();
+  const audio = persistent ?? unlockedAudio ?? (unlockedAudio = new Audio());
+  audio.preload = "auto";
+  audio.setAttribute("playsinline", "true");
+  if (persistent) {
+    unlockedAudio = persistent;
+  }
+
   try {
     const AudioContextCtor =
       window.AudioContext ||
@@ -351,35 +417,21 @@ export function unlockSpeechAudio() {
     console.error("[voice] AudioContext unlock failed", cause);
   }
 
-  try {
-    if (!unlockedAudio) unlockedAudio = new Audio();
-    unlockedAudio.src = SILENT_WAV;
-    void unlockedAudio.play().then(() => {
-      unlockedAudio?.pause();
-    }).catch((cause) => {
-      console.error("[voice] Silent audio unlock failed", cause);
-    });
-  } catch (cause) {
-    console.error("[voice] Audio element unlock failed", cause);
-  }
+  keepAudioChannelAlive(audio);
 
   if ("speechSynthesis" in window) {
     try {
-      window.speechSynthesis.cancel();
-      const warm = new SpeechSynthesisUtterance(" ");
-      warm.volume = 0;
-      warm.rate = 1;
-      window.speechSynthesis.speak(warm);
       window.speechSynthesis.resume();
+      if (!speechUnlocked) {
+        const warm = new SpeechSynthesisUtterance(" ");
+        if (lockedBrowserVoice) warm.voice = lockedBrowserVoice;
+        warm.volume = 0;
+        warm.rate = 1;
+        warm.pitch = 1;
+        window.speechSynthesis.speak(warm);
+      }
     } catch (cause) {
       console.error("[voice] speechSynthesis unlock failed", cause);
-    }
-  }
-  if (speechUnlocked && "speechSynthesis" in window) {
-    try {
-      window.speechSynthesis.resume();
-    } catch (cause) {
-      console.error("[voice] speechSynthesis resume failed", cause);
     }
   }
   speechUnlocked = true;
@@ -424,14 +476,22 @@ async function speakStudioAudio(options: {
   }
   if (options.shouldCancel()) return;
 
+  const audio = options.audioRef.current ?? unlockedAudio;
+  if (!audio) {
+    throw new Error("Persistent audio element is missing");
+  }
+
   const buffer = await blob.arrayBuffer();
   const complete = new Blob([buffer], { type: "audio/mpeg" });
   const url = URL.createObjectURL(complete);
-  const audio = unlockedAudio ?? new Audio();
+
+  audio.pause();
+  audio.loop = false;
   audio.preload = "auto";
   audio.volume = 1;
   audio.playbackRate = 1;
   options.audioRef.current = audio;
+  assignAudioSrc(audio, url);
 
   await new Promise<void>((resolve, reject) => {
     const cleanup = () => {
@@ -441,13 +501,13 @@ async function speakStudioAudio(options: {
     };
 
     audio.onended = () => {
-      URL.revokeObjectURL(url);
+      keepAudioChannelAlive(audio);
       resolve();
     };
     audio.onerror = () => {
       cleanup();
-      URL.revokeObjectURL(url);
       console.error("[voice] MP3 playback error");
+      keepAudioChannelAlive(audio);
       reject(new Error("Audio playback failed"));
     };
 
@@ -457,19 +517,22 @@ async function speakStudioAudio(options: {
       started = true;
       cleanup();
       if (options.shouldCancel()) {
-        URL.revokeObjectURL(url);
+        keepAudioChannelAlive(audio);
         resolve();
         return;
       }
       void audio.play().catch((cause) => {
-        URL.revokeObjectURL(url);
         console.error("[voice] MP3 play() blocked or failed", cause);
+        if (isAutoplayError(cause)) {
+          reject(new AutoplayBlockedError());
+          return;
+        }
+        keepAudioChannelAlive(audio);
         reject(cause instanceof Error ? cause : new Error("Audio playback failed"));
       });
     };
 
     audio.oncanplaythrough = () => startPlayback();
-    audio.src = url;
     audio.load();
     if (audio.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA) {
       startPlayback();
@@ -505,7 +568,9 @@ async function speakBrowserNeural(options: {
   const voices = await waitForVoices();
   if (options.shouldCancel()) return;
 
-  const voice = pickNeuralVoice(voices.length > 0 ? voices : currentVoices(), options.profile, options.lang);
+  const voice = rememberBrowserVoice(
+    pickNeuralVoice(voices.length > 0 ? voices : currentVoices(), options.profile, options.lang),
+  );
   const spanish = options.lang === "es";
   const utteranceLang = spanish
     ? voice && normalizeLangTag(voice.lang).startsWith("es")
@@ -544,7 +609,8 @@ function speakUtterance(options: {
     }
     const utterance = new SpeechSynthesisUtterance(options.text);
     heldUtterance = utterance;
-    if (options.voice) utterance.voice = options.voice;
+    const voice = options.voice ?? lockedBrowserVoice;
+    if (voice) utterance.voice = voice;
     utterance.lang = options.utteranceLang;
     utterance.rate = 1;
     utterance.pitch = 1;
