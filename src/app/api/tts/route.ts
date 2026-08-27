@@ -26,13 +26,19 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const body = (await req.json()) as { text?: string; voice?: string };
+    const body = (await req.json()) as {
+      text?: string;
+      voice?: string;
+      voiceProfile?: string;
+    };
     const text = body.text || "Hola, ¿en qué te puedo ayudar?";
-    const voice = VOICES.has(body.voice ?? "") ? body.voice! : "nova";
+    const requested =
+      body.voice ?? (body.voiceProfile === "sarah" ? "shimmer" : "nova");
+    const voice = VOICES.has(requested) ? requested : "nova";
 
     const mp3 = await openai.audio.speech.create({
       model: "tts-1",
-      voice,
+      voice: voice as "nova" | "shimmer" | "coral" | "sage",
       input: text,
     });
 
@@ -41,7 +47,8 @@ export async function POST(req: NextRequest) {
     return new NextResponse(buffer, {
       headers: {
         "Content-Type": "audio/mpeg",
-        "Content-Length": buffer.length.toString(),
+        "Content-Length": String(buffer.length),
+        "Cache-Control": "no-store",
       },
     });
   } catch (error: unknown) {

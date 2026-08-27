@@ -1,8 +1,13 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useRef, useState } from "react";
 import { Mic, MicOff } from "lucide-react";
 import { ElenaAvatar } from "@/components/dashboard/elena-avatar";
+import {
+  isFatalTtsNetworkError,
+  playOpenAiTtsMpeg,
+  speakWithBrowserTts,
+} from "@/lib/human-voice";
 
 declare global {
   interface Window {
@@ -31,143 +36,52 @@ interface BrowserSpeechRecognitionEvent {
   }>;
 }
 
-/** Voice names that indicate a high-quality, natural-sounding voice. */
-const NATURAL_VOICE_MARKERS = ["Natural", "Google", "Sabina", "Helena", "Monica", "Paulina"];
-
-/** Female voice names per language — Elena must always sound female. */
-const FEMALE_VOICE_HINTS: Record<"es" | "en", string[]> = {
-  es: ["sabina", "helena", "monica", "paulina", "laura", "sofia", "elena", "maria", "female", "mujer"],
-  en: ["zira", "samantha", "victoria", "karen", "jenny", "aria", "female"],
-};
-/** Male voice names are always excluded from Elena's voice selection. */
-const MALE_VOICE_HINTS = ["david", "raul", "pablo", "jorge", "male", "guy", "hombre"];
-
-function isNaturalVoice(voice: SpeechSynthesisVoice): boolean {
-  const name = voice.name.toLowerCase();
-  return NATURAL_VOICE_MARKERS.some((marker) => name.includes(marker.toLowerCase()));
-}
-
-function isFemaleVoice(voice: SpeechSynthesisVoice, lang: "es" | "en"): boolean {
-  const name = voice.name.toLowerCase();
-  return FEMALE_VOICE_HINTS[lang].some((hint) => name.includes(hint));
-}
-
-function isMaleVoice(voice: SpeechSynthesisVoice): boolean {
-  const name = voice.name.toLowerCase();
-  return MALE_VOICE_HINTS.some((hint) => name.includes(hint));
-}
-
-/**
- * Pick the best browser voice for a language, prioritizing natural female voices.
- * Male voices are always excluded; named female voices win, then natural voices,
- * then any remaining non-male voice of the target language.
- */
-function pickVoice(
-  lang: "es" | "en",
-  voices: SpeechSynthesisVoice[],
-): SpeechSynthesisVoice | undefined {
-  if (!voices.length) return undefined;
-
-  const prefix = lang === "es" ? "es-" : "en-";
-  const langVoices = voices.filter((v) => v.lang.toLowerCase().startsWith(prefix));
-  // If the Spanish pool only holds a male voice (e.g. "Microsoft Raul"),
-  // never assign it: fall back to a female English voice instead.
-  const enFemaleFallback = voices.filter(
-    (v) =>
-      v.lang.toLowerCase().startsWith("en-") &&
-      !isMaleVoice(v) &&
-      (isFemaleVoice(v, "en") || /zira|google us english|google uk english/i.test(v.name)),
-  );
-  const pool =
-    langVoices.some((v) => !isMaleVoice(v))
-      ? langVoices
-      : enFemaleFallback.length
-        ? enFemaleFallback
-        : voices.filter((v) => !isMaleVoice(v));
-  const nonMale = pool.filter((v) => !isMaleVoice(v));
-  const candidates = nonMale.length ? nonMale : pool;
-  const female = candidates.filter((v) => isFemaleVoice(v, lang));
-  const namedFallback = candidates.filter((v) => /zira|sabina|google espa/i.test(v.name));
-  const ranked = female.length
-    ? female
-    : namedFallback.length
-      ? namedFallback.filter(isNaturalVoice).length
-        ? namedFallback.filter(isNaturalVoice)
-        : namedFallback
-      : candidates.filter(isNaturalVoice);
-  const finalPool = ranked.length ? ranked : candidates;
-
-  if (lang === "es") {
-    return (
-      finalPool.find((v) => v.lang === "es-US") ??
-      finalPool.find((v) => v.lang === "es-ES") ??
-      finalPool.find((v) => v.lang.toLowerCase().startsWith("es-")) ??
-      finalPool[0]
-    );
-  }
-  return (
-    finalPool.find((v) => v.lang === "en-US") ??
-    finalPool.find((v) => v.lang === "en-GB") ??
-    finalPool.find((v) => v.lang.toLowerCase().startsWith("en-")) ??
-    finalPool[0]
-  );
-}
-
 export default function ElenaVoiceWidget() {
   const [input, setInput] = useState("");
   const [status, setStatus] = useState("Ready");
   const [listening, setListening] = useState(false);
   const [muted, setMuted] = useState(false);
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
-  const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const langRef = useRef<"es" | "en">("es");
   const manualStopRef = useRef(false);
 
   // Short-term memory: recent turns sent to /api/chat so follow-ups keep context.
   const historyRef = useRef<{ role: "user" | "assistant"; content: string }[]>([]);
 
-  useEffect(() => {
-    const loadVoices = () => {
-      voicesRef.current = window.speechSynthesis.getVoices();
-    };
-    loadVoices();
-    window.speechSynthesis.addEventListener("voiceschanged", loadVoices);
-    // Chrome populates voices asynchronously; nudge so voices are ready before the first click.
-    const voiceRetries = [300, 800, 1500].map((delay) => window.setTimeout(loadVoices, delay));
-    return () => {
-      window.speechSynthesis.removeEventListener("voiceschanged", loadVoices);
-      voiceRetries.forEach((id) => window.clearTimeout(id));
-      recognitionRef.current?.abort();
-    };
-  }, []);
-
-  /** Native browser TTS — speaks a reply in the matching language, never the raw user input. */
-  const speak = (text: string, lang: "es" | "en" = "es") => {
+  /** OpenAI /api/tts (nova). Browser TTS only on fatal network error, and never a male Windows voice. */
+  const speak = async (text: string, lang: "es" | "en" = "es") => {
     if (!text.trim()) return;
-    const utterance = new SpeechSynthesisUtterance(text);
-    const voices = voicesRef.current.length
-      ? voicesRef.current
-      : window.speechSynthesis.getVoices();
-    const voice = pickVoice(lang, voices);
-    if (voice) utterance.voice = voice;
-    utterance.lang = voice?.lang ?? (lang === "es" ? "es-ES" : "en-US");
-    // Higher pitch keeps Elena sounding female even on Windows systems
-    // that only expose a deep default voice.
-    utterance.pitch = 1.2;
-    utterance.rate = 1.0;
     langRef.current = lang;
     setMuted(false);
     setStatus("Speaking...");
-    utterance.onstart = () => setStatus("Speaking...");
-    utterance.onend = () => setStatus("Ready");
-    utterance.onerror = () => setStatus("Ready");
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(utterance);
+    audioRef.current?.pause();
+    try {
+      const audio = await playOpenAiTtsMpeg(text, "nova");
+      audioRef.current = audio;
+      audio.addEventListener("ended", () => setStatus("Ready"));
+    } catch (err) {
+      console.error("[elena] /api/tts failed", err);
+      if (!isFatalTtsNetworkError(err)) {
+        setStatus("Ready");
+        return;
+      }
+      const started = speakWithBrowserTts({
+        text,
+        lang,
+        onStart: () => setStatus("Speaking..."),
+        onEnd: () => setStatus("Ready"),
+      });
+      if (!started) setStatus("Ready");
+    }
   };
 
   /** Immediately stop any spoken audio and microphone listening. */
   const stopVoice = () => {
-    window.speechSynthesis.cancel();
+    audioRef.current?.pause();
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
     recognitionRef.current?.abort();
     recognitionRef.current = null;
     manualStopRef.current = true;
