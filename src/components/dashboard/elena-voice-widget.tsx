@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { Mic, MicOff } from "lucide-react";
+import { Mic, MicOff, Sparkles } from "lucide-react";
 
 declare global {
   interface Window {
@@ -236,7 +236,13 @@ export default function ElenaVoiceWidget() {
   return (
     <div className="p-6 bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg mx-auto text-white shadow-xl">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-bold">Elena Asistente</h2>
+        <div className="flex items-center gap-3">
+          {/* Original Elena avatar/icon restored: circular emerald→sky→violet badge with Sparkles. */}
+          <div className="relative h-12 w-12 rounded-full bg-gradient-to-br from-emerald-400/40 via-sky-500/30 to-violet-500/40 flex items-center justify-center overflow-hidden border border-emerald-400/40 shadow-[0_0_24px_rgb(16_185_129_/_0.25)]">
+            <Sparkles className="h-5 w-5 text-emerald-300" />
+          </div>
+          <h2 className="text-xl font-bold">Elena Asistente</h2>
+        </div>
         <span className="text-xs px-2 py-1 bg-emerald-900/60 text-emerald-400 border border-emerald-700 rounded-md">
           {status}
         </span>
