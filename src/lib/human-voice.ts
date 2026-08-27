@@ -7,7 +7,7 @@ export type VoiceProfile = {
   name: string;
   title: string;
   hint: string;
-  openaiVoice: "nova" | "onyx" | "shimmer";
+  openaiVoice: "nova" | "alloy" | "onyx" | "shimmer";
   elevenLabsVoiceId: string;
   gender: "female" | "male";
   rate: number;
@@ -20,12 +20,12 @@ export const VOICE_PROFILES: VoiceProfile[] = [
     id: "elena",
     name: "Elena",
     title: "Cálida & Bilingüe (Miami Hostess)",
-    hint: "Tono conversacional natural, acento suave, pensada para Florida",
+    hint: "Proyección firme, clara y con aire",
     openaiVoice: "nova",
     elevenLabsVoiceId: "21m00Tcm4TlvDq8ikWAM",
     gender: "female",
-    rate: 0.94,
-    pitch: 1.04,
+    rate: 1,
+    pitch: 1,
     preview: {
       es: "Hola. Soy Elena, tu anfitriona en Miami. Estoy aquí para lo que necesites. El Wi-Fi, el estacionamiento, o simplemente sentirte en casa. Dime, ¿cómo te ayudo?",
       en: "Hi. I'm Elena, your Miami hostess. I'm right here if you need Wi-Fi, parking, or just a warm welcome. How can I help you?",
@@ -36,7 +36,7 @@ export const VOICE_PROFILES: VoiceProfile[] = [
     name: "Mateo",
     title: "Concierge de Lujo",
     hint: "Voz profunda, educada y tranquila",
-    openaiVoice: "onyx",
+    openaiVoice: "alloy",
     elevenLabsVoiceId: "pNInz6obpgDQGcFmaJgB",
     gender: "male",
     rate: 0.92,
@@ -51,7 +51,7 @@ export const VOICE_PROFILES: VoiceProfile[] = [
     name: "Sarah",
     title: "Friendly American Host",
     hint: "Inglés nativo fluido y enérgico",
-    openaiVoice: "shimmer",
+    openaiVoice: "nova",
     elevenLabsVoiceId: "EXAVITQu4vr4xnSDxMaL",
     gender: "female",
     rate: 0.96,
@@ -424,32 +424,61 @@ async function speakStudioAudio(options: {
   }
   if (options.shouldCancel()) return;
 
-  const url = URL.createObjectURL(blob);
+  const buffer = await blob.arrayBuffer();
+  const complete = new Blob([buffer], { type: "audio/mpeg" });
+  const url = URL.createObjectURL(complete);
   const audio = unlockedAudio ?? new Audio();
-  audio.playbackRate = Math.min(1.08, Math.max(0.9, options.speed || 1));
-  audio.src = url;
+  audio.preload = "auto";
+  audio.volume = 1;
+  audio.playbackRate = 1;
   options.audioRef.current = audio;
 
   await new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      audio.oncanplaythrough = null;
+      audio.onloadeddata = null;
+      audio.onerror = null;
+    };
+
     audio.onended = () => {
       URL.revokeObjectURL(url);
       resolve();
     };
     audio.onerror = () => {
+      cleanup();
       URL.revokeObjectURL(url);
       console.error("[voice] MP3 playback error");
       reject(new Error("Audio playback failed"));
     };
-    if (options.shouldCancel()) {
-      URL.revokeObjectURL(url);
-      resolve();
-      return;
+
+    let started = false;
+    const startPlayback = () => {
+      if (started) return;
+      started = true;
+      cleanup();
+      if (options.shouldCancel()) {
+        URL.revokeObjectURL(url);
+        resolve();
+        return;
+      }
+      void audio.play().catch((cause) => {
+        URL.revokeObjectURL(url);
+        console.error("[voice] MP3 play() blocked or failed", cause);
+        reject(cause instanceof Error ? cause : new Error("Audio playback failed"));
+      });
+    };
+
+    audio.oncanplaythrough = () => startPlayback();
+    audio.src = url;
+    audio.load();
+    if (audio.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA) {
+      startPlayback();
     }
-    void audio.play().catch((cause) => {
-      URL.revokeObjectURL(url);
-      console.error("[voice] MP3 play() blocked or failed", cause);
-      reject(cause instanceof Error ? cause : new Error("Audio playback failed"));
-    });
+    window.setTimeout(() => {
+      if (!started && audio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        startPlayback();
+      }
+    }, 1200);
   });
 }
 
@@ -478,8 +507,6 @@ async function speakBrowserNeural(options: {
 
   const voice = pickNeuralVoice(voices.length > 0 ? voices : currentVoices(), options.profile, options.lang);
   const spanish = options.lang === "es";
-  const rate = Math.min(1.05, Math.max(0.86, options.profile.rate * (spanish ? 0.97 : 1)));
-  const pitch = Math.min(1.15, Math.max(0.88, options.profile.pitch));
   const utteranceLang = spanish
     ? voice && normalizeLangTag(voice.lang).startsWith("es")
       ? voice.lang.replaceAll("_", "-")
@@ -492,8 +519,8 @@ async function speakBrowserNeural(options: {
     text: paceForSpeech(options.text),
     voice,
     utteranceLang,
-    rate,
-    pitch,
+    rate: 1,
+    pitch: 1,
     shouldCancel: options.shouldCancel,
     onStart: options.onStart,
   });
@@ -519,8 +546,9 @@ function speakUtterance(options: {
     heldUtterance = utterance;
     if (options.voice) utterance.voice = options.voice;
     utterance.lang = options.utteranceLang;
-    utterance.rate = options.rate;
-    utterance.pitch = options.pitch;
+    utterance.rate = 1;
+    utterance.pitch = 1;
+    utterance.volume = 1;
     utterance.onstart = () => options.onStart?.();
     utterance.onend = () => {
       if (heldUtterance === utterance) heldUtterance = null;

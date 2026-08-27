@@ -35,8 +35,8 @@ export async function POST(request: Request) {
   const requested = body.provider === "openai" ? "openai" : body.provider === "elevenlabs" ? "elevenlabs" : "auto";
 
   try {
-    const speed = clamp(body.speed ?? 1, 0.85, 1.2);
     const stability = clamp((body.stability ?? 48) / 100, 0.28, 0.62);
+    const openaiVoice = profile.openaiVoice === "alloy" ? "alloy" : "nova";
 
     if (requested === "auto") {
       if (elevenKey) {
@@ -48,7 +48,7 @@ export async function POST(request: Request) {
       }
       if (openaiKey) {
         try {
-          return mpeg(await fetchOpenAiTts(openaiKey, text, profile.openaiVoice, speed));
+          return mpeg(await fetchOpenAiTts(openaiKey, text, openaiVoice));
         } catch (cause) {
           console.error("[tts] OpenAI failed in auto mode (quota, network, or format)", cause);
         }
@@ -63,7 +63,7 @@ export async function POST(request: Request) {
 
     if (requested === "openai") {
       try {
-        return mpeg(await fetchOpenAiTts(apiKey, text, profile.openaiVoice, speed));
+        return mpeg(await fetchOpenAiTts(apiKey, text, openaiVoice));
       } catch (cause) {
         console.error("[tts] OpenAI TTS failed (quota, network, or format)", cause);
         throw cause;
@@ -84,7 +84,12 @@ export async function POST(request: Request) {
 
 function mpeg(audio: ArrayBuffer) {
   return new Response(audio, {
-    headers: { "Content-Type": "audio/mpeg", "Cache-Control": "no-store" },
+    headers: {
+      "Content-Type": "audio/mpeg",
+      "Content-Length": String(audio.byteLength),
+      "Cache-Control": "no-store",
+      "Accept-Ranges": "bytes",
+    },
   });
 }
 
@@ -92,50 +97,32 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
-async function fetchOpenAiTts(apiKey: string, text: string, voice: string, speed: number) {
-  const attempts = [
-    {
-      model: "gpt-4o-mini-tts",
-      body: {
-        model: "gpt-4o-mini-tts",
-        voice,
-        input: text,
-        response_format: "mp3",
-        speed,
+async function fetchOpenAiTts(apiKey: string, text: string, voice: "nova" | "alloy") {
+  try {
+    const response = await fetch("https://api.openai.com/v1/audio/speech", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
       },
-    },
-    {
-      model: "tts-1-hd",
-      body: {
+      body: JSON.stringify({
         model: "tts-1-hd",
         voice,
         input: text,
         response_format: "mp3",
-        speed,
-      },
-    },
-  ];
-
-  for (const attempt of attempts) {
-    try {
-      const response = await fetch("https://api.openai.com/v1/audio/speech", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(attempt.body),
-      });
-      if (response.ok) return response.arrayBuffer();
-      const detail = (await response.text()).slice(0, 400);
-      console.error("[tts] OpenAI rejected", {
-        model: attempt.model,
-        status: response.status,
-        detail,
-      });
-    } catch (cause) {
-      console.error("[tts] OpenAI network error", attempt.model, cause);
-    }
+        speed: 1,
+      }),
+    });
+    if (response.ok) return response.arrayBuffer();
+    const detail = (await response.text()).slice(0, 400);
+    console.error("[tts] OpenAI rejected", {
+      model: "tts-1-hd",
+      voice,
+      status: response.status,
+      detail,
+    });
+  } catch (cause) {
+    console.error("[tts] OpenAI network error", "tts-1-hd", cause);
   }
 
   throw new Error("OpenAI TTS failed");
