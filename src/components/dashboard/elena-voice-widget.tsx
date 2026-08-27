@@ -70,7 +70,20 @@ function pickVoice(
 
   const prefix = lang === "es" ? "es-" : "en-";
   const langVoices = voices.filter((v) => v.lang.toLowerCase().startsWith(prefix));
-  const pool = langVoices.length ? langVoices : voices;
+  // If the Spanish pool only holds a male voice (e.g. "Microsoft Raul"),
+  // never assign it: fall back to a female English voice instead.
+  const enFemaleFallback = voices.filter(
+    (v) =>
+      v.lang.toLowerCase().startsWith("en-") &&
+      !isMaleVoice(v) &&
+      (isFemaleVoice(v, "en") || /zira|google us english|google uk english/i.test(v.name)),
+  );
+  const pool =
+    langVoices.some((v) => !isMaleVoice(v))
+      ? langVoices
+      : enFemaleFallback.length
+        ? enFemaleFallback
+        : voices.filter((v) => !isMaleVoice(v));
   const nonMale = pool.filter((v) => !isMaleVoice(v));
   const candidates = nonMale.length ? nonMale : pool;
   const female = candidates.filter((v) => isFemaleVoice(v, lang));
@@ -119,8 +132,11 @@ export default function ElenaVoiceWidget() {
     };
     loadVoices();
     window.speechSynthesis.addEventListener("voiceschanged", loadVoices);
+    // Chrome populates voices asynchronously; nudge so voices are ready before the first click.
+    const voiceRetries = [300, 800, 1500].map((delay) => window.setTimeout(loadVoices, delay));
     return () => {
       window.speechSynthesis.removeEventListener("voiceschanged", loadVoices);
+      voiceRetries.forEach((id) => window.clearTimeout(id));
       recognitionRef.current?.abort();
     };
   }, []);

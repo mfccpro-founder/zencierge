@@ -107,6 +107,9 @@ export function VoiceConciergeView() {
   const safetyRef = useRef(0);
   const playbackStartedRef = useRef(false);
   const heygenSpeakingRef = useRef(false);
+  // Preloaded voice list: Chrome populates getVoices() asynchronously, so cache
+  // it on mount (with voiceschanged + retries) to never speak with a fallback voice.
+  const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
 
   const nextId = () => {
     idRef.current += 1;
@@ -126,6 +129,22 @@ export function VoiceConciergeView() {
     const storedOpenAi = window.localStorage.getItem("zencierge.openaiTtsKey") ?? "";
     if (storedEleven) setElevenKey(storedEleven);
     if (storedOpenAi) setOpenaiKey(storedOpenAi);
+  }, []);
+
+  useEffect(() => {
+    const synth = window.speechSynthesis;
+    if (!synth) return;
+    const loadVoices = () => {
+      voicesRef.current = synth.getVoices();
+    };
+    loadVoices();
+    synth.addEventListener("voiceschanged", loadVoices);
+    // Chrome sometimes fires getVoices() empty; nudge a couple of times.
+    const retries = [300, 800, 1500].map((delay) => window.setTimeout(loadVoices, delay));
+    return () => {
+      synth.removeEventListener("voiceschanged", loadVoices);
+      retries.forEach((id) => window.clearTimeout(id));
+    };
   }, []);
 
   useEffect(() => {
@@ -282,11 +301,23 @@ export function VoiceConciergeView() {
     const lang = detectReplyLang(text, mode);
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = lang === "en" ? "en-US" : "es-ES";
+    const all = voicesRef.current.length ? voicesRef.current : synth.getVoices();
     const prefix = lang === "en" ? "en" : "es";
-    const langVoices = synth
-      .getVoices()
-      .filter((item) => item.lang.toLowerCase().startsWith(prefix));
-    const pool = langVoices.length ? langVoices : synth.getVoices();
+    const langVoices = all.filter((item) => item.lang.toLowerCase().startsWith(prefix));
+    // If the language pool has no usable (non-male) voice — e.g. Windows machines
+    // that only expose "Microsoft Raul" for Spanish — switch to a female English
+    // voice (Google US English / Microsoft Zira) instead of ever assigning Raul.
+    const enFemale = all.filter(
+      (item) =>
+        item.lang.toLowerCase().startsWith("en") &&
+        !isMaleVoiceName(item.name) &&
+        (isFemaleVoiceName(item.name, "en") || FEMALE_NAMED_FALLBACK.test(item.name) || /natural|google/i.test(item.name)),
+    );
+    const pool = langVoices.some((item) => !isMaleVoiceName(item.name))
+      ? langVoices
+      : enFemale.length
+        ? enFemale
+        : all.filter((item) => !isMaleVoiceName(item.name));
     // Elena must sound female: named female voices first, then any non-male voice.
     const voice =
       pool.find((item) => isFemaleVoiceName(item.name, lang) && !isMaleVoiceName(item.name)) ??
@@ -302,8 +333,6 @@ export function VoiceConciergeView() {
     // only expose a deep default voice.
     utterance.pitch = 1.2;
     utterance.rate = 1.0;
-    utterance.rate = 0.95;
-    utterance.pitch = 1;
     utterance.onstart = () => {
       if (genRef.current) markPlaybackStarted();
       setSpeaking(true);

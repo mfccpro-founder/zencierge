@@ -46,7 +46,12 @@ export async function POST(req: NextRequest) {
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Error al generar audio";
-    console.error("Error en /api/tts:", error);
+    const isKeyIssue = /api key|credentials|unauthorized|401/i.test(message);
+    console.error(
+      `[tts] OpenAI TTS falló (${isKeyIssue ? "falta/inválida OPENAI_API_KEY" : "error de red o de la API de OpenAI"}):`,
+      message,
+      error,
+    );
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
