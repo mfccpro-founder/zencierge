@@ -34,15 +34,33 @@ interface BrowserSpeechRecognitionEvent {
 /** Voice names that indicate a high-quality, natural-sounding voice. */
 const NATURAL_VOICE_MARKERS = ["Natural", "Google", "Sabina", "Helena", "Monica", "Paulina"];
 
+/** Female voice names per language — Elena must always sound female. */
+const FEMALE_VOICE_HINTS: Record<"es" | "en", string[]> = {
+  es: ["sabina", "helena", "monica", "paulina", "laura", "sofia", "elena", "maria", "female", "mujer"],
+  en: ["zira", "samantha", "victoria", "karen", "jenny", "aria", "female"],
+};
+/** Male voice names are always excluded from Elena's voice selection. */
+const MALE_VOICE_HINTS = ["david", "raul", "pablo", "jorge", "male", "guy", "hombre"];
+
 function isNaturalVoice(voice: SpeechSynthesisVoice): boolean {
   const name = voice.name.toLowerCase();
   return NATURAL_VOICE_MARKERS.some((marker) => name.includes(marker.toLowerCase()));
 }
 
+function isFemaleVoice(voice: SpeechSynthesisVoice, lang: "es" | "en"): boolean {
+  const name = voice.name.toLowerCase();
+  return FEMALE_VOICE_HINTS[lang].some((hint) => name.includes(hint));
+}
+
+function isMaleVoice(voice: SpeechSynthesisVoice): boolean {
+  const name = voice.name.toLowerCase();
+  return MALE_VOICE_HINTS.some((hint) => name.includes(hint));
+}
+
 /**
- * Pick the best browser voice for a language, prioritizing natural voices.
- * Candidates are filtered to the target language, then ranked by name markers
- * (Natural, Google, Sabina, Helena, Monica, Paulina) and exact locale.
+ * Pick the best browser voice for a language, prioritizing natural female voices.
+ * Male voices are always excluded; named female voices win, then natural voices,
+ * then any remaining non-male voice of the target language.
  */
 function pickVoice(
   lang: "es" | "en",
@@ -53,21 +71,25 @@ function pickVoice(
   const prefix = lang === "es" ? "es-" : "en-";
   const langVoices = voices.filter((v) => v.lang.toLowerCase().startsWith(prefix));
   const pool = langVoices.length ? langVoices : voices;
-  const ranked = pool.filter(isNaturalVoice).length ? pool.filter(isNaturalVoice) : pool;
+  const nonMale = pool.filter((v) => !isMaleVoice(v));
+  const candidates = nonMale.length ? nonMale : pool;
+  const female = candidates.filter((v) => isFemaleVoice(v, lang));
+  const ranked = female.length ? female : candidates.filter(isNaturalVoice);
+  const finalPool = ranked.length ? ranked : candidates;
 
   if (lang === "es") {
     return (
-      ranked.find((v) => v.lang === "es-US") ??
-      ranked.find((v) => v.lang === "es-ES") ??
-      ranked.find((v) => v.lang.toLowerCase().startsWith("es-")) ??
-      ranked[0]
+      finalPool.find((v) => v.lang === "es-US") ??
+      finalPool.find((v) => v.lang === "es-ES") ??
+      finalPool.find((v) => v.lang.toLowerCase().startsWith("es-")) ??
+      finalPool[0]
     );
   }
   return (
-    ranked.find((v) => v.lang === "en-US") ??
-    ranked.find((v) => v.lang === "en-GB") ??
-    ranked.find((v) => v.lang.toLowerCase().startsWith("en-")) ??
-    ranked[0]
+    finalPool.find((v) => v.lang === "en-US") ??
+    finalPool.find((v) => v.lang === "en-GB") ??
+    finalPool.find((v) => v.lang.toLowerCase().startsWith("en-")) ??
+    finalPool[0]
   );
 }
 

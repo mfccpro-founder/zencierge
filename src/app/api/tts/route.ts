@@ -3,7 +3,7 @@ import OpenAI from "openai";
 
 export const runtime = "nodejs";
 
-const VOICES = new Set(["alloy", "ash", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer"]);
+const VOICES = new Set(["nova", "shimmer", "coral", "sage"]);
 
 /** Lazily create the client only when a key exists so the route never throws at module scope (build/collect time). */
 function createOpenAI(): OpenAI | null {

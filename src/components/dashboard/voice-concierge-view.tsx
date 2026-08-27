@@ -37,6 +37,24 @@ const FLORIDA_LINES: Record<FloridaLine, { number: string; area: string }> = {
   "954": { number: "+1 (954) 555-0144", area: "Broward · 954" },
 };
 
+/** Strict female-voice keywords per language for Web Speech API voice picking. */
+const FEMALE_VOICE_HINTS: Record<ReplyLang, string[]> = {
+  es: ["sabina", "helena", "monica", "paulina", "laura", "sofia", "elena", "maria", "female", "mujer"],
+  en: ["zira", "samantha", "victoria", "karen", "jenny", "aria", "female"],
+};
+/** Male voice names are always excluded so Elena never sounds masculine. */
+const MALE_VOICE_HINTS = ["david", "raul", "pablo", "jorge", "male", "guy", "hombre"];
+
+function isFemaleVoiceName(name: string, lang: ReplyLang) {
+  const lower = name.toLowerCase();
+  return FEMALE_VOICE_HINTS[lang].some((hint) => lower.includes(hint));
+}
+
+function isMaleVoiceName(name: string) {
+  const lower = name.toLowerCase();
+  return MALE_VOICE_HINTS.some((hint) => lower.includes(hint));
+}
+
 const inputClass =
   "w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-200 focus:border-emerald-500 focus:outline-none";
 
@@ -262,13 +280,18 @@ export function VoiceConciergeView() {
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = lang === "en" ? "en-US" : "es-ES";
     const prefix = lang === "en" ? "en" : "es";
-    const voices = synth.getVoices();
+    const langVoices = synth
+      .getVoices()
+      .filter((item) => item.lang.toLowerCase().startsWith(prefix));
+    const pool = langVoices.length ? langVoices : synth.getVoices();
+    // Elena must sound female: named female voices first, then any non-male voice.
     const voice =
-      voices.find(
-        (item) =>
-          item.lang.toLowerCase().startsWith(prefix) &&
-          /natural|google|sabina|helena|monica|paulina/i.test(item.name),
-      ) ?? voices.find((item) => item.lang.toLowerCase().startsWith(prefix));
+      pool.find((item) => isFemaleVoiceName(item.name, lang) && !isMaleVoiceName(item.name)) ??
+      pool.find(
+        (item) => !isMaleVoiceName(item.name) && /natural|google/i.test(item.name),
+      ) ??
+      pool.find((item) => !isMaleVoiceName(item.name)) ??
+      pool[0];
     if (voice) utterance.voice = voice;
     utterance.rate = 0.95;
     utterance.pitch = 1;
