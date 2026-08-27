@@ -1,92 +1,27 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AlertTriangle,
   Check,
   Clock,
   Copy,
   MapPin,
-  Mic,
-  Play,
-  VolumeX,
   Wifi,
   ShoppingBag,
 } from "lucide-react";
 import type { Property } from "@/lib/dashboard-data";
-import { ReceptionistAvatar, type ReceptionistPhase } from "@/components/dashboard/receptionist-avatar";
-import { askAvatarReply } from "@/lib/ask-avatar";
+import ElenaVoiceWidget from "@/components/dashboard/elena-voice-widget";
 import { groceryFromHandbook } from "@/lib/receptionist-intent";
 import { HOST_EMERGENCY_NUMBER } from "@/lib/receptionist-replies";
-import {
-  getVoiceProfile,
-  keepAudioChannelAlive,
-  resumePersistentAudio,
-  speakHumanVoice,
-  stopHumanVoice,
-  unlockSpeechAudio,
-} from "@/lib/human-voice";
 import { fetchPropertyById } from "@/lib/supabase-listings";
-
-type SpeechResultList = ArrayLike<{ isFinal: boolean } & ArrayLike<{ transcript: string }>>;
-type SpeechRec = {
-  lang: string;
-  interimResults: boolean;
-  continuous: boolean;
-  onresult: ((event: { resultIndex: number; results: SpeechResultList }) => void) | null;
-  onerror: (() => void) | null;
-  onend: (() => void) | null;
-  start: () => void;
-  stop: () => void;
-};
-
-type Line = { id: string; speaker: "guest" | "ai" | "system"; text: string };
-
-function getSpeechRecognitionCtor(): (new () => SpeechRec) | null {
-  if (typeof window === "undefined") return null;
-  const extra = window as unknown as {
-    SpeechRecognition?: new () => SpeechRec;
-    webkitSpeechRecognition?: new () => SpeechRec;
-  };
-  return extra.SpeechRecognition ?? extra.webkitSpeechRecognition ?? null;
-}
 
 export function GuestPortal({ propertyId }: { propertyId: string }) {
   const [property, setProperty] = useState<Property | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [listening, setListening] = useState(false);
-  const [thinking, setThinking] = useState(false);
-  const [speaking, setSpeaking] = useState(false);
-  const [lines, setLines] = useState<Line[]>([]);
-  const [partialGuest, setPartialGuest] = useState("");
   const [copied, setCopied] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
-
-  const [tapToListen, setTapToListen] = useState(false);
-  const [responding, setResponding] = useState(false);
-
-  const profile = getVoiceProfile("elena");
-  const recRef = useRef<SpeechRec | null>(null);
-  const genRef = useRef(0);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const unlockedRef = useRef(false);
-  const wantMicRef = useRef(false);
-  const idRef = useRef(0);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const propertyRef = useRef<Property | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
-  const safetyRef = useRef(0);
-  const playbackStartedRef = useRef(false);
-
-  const nextId = () => {
-    idRef.current += 1;
-    return `g-${idRef.current}`;
-  };
-
-  useEffect(() => {
-    propertyRef.current = property;
-  }, [property]);
 
   useEffect(() => {
     let cancelled = false;
@@ -107,262 +42,8 @@ export function GuestPortal({ propertyId }: { propertyId: string }) {
     })();
     return () => {
       cancelled = true;
-      recRef.current?.stop();
-      stopHumanVoice(audioRef);
     };
   }, [propertyId]);
-
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [lines, partialGuest]);
-
-  const phase: ReceptionistPhase = thinking || responding
-    ? "thinking"
-    : listening
-      ? "listening"
-      : speaking
-        ? "speaking"
-        : "idle";
-
-  const stopListening = () => {
-    recRef.current?.stop();
-    recRef.current = null;
-    setListening(false);
-  };
-
-  const clearSafety = () => {
-    if (safetyRef.current) {
-      window.clearTimeout(safetyRef.current);
-      safetyRef.current = 0;
-    }
-  };
-
-  const armSafety = () => {
-    clearSafety();
-    playbackStartedRef.current = false;
-    safetyRef.current = window.setTimeout(() => {
-      if (playbackStartedRef.current) return;
-      console.error("[guest] 7s safety: playback never started — reset idle");
-      const keepMic = true;
-      stopSpeech();
-      if (keepMic) {
-        wantMicRef.current = true;
-        startListening();
-      }
-    }, 7000);
-  };
-
-  const stopSpeech = () => {
-    genRef.current += 1;
-    abortRef.current?.abort();
-    abortRef.current = null;
-    clearSafety();
-    playbackStartedRef.current = false;
-    wantMicRef.current = false;
-    stopHumanVoice(audioRef);
-    setTapToListen(false);
-    setResponding(false);
-    setSpeaking(false);
-    setThinking(false);
-  };
-
-  const resumeMicAfterElena = () => {
-    setSpeaking(false);
-    setResponding(false);
-    if (wantMicRef.current) startListening();
-  };
-
-  const startListening = () => {
-    if (audioRef.current && !audioRef.current.paused && audioRef.current.volume > 0 && !audioRef.current.loop) {
-      return;
-    }
-    stopListening();
-    const Ctor = getSpeechRecognitionCtor();
-    if (!Ctor) {
-      setLines((current) => [
-        ...current,
-        {
-          id: nextId(),
-          speaker: "system",
-          text: "Microphone isn't available. Use Chrome and allow the mic, or type below.",
-        },
-      ]);
-      return;
-    }
-    const recognition = new Ctor();
-    recognition.lang = "es-US";
-    recognition.interimResults = true;
-    recognition.continuous = false;
-    recognition.onresult = (event) => {
-      let interim = "";
-      let finalText = "";
-      for (let index = event.resultIndex; index < event.results.length; index += 1) {
-        const result = event.results[index];
-        const piece = result?.[0]?.transcript ?? "";
-        if (result?.isFinal) finalText += piece;
-        else interim += piece;
-      }
-      if (interim) setPartialGuest(interim);
-      if (finalText.trim()) {
-        setPartialGuest("");
-        handleGuestUtterance(finalText);
-      }
-    };
-    recognition.onerror = () => {
-      setListening(false);
-      setPartialGuest("");
-    };
-    recognition.onend = () => setListening(false);
-    recRef.current = recognition;
-    try {
-      recognition.start();
-      setListening(true);
-    } catch {
-      setListening(false);
-    }
-  };
-
-  const ensureAudioUnlocked = () => {
-    const audio = audioRef.current;
-    if (!audio || unlockedRef.current) return;
-    unlockSpeechAudio(audio);
-    unlockedRef.current = true;
-  };
-
-  const playQueuedStudio = async () => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    stopListening();
-    setTapToListen(false);
-    setSpeaking(true);
-    audio.loop = false;
-    audio.volume = 1;
-    audio.onended = () => {
-      keepAudioChannelAlive(audio);
-      resumeMicAfterElena();
-    };
-    try {
-      await resumePersistentAudio(audio);
-    } catch (cause) {
-      console.error("[guest] Tocar para escuchar failed", cause);
-    } finally {
-      if (audio.paused) setSpeaking(false);
-    }
-  };
-
-  const speakReply = async (text: string) => {
-    const gen = ++genRef.current;
-    stopListening();
-    setLines((current) => [...current, { id: nextId(), speaker: "ai", text }]);
-    setResponding(true);
-    setSpeaking(false);
-    armSafety();
-    try {
-      await speakHumanVoice({
-        text,
-        profile,
-        language: "auto",
-        speed: 1,
-        stability: 48,
-        audioRef,
-        shouldCancel: () => gen !== genRef.current,
-        onAutoplayBlocked: () => {
-          if (gen === genRef.current) {
-            setResponding(false);
-            clearSafety();
-            setTapToListen(true);
-          }
-        },
-        onPlaybackStart: () => {
-          if (gen === genRef.current) {
-            playbackStartedRef.current = true;
-            clearSafety();
-            setResponding(false);
-            setSpeaking(true);
-          }
-        },
-        onPlaybackEnd: () => {
-          if (gen === genRef.current) resumeMicAfterElena();
-        },
-      });
-    } catch (cause) {
-      console.error("[guest] Elena studio voice failed", cause);
-      if (gen === genRef.current) {
-        setLines((current) => [
-          ...current,
-          { id: nextId(), speaker: "system", text: "Elena está respondiendo… no se pudo cargar el audio de estudio." },
-        ]);
-      }
-    } finally {
-      if (gen === genRef.current && !playbackStartedRef.current) {
-        setResponding(false);
-        setSpeaking(false);
-      }
-    }
-  };
-
-  const handleGuestUtterance = (raw: string) => {
-    const stay = propertyRef.current;
-    const text = raw.trim();
-    if (!text || !stay) return;
-    stopListening();
-    abortRef.current?.abort();
-    const abort = new AbortController();
-    abortRef.current = abort;
-    setPartialGuest("");
-    setLines((current) => [...current, { id: nextId(), speaker: "guest", text }]);
-    setThinking(true);
-    setResponding(true);
-    armSafety();
-    void askAvatarReply({
-      question: text,
-      property: stay,
-      properties: [stay],
-      language: "auto",
-      emergencyNumber: HOST_EMERGENCY_NUMBER,
-      signal: abort.signal,
-      history: lines
-        .filter((line) => line.speaker === "guest" || line.speaker === "ai")
-        .slice(-6)
-        .map((line) => ({ role: line.speaker === "guest" ? ("guest" as const) : ("ai" as const), text: line.text })),
-    })
-      .then((reply) => {
-        if (abort.signal.aborted) return;
-        setThinking(false);
-        void speakReply(reply);
-      })
-      .catch((cause) => {
-        if (abort.signal.aborted) return;
-        console.error("[guest] avatar reply failed", cause);
-        setThinking(false);
-        setResponding(false);
-      });
-  };
-
-  const toggleTalk = () => {
-    ensureAudioUnlocked();
-    if (thinking || responding) {
-      wantMicRef.current = true;
-      stopSpeech();
-      wantMicRef.current = true;
-      startListening();
-      return;
-    }
-    if (listening) {
-      const leftover = partialGuest.trim();
-      stopListening();
-      setPartialGuest("");
-      if (leftover) {
-        handleGuestUtterance(leftover);
-        return;
-      }
-      wantMicRef.current = false;
-      return;
-    }
-    if (speaking) stopSpeech();
-    wantMicRef.current = true;
-    startListening();
-  };
 
   const copyWifi = async (stay: Property) => {
     const payload = `${stay.wifiNetwork} · ${stay.wifiPassword}`;
@@ -407,88 +88,8 @@ export function GuestPortal({ propertyId }: { propertyId: string }) {
           Publix, parking, or check-in — in English or Spanish.
         </p>
 
-        <section className="mt-8 rounded-[2rem] border border-emerald-500/20 bg-gradient-to-b from-slate-900/90 to-slate-950 p-6 shadow-[0_0_60px_rgb(16_185_129_/_0.12)]">
-          <audio ref={audioRef} className="sr-only" preload="auto" playsInline />
-          <ReceptionistAvatar phase={phase} size="lg" name="Elena" />
-          <button
-            type="button"
-            onClick={toggleTalk}
-            className={`mt-5 w-full rounded-2xl py-3.5 text-sm font-bold transition-all ${
-              listening
-                ? "bg-sky-400 text-slate-950 shadow-lg shadow-sky-500/20"
-                : thinking || responding
-                  ? "bg-amber-400 text-slate-950"
-                  : "bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-500/25 hover:bg-emerald-400"
-            }`}
-          >
-            <span className="inline-flex items-center justify-center gap-2">
-              <Mic className="h-4 w-4" />
-              {listening
-                ? "Escuchando…"
-                : thinking || responding
-                  ? "Elena está respondiendo... (toca para cancelar)"
-                  : "Hablar con tu Conserje"}
-            </span>
-          </button>
-          {responding ? (
-            <button
-              type="button"
-              onClick={() => {
-                wantMicRef.current = true;
-                stopSpeech();
-                wantMicRef.current = true;
-                startListening();
-              }}
-              className="mt-3 w-full text-center text-xs font-medium text-emerald-300 hover:underline"
-            >
-              Elena está respondiendo... (toca para cancelar)
-            </button>
-          ) : null}
-          {tapToListen ? (
-            <button
-              type="button"
-              onClick={() => void playQueuedStudio()}
-              className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-white py-3 text-sm font-bold text-slate-950 hover:bg-slate-100"
-            >
-              <Play className="h-4 w-4" />
-              Tocar para escuchar
-            </button>
-          ) : null}
-          <button
-            type="button"
-            onClick={stopSpeech}
-            disabled={!speaking}
-            className="mt-2 w-full inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 py-2 text-[11px] font-semibold text-slate-400 disabled:opacity-40"
-          >
-            <VolumeX className="h-3.5 w-3.5" />
-            Silenciar
-          </button>
-
-          <div ref={scrollRef} className="mt-4 max-h-44 overflow-y-auto space-y-2">
-            {lines.length === 0 && !partialGuest ? (
-              <p className="text-[11px] text-slate-500 text-center px-4">
-                Tap the button and ask anything about your stay.
-              </p>
-            ) : null}
-            {lines.map((line) => (
-              <p
-                key={line.id}
-                className={`text-xs leading-relaxed ${
-                  line.speaker === "guest"
-                    ? "text-right text-slate-200"
-                    : line.speaker === "ai"
-                      ? "text-emerald-100/90"
-                      : "text-center text-slate-500"
-                }`}
-              >
-                {line.speaker === "guest" ? "You · " : line.speaker === "ai" ? "Elena · " : ""}
-                {line.text}
-              </p>
-            ))}
-            {partialGuest ? (
-              <p className="text-xs text-right text-sky-300/80">You · {partialGuest}</p>
-            ) : null}
-          </div>
+        <section className="mt-8">
+          <ElenaVoiceWidget />
         </section>
 
         <div className="mt-6 grid grid-cols-1 gap-3">

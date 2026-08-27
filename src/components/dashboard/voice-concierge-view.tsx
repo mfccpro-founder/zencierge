@@ -31,19 +31,6 @@ type SimLine = {
   text: string;
 };
 
-type SpeechResultList = ArrayLike<{ isFinal: boolean } & ArrayLike<{ transcript: string }>>;
-
-type SpeechRec = {
-  lang: string;
-  interimResults: boolean;
-  continuous: boolean;
-  onresult: ((event: { resultIndex: number; results: SpeechResultList }) => void) | null;
-  onerror: (() => void) | null;
-  onend: (() => void) | null;
-  start: () => void;
-  stop: () => void;
-};
-
 const FLORIDA_LINES: Record<FloridaLine, { number: string; area: string }> = {
   "305": { number: "+1 (305) 555-0199", area: "Miami-Dade · 305" },
   "954": { number: "+1 (954) 555-0144", area: "Broward · 954" },
@@ -88,7 +75,6 @@ export function VoiceConciergeView() {
 
   const idRef = useRef(0);
   const genRef = useRef(0);
-  const recRef = useRef<SpeechRec | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const callActiveRef = useRef(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -99,7 +85,6 @@ export function VoiceConciergeView() {
   const safetyRef = useRef(0);
   const playbackStartedRef = useRef(false);
   const heygenSpeakingRef = useRef(false);
-  const startListeningRef = useRef<() => void>(() => {});
 
   const nextId = () => {
     idRef.current += 1;
@@ -123,7 +108,6 @@ export function VoiceConciergeView() {
 
   useEffect(() => {
     return () => {
-      recRef.current?.stop();
       stopHumanVoice(audioRef);
     };
   }, []);
@@ -141,10 +125,9 @@ export function VoiceConciergeView() {
       setSpeaking(true);
       return;
     }
-    if (wasSpeaking && callActiveRef.current) {
+    if (wasSpeaking) {
       setSpeaking(false);
       setResponding(false);
-      startListeningRef.current();
     }
   }, [heygen.speaking]);
 
@@ -176,8 +159,6 @@ export function VoiceConciergeView() {
   };
 
   const stopListening = () => {
-    recRef.current?.stop();
-    recRef.current = null;
     setListening(false);
   };
 
@@ -195,7 +176,6 @@ export function VoiceConciergeView() {
       if (playbackStartedRef.current) return;
       console.error("[voice] 7s safety: playback never started — reset idle");
       cancelSpeech();
-      if (callActiveRef.current) startListening();
     }, 7000);
   };
 
@@ -258,7 +238,6 @@ export function VoiceConciergeView() {
     audio.onended = () => {
       keepAudioChannelAlive(audio);
       setSpeaking(false);
-      if (callActiveRef.current) startListening();
     };
     try {
       await resumePersistentAudio(audio);
@@ -313,7 +292,6 @@ export function VoiceConciergeView() {
           if (gen !== genRef.current) return;
           setSpeaking(false);
           setResponding(false);
-          if (callActiveRef.current) startListening();
         },
         onEngine: (engine) => {
           setEngineLabel(engine === "elevenlabs" ? "Studio · ElevenLabs" : "Studio · OpenAI HD");
@@ -451,72 +429,9 @@ export function VoiceConciergeView() {
     }
   };
 
-  const startListening = () => {
-    stopListening();
-    const Ctor = getSpeechRecognitionCtor();
-    if (!Ctor) {
-      setLines((current) => [
-        ...current,
-        {
-          id: nextId(),
-          speaker: "system",
-          text: "Live mic is not available in this browser. Use Chrome and allow the microphone, or type a question.",
-        },
-      ]);
-      return;
-    }
-
-    const recognition = new Ctor();
-    recognition.lang = "es-US";
-    recognition.interimResults = true;
-    recognition.continuous = false;
-    recognition.onresult = (event) => {
-      let interim = "";
-      let finalText = "";
-      for (let index = event.resultIndex; index < event.results.length; index += 1) {
-        const result = event.results[index];
-        const piece = result?.[0]?.transcript ?? "";
-        if (result?.isFinal) finalText += piece;
-        else interim += piece;
-      }
-      if (interim) setPartialGuest(interim);
-      if (finalText.trim()) {
-        setPartialGuest("");
-        handleGuestUtterance(finalText);
-      }
-    };
-    recognition.onerror = () => {
-      setListening(false);
-      setPartialGuest("");
-    };
-    recognition.onend = () => {
-      setListening(false);
-    };
-    recRef.current = recognition;
-    try {
-      recognition.start();
-      setListening(true);
-    } catch {
-      setListening(false);
-    }
-  };
-  startListeningRef.current = startListening;
-
   const toggleListen = () => {
     ensureAudioUnlocked();
-    if (listening) {
-      const leftover = partialGuest.trim();
-      stopListening();
-      setPartialGuest("");
-      if (leftover) handleGuestUtterance(leftover);
-      return;
-    }
-
     if (speaking || responding || heygen.speaking) cancelSpeech();
-    ensureVoiceSession();
-    callActiveRef.current = true;
-    void heygen.start().catch((cause) => console.error("[heygen] start on listen failed", cause));
-    startListening();
   };
 
   return (
@@ -538,7 +453,6 @@ export function VoiceConciergeView() {
             type="button"
             onClick={() => {
               cancelSpeech();
-              if (callActiveRef.current) startListening();
             }}
             className="mb-3 w-full text-center text-xs font-medium text-emerald-300 hover:underline"
           >
@@ -860,15 +774,6 @@ function SliderField({
       />
     </div>
   );
-}
-
-function getSpeechRecognitionCtor(): (new () => SpeechRec) | null {
-  if (typeof window === "undefined") return null;
-  const extra = window as unknown as {
-    SpeechRecognition?: new () => SpeechRec;
-    webkitSpeechRecognition?: new () => SpeechRec;
-  };
-  return extra.SpeechRecognition ?? extra.webkitSpeechRecognition ?? null;
 }
 
 function nightNote(hours: HoursMode, lang: ReplyLang) {

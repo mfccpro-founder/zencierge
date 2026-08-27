@@ -1,9 +1,10 @@
 "use client";
 
 import type { RefObject, ReactNode } from "react";
-import { Activity, Mic, MicOff, Phone, PhoneOff, Radio, Send, Sparkles, VolumeX } from "lucide-react";
+import { Activity, Phone, PhoneOff, Radio, Send, Sparkles, VolumeX } from "lucide-react";
 import type { Property } from "@/lib/dashboard-data";
-import { ReceptionistAvatar, type ReceptionistPhase } from "@/components/dashboard/receptionist-avatar";
+import type { ReceptionistPhase } from "@/components/dashboard/receptionist-avatar";
+import ElenaVoiceWidget from "@/components/dashboard/elena-voice-widget";
 
 export type ReceptionistLine = {
   id: string;
@@ -19,8 +20,8 @@ const QUICK_PROMPTS = [
 ];
 
 export function AiReceptionistStudio({
-  phase,
-  voiceName,
+  phase: _phase,
+  voiceName: _voiceName,
   properties,
   selectedProperty,
   propertyId,
@@ -39,13 +40,13 @@ export function AiReceptionistStudio({
   onSimulateCall,
   onEndCall,
   onSend,
-  onListen,
+  onListen: _onListen,
   onStopSpeech,
-  listening,
+  listening: _listening,
   speaking,
   transcriptRef,
-  videoRef,
-  videoReady,
+  videoRef: _videoRef,
+  videoReady: _videoReady,
 }: {
   phase: ReceptionistPhase;
   voiceName: string;
@@ -105,35 +106,9 @@ export function AiReceptionistStudio({
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-[280px_minmax(0,1fr)_minmax(0,1.1fr)] gap-6">
-        <div className="flex flex-col items-center justify-start rounded-2xl border border-slate-800/80 bg-slate-950/60 px-4 py-6">
-          <div className="relative w-full aspect-square max-h-56 overflow-hidden rounded-2xl border border-slate-800 bg-slate-950">
-            {videoRef ? (
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                className={`absolute inset-0 h-full w-full object-cover ${videoReady ? "opacity-100" : "opacity-0"}`}
-              />
-            ) : null}
-            {!videoReady ? (
-              <div className="absolute inset-0 flex items-center justify-center">
-                <ReceptionistAvatar phase={phase} size="lg" name={voiceName} />
-              </div>
-            ) : null}
-          </div>
+        <div className="flex flex-col items-center justify-start">
+          <ElenaVoiceWidget />
           <p className="mt-3 text-[11px] text-slate-500 text-center">{connectionLabel}</p>
-          <button
-            type="button"
-            onClick={onListen}
-            className={`mt-4 w-full flex items-center justify-center gap-2 rounded-2xl py-3 text-sm font-bold transition-all ${
-              listening
-                ? "bg-sky-500 text-slate-950 shadow-lg shadow-sky-500/25"
-                : "bg-emerald-500/90 text-slate-950 hover:bg-emerald-400"
-            }`}
-          >
-            <Mic className="h-4 w-4" />
-            {listening ? "Escuchando… suelta para enviar" : phase === "thinking" ? "Elena está respondiendo... (toca para cancelar)" : "Hablar con el Avatar"}
-          </button>
           <button
             type="button"
             onClick={onStopSpeech}
@@ -266,18 +241,6 @@ export function AiReceptionistStudio({
               onSend(draft);
             }}
           >
-            <button
-              type="button"
-              onClick={onListen}
-              className={`shrink-0 rounded-xl p-2 border transition-colors ${
-                listening
-                  ? "bg-sky-500/20 border-sky-500/40 text-sky-300"
-                  : "bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800"
-              }`}
-              aria-label={listening ? "Stop listening" : "Hablar con el Avatar"}
-            >
-              {listening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-            </button>
             <input
               value={draft}
               onChange={(event) => onDraftChange(event.target.value)}

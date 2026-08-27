@@ -79,7 +79,6 @@ export function DashboardApp({ initialTab = "overview" }: { initialTab?: NavId }
   const [selectedCall, setSelectedCall] = useState<Call | null>(calls[0]);
   const avatarGuideRef = useRef<AiAvatarGuideHandle>(null);
   const [hostName, setHostName] = useState("Javier");
-  const { properties } = useListings();
   const meta = pageMeta[activeTab];
   const showPageHeader = activeTab !== "voice";
 
@@ -178,7 +177,7 @@ export function DashboardApp({ initialTab = "overview" }: { initialTab?: NavId }
               : "hidden"
           }
         >
-          <ElenaWelcomeAvatar properties={properties} />
+          <ElenaWelcomeAvatar />
         </div>
 
         <div key={activeTab} className="view-enter">
