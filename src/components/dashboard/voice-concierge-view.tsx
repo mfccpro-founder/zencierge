@@ -148,6 +148,9 @@ export function VoiceConciergeView() {
   const startListeningRef = useRef<() => void>(() => {});
   const languageRef = useRef<LanguageMode>(language);
   const sessionLangRef = useRef<LanguageMode>(language);
+  // Language detected for the CURRENT utterance only. The UI selector never
+  // changes when the user speaks — in Auto it stays "Auto" forever.
+  const currentTurnLangRef = useRef<ReplyLang>("es");
   const speakingRef = useRef(false);
   const respondingRef = useRef(false);
   const thinkingRef = useRef(false);
@@ -377,10 +380,18 @@ export function VoiceConciergeView() {
     }
   };
 
-  const fallbackBrowserTts = (text: string, mode: LanguageMode) => {
+  // Base language for TTS replies: in Auto it is the language of the latest
+  // guest utterance; in manual modes it is the fixed selection.
+  const replyBaseLang = (): ReplyLang => {
+    const mode = languageRef.current;
+    if (mode === "auto") return currentTurnLangRef.current;
+    return mode === "en" ? "en" : "es";
+  };
+
+  const fallbackBrowserTts = (text: string) => {
     speakWithBrowserTts({
       text,
-      lang: detectReplyLang(text, mode === "auto" ? sessionLangRef.current : mode),
+      lang: detectReplyLang(text, replyBaseLang()),
       onStart: () => {
         speakingRef.current = true;
         setSpeaking(true);
@@ -417,10 +428,7 @@ export function VoiceConciergeView() {
           voiceProfile: forProfile.id,
           // Explicit language for this reply (es for Spanish replies) so the
           // TTS engine pronounces it with the right accent, never anchored.
-          language: detectReplyLang(
-            text,
-            languageRef.current === "auto" ? sessionLangRef.current : languageRef.current,
-          ),
+          language: detectReplyLang(text, replyBaseLang()),
         }),
       }).finally(() => window.clearTimeout(ttsTimer));
       if (!ttsRes.ok) {
@@ -499,7 +507,7 @@ export function VoiceConciergeView() {
       });
     } catch (cause) {
       console.error("[voice] speak failed", cause);
-      fallbackBrowserTts(text, languageRef.current === "auto" ? sessionLangRef.current : languageRef.current);
+      fallbackBrowserTts(text);
     } finally {
       respondingRef.current = false;
       thinkingRef.current = false;
@@ -567,20 +575,12 @@ export function VoiceConciergeView() {
     setDraft("");
     setLines((current) => [...current, { id: nextId(), speaker: "guest", text }]);
 
-    const wasAuto = languageRef.current === "auto";
+    // The UI language selector is IMMUTABLE to voice input: if the user chose
+    // "Auto" it stays "Auto" always. The per-turn language lives only in
+    // currentTurnLangRef and is sent to the API for THIS utterance alone.
+    const mode = languageRef.current;
     const detected = detectGuestLang(text);
-    if (wasAuto) {
-      sessionLangRef.current = detected;
-      languageRef.current = detected;
-      setLanguage(detected);
-    } else {
-      sessionLangRef.current = languageRef.current;
-    }
-    const conversationLang: LanguageMode = wasAuto
-      ? detected
-      : languageRef.current === "en"
-        ? "en"
-        : "es";
+    currentTurnLangRef.current = detected;
 
     const history = lines
       .filter((line) => line.speaker === "guest" || line.speaker === "ai")
@@ -601,7 +601,9 @@ export function VoiceConciergeView() {
           question,
           property: selectedProperty,
           properties,
-          language: conversationLang === "en" ? "en" : "es",
+          // Pass the mode untouched: "auto" lets the server decide from
+          // lastUserLang (this utterance only); es/en are forced manual modes.
+          language: mode,
           // Language of THIS utterance, detected per message — the server uses
           // it for the override flag so English history never anchors replies.
           lastUserLang: detected,
