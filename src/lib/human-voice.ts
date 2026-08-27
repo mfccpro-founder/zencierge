@@ -24,8 +24,8 @@ export const VOICE_PROFILES: VoiceProfile[] = [
     openaiVoice: "nova",
     elevenLabsVoiceId: "21m00Tcm4TlvDq8ikWAM",
     gender: "female",
-    rate: 0.85,
-    pitch: 1,
+    rate: 0.94,
+    pitch: 1.04,
     preview: {
       es: "Hola. Soy Elena, tu anfitriona en Miami. Estoy aquí para lo que necesites. El Wi-Fi, el estacionamiento, o simplemente sentirte en casa. Dime, ¿cómo te ayudo?",
       en: "Hi. I'm Elena, your Miami hostess. I'm right here if you need Wi-Fi, parking, or just a warm welcome. How can I help you?",
@@ -39,8 +39,8 @@ export const VOICE_PROFILES: VoiceProfile[] = [
     openaiVoice: "onyx",
     elevenLabsVoiceId: "pNInz6obpgDQGcFmaJgB",
     gender: "male",
-    rate: 0.85,
-    pitch: 1,
+    rate: 0.92,
+    pitch: 0.94,
     preview: {
       es: "Buenas noches. Soy Mateo, concierge de lujo. Será un placer atenderle con calma y discreción. ¿En qué puedo servirle?",
       en: "Good evening. This is Mateo, your luxury concierge. It would be my pleasure to assist you. Calmly, and with care. How may I help?",
@@ -54,8 +54,8 @@ export const VOICE_PROFILES: VoiceProfile[] = [
     openaiVoice: "shimmer",
     elevenLabsVoiceId: "EXAVITQu4vr4xnSDxMaL",
     gender: "female",
-    rate: 0.85,
-    pitch: 1,
+    rate: 0.96,
+    pitch: 1.06,
     preview: {
       es: "¡Hola! Soy Sarah. Hablo español también, así que no te preocupes. Dime qué necesitas y lo resolvemos ya.",
       en: "Hey! I'm Sarah, your friendly American host. Super happy to help — let's get you settled in. What do you need?",
@@ -64,21 +64,17 @@ export const VOICE_PROFILES: VoiceProfile[] = [
 ];
 
 const FEMALE_HINTS =
-  /female|woman|jenny|aria|emma|sara|sarah|zira|nova|ana|elena|paloma|libby|sonia|natural.*female|google us english/i;
+  /female|woman|jenny|aria|emma|sara|sarah|zira|nova|ana|elena|paloma|libby|sonia|sabina|helena|paulina|dalia|natural.*female|google us english/i;
 const MALE_HINTS =
   /male|man|guy|davis|christopher|steffan|andrew|brian|adam|mateo|jorge|onyx|david|google uk english male/i;
 
 const PREMIUM_HINT =
-  /natural|neural|google|premium|enhanced|wavenet|studio|online \(natural\)|online \(neural\)|microsoft.*natural|microsoft.*neural/i;
+  /natural|neural|google|premium|enhanced|wavenet|studio|online \(natural\)|online \(neural\)|microsoft.*natural|microsoft.*neural|google us english|google uk english|google español|google espanol/i;
 const ROBOT_HINT =
-  /compact|espeak|microsoft david -|microsoft zira desktop|microsoft mark desktop|desktop - english|speechify compact/i;
+  /compact|espeak|microsoft david -|microsoft zira desktop|microsoft mark desktop|desktop - english|speechify compact|android|samsung|pico|flite/i;
 
 const SPANISH_VOICE_NAMES =
   /google español|microsoft sabina|microsoft helena|microsoft paulina|microsoft dalia|microsoft jorge|\bmonica\b|\bmónica\b|\bpaulina\b|\bpenelope\b|\bpenélope\b|\bsofia\b|\bsofía\b|\bsabina\b|\bhelena\b|\bdalia\b/i;
-
-const SPANISH_FEMALE_NAMES =
-  /sabina|helena|paulina|dalia|monica|mónica|penelope|penélope|sofia|sofía|google español/i;
-const SPANISH_MALE_NAMES = /jorge/i;
 
 export function getVoiceProfile(id: VoiceProfileId): VoiceProfile {
   return VOICE_PROFILES.find((profile) => profile.id === id) ?? VOICE_PROFILES[0]!;
@@ -87,7 +83,23 @@ export function getVoiceProfile(id: VoiceProfileId): VoiceProfile {
 export function isPremiumVoice(voice: SpeechSynthesisVoice) {
   const label = `${voice.name} ${voice.voiceURI}`.toLowerCase();
   if (ROBOT_HINT.test(label)) return false;
-  return PREMIUM_HINT.test(label);
+  return PREMIUM_HINT.test(label) || !voice.localService;
+}
+
+function voiceNaturalnessScore(voice: SpeechSynthesisVoice, gender: "female" | "male") {
+  const label = `${voice.name} ${voice.voiceURI} ${voice.lang}`;
+  let score = 0;
+  if (ROBOT_HINT.test(label)) score -= 80;
+  if (/natural/i.test(label)) score += 28;
+  if (/neural/i.test(label)) score += 26;
+  if (/google/i.test(label)) score += 22;
+  if (/wavenet|studio|online/i.test(label)) score += 16;
+  if (/premium|enhanced/i.test(label)) score += 10;
+  if (!voice.localService) score += 12;
+  if (voice.default) score += 1;
+  const genderHint = gender === "female" ? FEMALE_HINTS : MALE_HINTS;
+  if (genderHint.test(label)) score += 6;
+  return score;
 }
 
 function normalizeLangTag(lang: string) {
@@ -113,15 +125,20 @@ export function pickSpanishVoice(
   const spanish = voices.filter(isNativeSpanishVoice);
   if (spanish.length === 0) return null;
 
-  const named = spanish.filter((voice) => SPANISH_VOICE_NAMES.test(voice.name));
-  const preferredLang = spanish.filter((voice) => preferredSpanishLang(voice.lang));
-  const pool = named.length > 0 ? named : preferredLang.length > 0 ? preferredLang : spanish;
+  const ranked = [...spanish].sort((a, b) => {
+    const langBonus = (voice: SpeechSynthesisVoice) =>
+      preferredSpanishLang(voice.lang) ? 8 : 0;
+    const namedBonus = (voice: SpeechSynthesisVoice) =>
+      SPANISH_VOICE_NAMES.test(voice.name) ? 6 : 0;
+    return (
+      voiceNaturalnessScore(b, gender) +
+      langBonus(b) +
+      namedBonus(b) -
+      (voiceNaturalnessScore(a, gender) + langBonus(a) + namedBonus(a))
+    );
+  });
 
-  const genderRx = gender === "male" ? SPANISH_MALE_NAMES : SPANISH_FEMALE_NAMES;
-  const gendered = pool.filter((voice) => genderRx.test(voice.name));
-  if (gendered[0]) return gendered[0];
-  if (pool[0]) return pool[0];
-  return spanish.find((voice) => normalizeLangTag(voice.lang).startsWith("es")) ?? spanish[0] ?? null;
+  return ranked[0] ?? null;
 }
 
 export function pickNeuralVoice(
@@ -132,26 +149,20 @@ export function pickNeuralVoice(
   if (lang === "es") return pickSpanishVoice(voices, profile.gender);
 
   const english = voices.filter((voice) => normalizeLangTag(voice.lang).startsWith("en"));
-  const premium = english.filter(isPremiumVoice);
-  const pool = premium.length > 0 ? premium : english.length > 0 ? english : voices;
-  const genderHint = profile.gender === "female" ? FEMALE_HINTS : MALE_HINTS;
+  const pool = english.length > 0 ? english : voices;
+  const ranked = [...pool].sort((a, b) => {
+    let extraA = 0;
+    let extraB = 0;
+    const labelA = `${a.name} ${a.lang}`;
+    const labelB = `${b.name} ${b.lang}`;
+    if (isNativeSpanishVoice(a)) extraA -= 20;
+    if (isNativeSpanishVoice(b)) extraB -= 20;
+    if (profile.id === "sarah" && /en-US|google us english/i.test(labelA)) extraA += 4;
+    if (profile.id === "sarah" && /en-US|google us english/i.test(labelB)) extraB += 4;
+    return voiceNaturalnessScore(b, profile.gender) + extraB - (voiceNaturalnessScore(a, profile.gender) + extraA);
+  });
 
-  const scored = pool
-    .map((voice) => {
-      let score = 0;
-      const label = `${voice.name} ${voice.lang}`;
-      if (normalizeLangTag(voice.lang).startsWith("en")) score += 8;
-      if (isNativeSpanishVoice(voice)) score -= 12;
-      if (genderHint.test(label)) score += 4;
-      if (/google/i.test(label)) score += 5;
-      if (/neural|natural/i.test(label)) score += 6;
-      if (/microsoft/i.test(label) && /neural|natural|online/i.test(label)) score += 5;
-      if (profile.id === "sarah" && /en-US|google us english/i.test(label)) score += 3;
-      return { voice, score };
-    })
-    .sort((a, b) => b.score - a.score);
-
-  return scored[0]?.voice ?? null;
+  return ranked[0] ?? null;
 }
 
 let cachedVoices: SpeechSynthesisVoice[] = [];
@@ -201,8 +212,8 @@ function waitForVoices(): Promise<SpeechSynthesisVoice[]> {
   return voicesReady;
 }
 
-export const SPEECH_RATE_EN = 0.85;
-export const SPEECH_RATE_ES = 0.82;
+export const SPEECH_RATE_EN = 0.94;
+export const SPEECH_RATE_ES = 0.9;
 
 /** Insert breath pauses the synthesizer will honor. */
 export function paceForSpeech(text: string) {
@@ -245,43 +256,54 @@ export async function speakHumanVoice(options: {
   language: LanguageMode;
   speed: number;
   stability: number;
-  elevenKey: string;
-  openaiKey: string;
+  elevenKey?: string;
+  openaiKey?: string;
   audioRef: { current: HTMLAudioElement | null };
   shouldCancel: () => boolean;
   onEngine?: (engine: "elevenlabs" | "openai" | "browser-neural") => void;
 }): Promise<void> {
   const lang = detectReplyLang(options.text, options.language);
-  const eleven = options.elevenKey.trim();
-  const openai = options.openaiKey.trim();
+  const eleven = options.elevenKey?.trim() ?? "";
+  const openai = options.openaiKey?.trim() ?? "";
+  const providers: Array<{ provider: "elevenlabs" | "openai" | "auto"; apiKey: string }> = [];
+  if (eleven) providers.push({ provider: "elevenlabs", apiKey: eleven });
+  if (openai) providers.push({ provider: "openai", apiKey: openai });
+  if (providers.length === 0) {
+    providers.push({ provider: "auto", apiKey: "" });
+  }
 
-  if (eleven || openai) {
+  for (const item of providers) {
     try {
       await speakStudioAudio({
         text: options.text,
         profile: options.profile,
         speed: options.speed,
         stability: options.stability,
-        provider: eleven ? "elevenlabs" : "openai",
-        apiKey: eleven || openai,
+        provider: item.provider,
+        apiKey: item.apiKey,
         audioRef: options.audioRef,
         shouldCancel: options.shouldCancel,
       });
-      options.onEngine?.(eleven ? "elevenlabs" : "openai");
+      options.onEngine?.(item.provider === "auto" ? "elevenlabs" : item.provider);
       return;
-    } catch {
+    } catch (cause) {
+      console.error("[voice] Studio TTS failed, will try next engine", item.provider, cause);
       if (options.shouldCancel()) return;
     }
   }
 
   options.onEngine?.("browser-neural");
-  await speakBrowserNeural({
-    text: options.text,
-    profile: options.profile,
-    lang,
-    speed: options.speed,
-    shouldCancel: options.shouldCancel,
-  });
+  try {
+    await speakBrowserNeural({
+      text: options.text,
+      profile: options.profile,
+      lang,
+      speed: options.speed,
+      shouldCancel: options.shouldCancel,
+    });
+  } catch (cause) {
+    console.error("[voice] Browser speechSynthesis fallback failed", cause);
+  }
 }
 
 export function stopHumanVoice(audioRef: { current: HTMLAudioElement | null }) {
@@ -291,9 +313,76 @@ export function stopHumanVoice(audioRef: { current: HTMLAudioElement | null }) {
   const audio = audioRef.current;
   if (audio) {
     audio.pause();
-    audio.removeAttribute("src");
+    if (audio !== unlockedAudio) {
+      audio.removeAttribute("src");
+    }
     audioRef.current = null;
   }
+}
+
+const SILENT_WAV =
+  "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
+
+let speechUnlocked = false;
+let unlockedAudio: HTMLAudioElement | null = null;
+
+/** Call from the first user tap so later TTS/MP3 and speechSynthesis are allowed. */
+export function unlockSpeechAudio() {
+  if (typeof window === "undefined") return;
+  primeVoices();
+  try {
+    const AudioContextCtor =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (AudioContextCtor) {
+      const ctx = new AudioContextCtor();
+      void ctx.resume().catch((cause) => {
+        console.error("[voice] AudioContext resume failed", cause);
+      });
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      gain.gain.value = 0;
+      oscillator.connect(gain);
+      gain.connect(ctx.destination);
+      oscillator.start();
+      oscillator.stop(ctx.currentTime + 0.04);
+    }
+  } catch (cause) {
+    console.error("[voice] AudioContext unlock failed", cause);
+  }
+
+  try {
+    if (!unlockedAudio) unlockedAudio = new Audio();
+    unlockedAudio.src = SILENT_WAV;
+    void unlockedAudio.play().then(() => {
+      unlockedAudio?.pause();
+    }).catch((cause) => {
+      console.error("[voice] Silent audio unlock failed", cause);
+    });
+  } catch (cause) {
+    console.error("[voice] Audio element unlock failed", cause);
+  }
+
+  if ("speechSynthesis" in window) {
+    try {
+      window.speechSynthesis.cancel();
+      const warm = new SpeechSynthesisUtterance(" ");
+      warm.volume = 0;
+      warm.rate = 1;
+      window.speechSynthesis.speak(warm);
+      window.speechSynthesis.resume();
+    } catch (cause) {
+      console.error("[voice] speechSynthesis unlock failed", cause);
+    }
+  }
+  if (speechUnlocked && "speechSynthesis" in window) {
+    try {
+      window.speechSynthesis.resume();
+    } catch (cause) {
+      console.error("[voice] speechSynthesis resume failed", cause);
+    }
+  }
+  speechUnlocked = true;
 }
 
 async function speakStudioAudio(options: {
@@ -301,7 +390,7 @@ async function speakStudioAudio(options: {
   profile: VoiceProfile;
   speed: number;
   stability: number;
-  provider: "elevenlabs" | "openai";
+  provider: "elevenlabs" | "openai" | "auto";
   apiKey: string;
   audioRef: { current: HTMLAudioElement | null };
   shouldCancel: () => boolean;
@@ -311,24 +400,34 @@ async function speakStudioAudio(options: {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       provider: options.provider,
-      apiKey: options.apiKey,
+      ...(options.apiKey ? { apiKey: options.apiKey } : {}),
       text: options.text,
       voiceProfile: options.profile.id,
       speed: options.speed,
       stability: options.stability,
     }),
+  }).catch((cause) => {
+    console.error("[voice] /api/tts network error", cause);
+    throw cause;
   });
 
   if (!response.ok) {
-    throw new Error("Studio TTS unavailable");
+    const detail = await response.text().catch(() => "");
+    console.error("[voice] /api/tts rejected", response.status, detail.slice(0, 400));
+    throw new Error(`Studio TTS unavailable (${response.status})`);
   }
 
   const blob = await response.blob();
+  if (!blob.size || blob.type.includes("json")) {
+    console.error("[voice] /api/tts returned empty or JSON instead of audio", blob.type, blob.size);
+    throw new Error("Studio TTS unavailable");
+  }
   if (options.shouldCancel()) return;
 
   const url = URL.createObjectURL(blob);
-  const audio = new Audio(url);
-  audio.playbackRate = Math.min(1.05, Math.max(0.82, options.speed));
+  const audio = unlockedAudio ?? new Audio();
+  audio.playbackRate = Math.min(1.08, Math.max(0.9, options.speed || 1));
+  audio.src = url;
   options.audioRef.current = audio;
 
   await new Promise<void>((resolve, reject) => {
@@ -338,6 +437,7 @@ async function speakStudioAudio(options: {
     };
     audio.onerror = () => {
       URL.revokeObjectURL(url);
+      console.error("[voice] MP3 playback error");
       reject(new Error("Audio playback failed"));
     };
     if (options.shouldCancel()) {
@@ -345,7 +445,11 @@ async function speakStudioAudio(options: {
       resolve();
       return;
     }
-    void audio.play().catch(reject);
+    void audio.play().catch((cause) => {
+      URL.revokeObjectURL(url);
+      console.error("[voice] MP3 play() blocked or failed", cause);
+      reject(cause instanceof Error ? cause : new Error("Audio playback failed"));
+    });
   });
 }
 
@@ -362,7 +466,10 @@ async function speakBrowserNeural(options: {
   shouldCancel: () => boolean;
   onStart?: () => void;
 }) {
-  if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+    console.error("[voice] speechSynthesis is not available in this browser");
+    return;
+  }
   if (options.shouldCancel()) return;
   if (window.speechSynthesis.paused) window.speechSynthesis.resume();
 
@@ -371,19 +478,22 @@ async function speakBrowserNeural(options: {
 
   const voice = pickNeuralVoice(voices.length > 0 ? voices : currentVoices(), options.profile, options.lang);
   const spanish = options.lang === "es";
-  const rate = spanish ? SPEECH_RATE_ES : SPEECH_RATE_EN;
+  const rate = Math.min(1.05, Math.max(0.86, options.profile.rate * (spanish ? 0.97 : 1)));
+  const pitch = Math.min(1.15, Math.max(0.88, options.profile.pitch));
   const utteranceLang = spanish
     ? voice && normalizeLangTag(voice.lang).startsWith("es")
       ? voice.lang.replaceAll("_", "-")
       : "es-US"
-    : "en-US";
+    : voice && normalizeLangTag(voice.lang).startsWith("en")
+      ? voice.lang.replaceAll("_", "-")
+      : "en-US";
 
   await speakUtterance({
     text: paceForSpeech(options.text),
     voice,
     utteranceLang,
     rate,
-    pitch: 1,
+    pitch,
     shouldCancel: options.shouldCancel,
     onStart: options.onStart,
   });
@@ -410,13 +520,14 @@ function speakUtterance(options: {
     if (options.voice) utterance.voice = options.voice;
     utterance.lang = options.utteranceLang;
     utterance.rate = options.rate;
-    utterance.pitch = 1;
+    utterance.pitch = options.pitch;
     utterance.onstart = () => options.onStart?.();
     utterance.onend = () => {
       if (heldUtterance === utterance) heldUtterance = null;
       resolve();
     };
-    utterance.onerror = () => {
+    utterance.onerror = (event) => {
+      console.error("[voice] speechSynthesis utterance error", event.error);
       if (heldUtterance === utterance) heldUtterance = null;
       resolve();
     };

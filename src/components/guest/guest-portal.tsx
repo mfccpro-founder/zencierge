@@ -19,8 +19,10 @@ import { answerGuestQuestion, HOST_EMERGENCY_NUMBER } from "@/lib/receptionist-r
 import {
   getVoiceProfile,
   primeVoices,
+  speakHumanVoice,
   speakWithSpeechSynthesis,
   stopHumanVoice,
+  unlockSpeechAudio,
 } from "@/lib/human-voice";
 import { fetchPropertyById } from "@/lib/supabase-listings";
 
@@ -128,16 +130,32 @@ export function GuestPortal({ propertyId }: { propertyId: string }) {
   const speakReply = async (text: string) => {
     const gen = ++genRef.current;
     setLines((current) => [...current, { id: nextId(), speaker: "ai", text }]);
-    await speakWithSpeechSynthesis({
-      text,
-      profile,
-      language: "auto",
-      speed: 0.85,
-      shouldCancel: () => gen !== genRef.current,
-      onStart: () => {
-        if (gen === genRef.current) setSpeaking(true);
-      },
-    });
+    setSpeaking(true);
+    try {
+      await speakHumanVoice({
+        text,
+        profile,
+        language: "auto",
+        speed: 1,
+        stability: 48,
+        audioRef,
+        shouldCancel: () => gen !== genRef.current,
+        onEngine: () => {
+          if (gen === genRef.current) setSpeaking(true);
+        },
+      });
+    } catch (cause) {
+      console.error("[guest] Elena voice failed; retrying speechSynthesis", cause);
+      if (gen === genRef.current) {
+        await speakWithSpeechSynthesis({
+          text,
+          profile,
+          language: "auto",
+          speed: 1,
+          shouldCancel: () => gen !== genRef.current,
+        });
+      }
+    }
     if (gen === genRef.current) setSpeaking(false);
   };
 
@@ -163,6 +181,7 @@ export function GuestPortal({ propertyId }: { propertyId: string }) {
   };
 
   const toggleTalk = () => {
+    unlockSpeechAudio();
     if (listening) {
       const leftover = partialGuest.trim();
       stopListening();

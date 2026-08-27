@@ -12,8 +12,8 @@ import {
   getVoiceProfile,
   primeVoices,
   speakHumanVoice,
-  speakWithSpeechSynthesis,
   stopHumanVoice,
+  unlockSpeechAudio,
   type LanguageMode,
   type ReplyLang,
   type VoiceProfile,
@@ -207,18 +207,9 @@ export function VoiceConciergeView() {
   const streamReply = async (text: string) => {
     const gen = ++genRef.current;
     setPartialAi(text);
-    setEngineLabel("Browser · speechSynthesis");
+    setSpeaking(true);
 
-    const audio = speakWithSpeechSynthesis({
-      text,
-      profile,
-      language,
-      speed: speedRef.current,
-      shouldCancel: () => gen !== genRef.current,
-      onStart: () => {
-        if (gen === genRef.current) setSpeaking(true);
-      },
-    });
+    const audio = speak(text);
 
     const step = Math.max(2, Math.round(4 * speedRef.current));
     for (let i = 0; i <= text.length; i += step) {
@@ -282,6 +273,7 @@ export function VoiceConciergeView() {
   };
 
   const startCall = () => {
+    unlockSpeechAudio();
     const greeting = buildGreeting({
       profile,
       language,
@@ -303,6 +295,7 @@ export function VoiceConciergeView() {
   };
 
   const playPreview = async (item: VoiceProfile) => {
+    unlockSpeechAudio();
     cancelSpeech();
     setVoiceId(item.id);
     setPreviewing(item.id);
@@ -318,6 +311,7 @@ export function VoiceConciergeView() {
   };
 
   const toggleListen = () => {
+    unlockSpeechAudio();
     if (listening) {
       const leftover = partialGuest.trim();
       stopListening();
