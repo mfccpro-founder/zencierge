@@ -92,27 +92,33 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
 
   const handleSendMessage = (event: FormEvent) => {
     event.preventDefault();
+    event.stopPropagation();
     void sendQuestion();
   };
 
-  if (!property) return null;
+  const place = property
+    ? `${property.name} (${property.address}, ${property.city})`
+    : "tu propiedad";
 
   return (
-    <section className="rounded-3xl border border-emerald-500/25 bg-gradient-to-br from-slate-900 via-slate-950 to-emerald-950/20 p-5 sm:p-6">
+    <section
+      id="elena-welcome-avatar"
+      className="relative z-20 isolate rounded-3xl border border-emerald-500/25 bg-gradient-to-br from-slate-900 via-slate-950 to-emerald-950/20 p-5 sm:p-6 pointer-events-auto"
+    >
       <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
         <div>
           <p className="text-[10px] uppercase tracking-[0.2em] text-emerald-400/80 font-semibold">Avatar Elena</p>
           <h3 className="text-lg font-semibold text-white mt-1">Conserje en español</h3>
           <p className="text-xs text-slate-400 mt-1 max-w-xl">
-            Pregunta en español. GPT responde con la dirección de {property.name} ({property.address}, {property.city}).
+            Pregunta en español. GPT responde con la dirección de {place}.
             El audio sale siempre de POST /api/tts con voice nova.
           </p>
         </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-[280px_minmax(0,1fr)] gap-5">
-        <div className="flex flex-col items-center">
-          <div className="relative w-full aspect-[3/4] max-h-80 overflow-hidden rounded-2xl border border-slate-800 bg-slate-950">
+        <div className="relative z-10 flex flex-col items-center pointer-events-auto">
+          <div className="relative w-full aspect-[3/4] max-h-80 overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 pointer-events-none">
             <div className="absolute inset-0 flex items-center justify-center">
               <ReceptionistAvatar phase="idle" size="lg" name="Elena" />
             </div>
@@ -125,17 +131,27 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
             <Mic className="h-4 w-4" />
             Hablar con Elena
           </button>
-          <form onSubmit={handleSendMessage} className="mt-4 flex gap-2 w-full max-w-md mx-auto">
+          <form
+            onSubmit={handleSendMessage}
+            className="relative z-20 mt-4 flex gap-2 w-full max-w-md mx-auto pointer-events-auto"
+          >
             <input
+              id="elena-question"
+              name="elena-question"
               type="text"
+              autoComplete="off"
+              autoFocus
+              tabIndex={0}
+              disabled={busy}
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               placeholder="Escribe tu pregunta para Elena..."
-              className="flex-1 px-4 py-2 rounded-lg bg-slate-800 text-white border border-slate-700 focus:outline-none focus:border-blue-500"
+              className="flex-1 px-4 py-2 rounded-lg bg-slate-800 text-white border border-slate-700 focus:outline-none focus:border-blue-500 disabled:opacity-60"
             />
             <button
               type="submit"
-              className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition"
+              disabled={busy || !property}
+              className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition disabled:opacity-50"
             >
               Enviar
             </button>
@@ -162,7 +178,7 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
             </div>
           ) : (
             <p className="text-sm text-slate-500">
-              Ejemplo: «¿Hay una farmacia cerca?» — Elena usa {property.address}, {property.city}.
+              Ejemplo: «¿Hay una farmacia cerca?» — Elena usa {property ? `${property.address}, ${property.city}` : "la dirección de la propiedad"}.
             </p>
           )}
         </div>

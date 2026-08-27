@@ -79,6 +79,7 @@ export function DashboardApp({ initialTab = "overview" }: { initialTab?: NavId }
   const [selectedCall, setSelectedCall] = useState<Call | null>(calls[0]);
   const avatarGuideRef = useRef<AiAvatarGuideHandle>(null);
   const [hostName, setHostName] = useState("Javier");
+  const { properties } = useListings();
   const meta = pageMeta[activeTab];
   const showPageHeader = activeTab !== "voice";
 
@@ -170,6 +171,16 @@ export function DashboardApp({ initialTab = "overview" }: { initialTab?: NavId }
           />
         </div>
 
+        <div
+          className={
+            activeTab === "overview"
+              ? "relative z-20 isolate pointer-events-auto mb-8"
+              : "hidden"
+          }
+        >
+          <ElenaWelcomeAvatar properties={properties} />
+        </div>
+
         <div key={activeTab} className="view-enter">
           {activeTab === "overview" ? (
             <OverviewPanel selectedCall={selectedCall} setSelectedCall={setSelectedCall} />
@@ -249,7 +260,6 @@ function OverviewPanel({
 
   return (
     <div className="space-y-8">
-      <ElenaWelcomeAvatar properties={properties} />
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800/80 shadow-sm relative overflow-hidden">
           <div className="flex items-center justify-between">

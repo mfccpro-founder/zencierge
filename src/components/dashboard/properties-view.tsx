@@ -23,8 +23,7 @@ import {
   type OccupancyStatus,
 } from "@/lib/dashboard-data";
 import { useListings } from "@/components/dashboard/listings-provider";
-import { createClient } from "@supabase/supabase-js";
-import { SUPABASE_ANON_KEY, SUPABASE_URL } from "@/lib/supabase-config";
+import { getSupabase } from "@/lib/supabase";
 
 type CityFilter = "all" | PropertyCity;
 type OccupancyFilter = "all" | OccupancyStatus;
@@ -148,9 +147,7 @@ export function PropertiesView() {
     const currentHandbookText = handbookDraft.trim();
     setSavingHandbook(true);
     try {
-      const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-      });
+      const supabase = getSupabase();
       const { error: updateError } = await supabase
         .from("properties")
         .update({ ai_handbook: currentHandbookText })

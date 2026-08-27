@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { IgnoreThirdPartyAnalytics } from "@/components/ignore-third-party-analytics";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -29,6 +30,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         className="min-h-full flex flex-col bg-background text-foreground"
         suppressHydrationWarning
       >
+        {/* No amplitude.init / @amplitude/analytics-browser / experiment flags SDK in this app. */}
+        <IgnoreThirdPartyAnalytics />
         {children}
       </body>
     </html>
