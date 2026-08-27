@@ -11,7 +11,6 @@ import {
   VOICE_PROFILES,
   getVoiceProfile,
   keepAudioChannelAlive,
-  primeVoices,
   resumePersistentAudio,
   speakHumanVoice,
   stopHumanVoice,
@@ -76,8 +75,9 @@ export function VoiceConciergeView() {
   const [openaiKey, setOpenaiKey] = useState("");
   const [showKeys, setShowKeys] = useState(false);
   const [previewing, setPreviewing] = useState<VoiceProfileId | null>(null);
-  const [engineLabel, setEngineLabel] = useState("Browser Neural");
+  const [engineLabel, setEngineLabel] = useState("Studio TTS");
   const [tapToListen, setTapToListen] = useState(false);
+  const [responding, setResponding] = useState(false);
 
   const profile = getVoiceProfile(voiceId);
   const selectedProperty =
@@ -108,7 +108,6 @@ export function VoiceConciergeView() {
   }, [lines, partialAi, partialGuest]);
 
   useEffect(() => {
-    primeVoices();
     const storedEleven = window.localStorage.getItem("zencierge.elevenlabsKey") ?? "";
     const storedOpenAi = window.localStorage.getItem("zencierge.openaiTtsKey") ?? "";
     if (storedEleven) setElevenKey(storedEleven);
@@ -136,7 +135,7 @@ export function VoiceConciergeView() {
     );
   }
 
-  const phase: ReceptionistPhase = thinking
+  const phase: ReceptionistPhase = thinking || responding
     ? "thinking"
     : listening
       ? "listening"
@@ -162,6 +161,7 @@ export function VoiceConciergeView() {
     setPreviewing(null);
     setPartialAi("");
     setTapToListen(false);
+    setResponding(false);
   };
 
   const endCall = () => {
@@ -192,6 +192,7 @@ export function VoiceConciergeView() {
   const playQueuedStudio = async () => {
     const audio = audioRef.current;
     if (!audio) return;
+    stopListening();
     setTapToListen(false);
     setSpeaking(true);
     audio.loop = false;
@@ -199,6 +200,7 @@ export function VoiceConciergeView() {
     audio.onended = () => {
       keepAudioChannelAlive(audio);
       setSpeaking(false);
+      if (callActiveRef.current) startListening();
     };
     try {
       await resumePersistentAudio(audio);
@@ -210,6 +212,8 @@ export function VoiceConciergeView() {
 
   const speak = async (text: string, forProfile = profile) => {
     const gen = genRef.current;
+    stopListening();
+    setResponding(true);
     await speakHumanVoice({
       text,
       profile: forProfile,
@@ -221,16 +225,25 @@ export function VoiceConciergeView() {
       audioRef,
       shouldCancel: () => gen !== genRef.current,
       onAutoplayBlocked: () => {
-        if (gen === genRef.current) setTapToListen(true);
+        if (gen === genRef.current) {
+          setResponding(false);
+          setTapToListen(true);
+        }
+      },
+      onPlaybackStart: () => {
+        if (gen === genRef.current) {
+          setResponding(false);
+          setSpeaking(true);
+        }
+      },
+      onPlaybackEnd: () => {
+        if (gen !== genRef.current) return;
+        setSpeaking(false);
+        setResponding(false);
+        if (callActiveRef.current) startListening();
       },
       onEngine: (engine) => {
-        setEngineLabel(
-          engine === "elevenlabs"
-            ? "Studio · ElevenLabs"
-            : engine === "openai"
-              ? "Studio · OpenAI HD"
-              : "Browser Neural",
-        );
+        setEngineLabel(engine === "elevenlabs" ? "Studio · ElevenLabs" : "Studio · OpenAI HD");
       },
     });
   };
@@ -238,9 +251,14 @@ export function VoiceConciergeView() {
   const streamReply = async (text: string) => {
     const gen = ++genRef.current;
     setPartialAi(text);
-    setSpeaking(true);
+    setResponding(true);
+    stopListening();
 
-    const audio = speak(text);
+    const playback = speak(text).catch((cause) => {
+      console.error("[voice] Studio TTS failed", cause);
+      setResponding(false);
+      setSpeaking(false);
+    });
 
     const step = Math.max(2, Math.round(4 * speedRef.current));
     for (let i = 0; i <= text.length; i += step) {
@@ -250,9 +268,8 @@ export function VoiceConciergeView() {
     if (gen !== genRef.current) return;
     setPartialAi("");
     setLines((current) => [...current, { id: nextId(), speaker: "ai", text }]);
-    await audio;
+    await playback;
     if (gen !== genRef.current) return;
-    setSpeaking(false);
   };
 
   const ensureVoiceSession = () => {
@@ -291,6 +308,7 @@ export function VoiceConciergeView() {
       emergencyNumber,
     });
     setThinking(true);
+    setResponding(true);
     const started = performance.now();
     window.setTimeout(() => {
       if (!callActiveRef.current) {
@@ -341,20 +359,8 @@ export function VoiceConciergeView() {
     }
   };
 
-  const toggleListen = () => {
-    ensureAudioUnlocked();
-    if (listening) {
-      const leftover = partialGuest.trim();
-      stopListening();
-      setPartialGuest("");
-      if (leftover) handleGuestUtterance(leftover);
-      return;
-    }
-
-    if (speaking) cancelSpeech();
-    ensureVoiceSession();
-    callActiveRef.current = true;
-
+  const startListening = () => {
+    stopListening();
     const Ctor = getSpeechRecognitionCtor();
     if (!Ctor) {
       setLines((current) => [
@@ -403,6 +409,22 @@ export function VoiceConciergeView() {
     }
   };
 
+  const toggleListen = () => {
+    ensureAudioUnlocked();
+    if (listening) {
+      const leftover = partialGuest.trim();
+      stopListening();
+      setPartialGuest("");
+      if (leftover) handleGuestUtterance(leftover);
+      return;
+    }
+
+    if (speaking || responding) cancelSpeech();
+    ensureVoiceSession();
+    callActiveRef.current = true;
+    startListening();
+  };
+
   return (
     <div className="space-y-8">
       <div>
@@ -417,6 +439,9 @@ export function VoiceConciergeView() {
 
       <audio ref={audioRef} className="sr-only" preload="auto" playsInline />
       <div id="ai-receptionist">
+        {responding ? (
+          <p className="mb-3 text-center text-xs font-medium text-emerald-300">Elena está respondiendo...</p>
+        ) : null}
         {tapToListen ? (
           <button
             type="button"
@@ -560,9 +585,8 @@ export function VoiceConciergeView() {
                 </button>
               </div>
               <p className="text-[11px] text-slate-500 leading-relaxed">
-                Add an ElevenLabs or OpenAI TTS HD key for studio-grade audio. Without a key, the
-                simulator uses only Natural / Google / Microsoft Neural voices installed on this
-                device — never the default robotic ones.
+                Audio is always generated as MP3 by /api/tts (OpenAI tts-1-hd or ElevenLabs). Keys in
+                .env.local or pasted here.
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
@@ -600,8 +624,8 @@ export function VoiceConciergeView() {
               </div>
               <p className="text-[11px] text-emerald-400/80">
                 {studioReady
-                  ? "Studio audio enabled. Previews and test calls will use HD TTS first."
-                  : "No studio key yet — Neural browser fallback is active."}
+                  ? "Studio audio enabled. Previews and test calls use /api/tts MP3."
+                  : "Uses ELEVENLABS_API_KEY or OPENAI_API_KEY from the server if no key is pasted here."}
               </p>
             </div>
           </section>

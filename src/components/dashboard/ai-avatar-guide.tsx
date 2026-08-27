@@ -9,10 +9,6 @@ import {
   Wand2,
   X,
 } from "lucide-react";
-import {
-  primeVoices,
-  stopHumanVoice,
-} from "@/lib/human-voice";
 
 type GuideLang = "en" | "es";
 
@@ -154,7 +150,6 @@ export const AiAvatarGuide = forwardRef<AiAvatarGuideHandle, AiAvatarGuideProps>
 
   const playingRef = useRef(false);
   const timeRef = useRef(0);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
   const speechGen = useRef(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
@@ -164,7 +159,6 @@ export const AiAvatarGuide = forwardRef<AiAvatarGuideHandle, AiAvatarGuideProps>
   useEffect(() => {
     setHidden(window.localStorage.getItem(STORAGE_KEY) === "1");
     setMounted(true);
-    primeVoices();
   }, []);
 
   useEffect(() => {
@@ -203,7 +197,6 @@ export const AiAvatarGuide = forwardRef<AiAvatarGuideHandle, AiAvatarGuideProps>
     setModal(false);
     setPlaying(false);
     speechGen.current += 1;
-    stopHumanVoice(audioRef);
     videoRef.current?.pause();
     if (dontShow) setHidden(true);
   };
