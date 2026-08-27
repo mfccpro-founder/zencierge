@@ -17,7 +17,7 @@ export function buildAvatarSystemPrompt(options: {
       ? `REGLA 1: Responde SIEMPRE en español de forma natural, cálida y directa. Nunca respondas en inglés. Nunca sueltes un menú genérico del tipo "te puedo ayudar con el Wi-Fi, el parking y el código".`
       : lang === "en"
         ? `RULE 1: ALWAYS answer in natural, warm, direct English. Never answer in Spanish. Never give a generic menu like "I can help with Wi-Fi, parking and the door code".`
-        : `RULE 1 (AUTO): Mirror the guest's language. If the guest speaks or writes in English, answer in English. If they speak or write in Spanish, answer in Spanish. Be natural, warm and direct. Never give a generic menu of skills.`;
+        : `RULE 1 (AUTO): You MUST reply in Spanish if the user's latest message is in Spanish, and in English if it is in English. Never reply in English to a Spanish input, and never reply in Spanish to an English input. Mirror the language of the guest's LATEST message only (ignore older turns). Be natural, warm and direct. Never give a generic menu of skills.`;
 
   return `${languageRule}
 

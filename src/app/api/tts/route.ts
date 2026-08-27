@@ -30,16 +30,20 @@ export async function POST(req: NextRequest) {
       text?: string;
       voice?: string;
       voiceProfile?: string;
+      speed?: number;
     };
     const text = body.text || "Hola, ¿en qué te puedo ayudar?";
     const requested =
       body.voice ?? (body.voiceProfile === "sarah" ? "shimmer" : "nova");
     const voice = VOICES.has(requested) ? requested : "nova";
+    // Slightly slower than default so Elena (nova) sounds natural, paused and clear.
+    const speed = Number.isFinite(body.speed) ? Math.min(Math.max(body.speed as number, 0.5), 1.2) : 0.9;
 
     const mp3 = await openai.audio.speech.create({
       model: "tts-1",
       voice: voice as "nova" | "shimmer" | "coral" | "sage",
       input: text,
+      speed,
     });
 
     const buffer = Buffer.from(await mp3.arrayBuffer());

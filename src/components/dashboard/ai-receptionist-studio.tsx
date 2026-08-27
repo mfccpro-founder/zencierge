@@ -4,7 +4,15 @@ import type { RefObject, ReactNode } from "react";
 import { Activity, Phone, PhoneOff, Radio, Send, Sparkles, VolumeX } from "lucide-react";
 import type { Property } from "@/lib/dashboard-data";
 import type { ReceptionistPhase } from "@/components/dashboard/receptionist-avatar";
+import { ElenaAvatar } from "@/components/dashboard/elena-avatar";
 import ElenaVoiceWidget from "@/components/dashboard/elena-voice-widget";
+
+const PHASE_LABEL: Record<ReceptionistPhase, string> = {
+  idle: "Ready — press Simulate inbound call",
+  listening: "Listening…",
+  thinking: "Thinking…",
+  speaking: "Elena is speaking…",
+};
 
 export type ReceptionistLine = {
   id: string;
@@ -20,8 +28,8 @@ const QUICK_PROMPTS = [
 ];
 
 export function AiReceptionistStudio({
-  phase: _phase,
-  voiceName: _voiceName,
+  phase,
+  voiceName,
   properties,
   selectedProperty,
   propertyId,
@@ -107,6 +115,50 @@ export function AiReceptionistStudio({
 
       <div className="grid grid-cols-1 xl:grid-cols-[280px_minmax(0,1fr)_minmax(0,1.1fr)] gap-6">
         <div className="flex flex-col items-center justify-start">
+          {/* Prominent Elena avatar with live voice-wave animation */}
+          <div className="w-full rounded-2xl border border-slate-800 bg-slate-950/80 p-4 flex flex-col items-center gap-3">
+            <div
+              className={`rounded-full transition-all duration-300 ${
+                phase === "speaking"
+                  ? "ring-4 ring-emerald-400/50 scale-105"
+                  : phase === "listening"
+                    ? "ring-2 ring-sky-400/40"
+                    : ""
+              }`}
+            >
+              <ElenaAvatar size={96} />
+            </div>
+            <p className="text-xs font-semibold text-white">
+              {phase === "speaking"
+                ? "Elena está hablando…"
+                : phase === "listening"
+                  ? "Escuchando…"
+                  : phase === "thinking"
+                    ? "Pensando…"
+                    : "Elena · lista"}
+            </p>
+            <div className="flex items-end justify-center gap-1 h-6">
+              {[0, 1, 2, 3, 4].map((bar) => (
+                <span
+                  key={bar}
+                  className={`w-1.5 rounded-full bg-emerald-400 transition-all ${
+                    phase === "speaking"
+                      ? "animate-pulse"
+                      : phase === "listening"
+                        ? "animate-pulse opacity-50"
+                        : "opacity-20"
+                  }`}
+                  style={{
+                    height: phase === "speaking" || phase === "listening" ? undefined : "6px",
+                    animationDelay: `${bar * 120}ms`,
+                    ...(phase === "speaking" || phase === "listening"
+                      ? { height: `${8 + ((bar * 5) % 13)}px` }
+                      : {}),
+                  }}
+                />
+              ))}
+            </div>
+          </div>
           <ElenaVoiceWidget />
           <p className="mt-3 text-[11px] text-slate-500 text-center">{connectionLabel}</p>
           <button
