@@ -26,11 +26,10 @@ export async function POST(request: Request) {
     return Response.json({ error: "question and property are required" }, { status: 400 });
   }
 
-  const language: LanguageMode = body.language === "en" || body.language === "es" ? body.language : "auto";
   const emergencyNumber = body.emergencyNumber?.trim() || "+1 (954) 275-3544";
   const system = buildAvatarSystemPrompt({
     property,
-    language,
+    language: "es",
     hours: body.hours,
     emergencyNumber,
   });
@@ -85,7 +84,7 @@ async function fetchOpenAiReply(
       messages: [
         { role: "system", content: system },
         ...chatTurns(history),
-        { role: "user", content: question },
+        { role: "user", content: `Responde en español, de forma directa, a esto:\n${question}` },
       ],
     }),
   });
@@ -120,7 +119,7 @@ async function fetchClaudeReply(
       system,
       messages: [
         ...chatTurns(history),
-        { role: "user", content: question },
+        { role: "user", content: `Responde en español, de forma directa, a esto:\n${question}` },
       ],
     }),
   });

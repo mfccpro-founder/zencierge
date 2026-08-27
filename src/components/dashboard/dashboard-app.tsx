@@ -33,6 +33,7 @@ import { FinancesView } from "@/components/dashboard/finances-view";
 import { SettingsView } from "@/components/dashboard/settings-view";
 import { AiAvatarGuide, type AiAvatarGuideHandle } from "@/components/dashboard/ai-avatar-guide";
 import { ReceptionistAvatar } from "@/components/dashboard/receptionist-avatar";
+import { ElenaWelcomeAvatar } from "@/components/dashboard/elena-welcome-avatar";
 import { HostSignOutButton } from "@/components/auth/host-sign-out-button";
 import { createAuthBrowserClient } from "@/lib/supabase-auth-browser";
 import { hostDisplayName } from "@/lib/host-display-name";
@@ -248,6 +249,7 @@ function OverviewPanel({
 
   return (
     <div className="space-y-8">
+      <ElenaWelcomeAvatar properties={properties} />
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800/80 shadow-sm relative overflow-hidden">
           <div className="flex items-center justify-between">

@@ -19,7 +19,7 @@ export async function askAvatarReply(options: {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         question: options.question,
-        language: options.language,
+        language: "es",
         hours: options.hours,
         emergencyNumber: options.emergencyNumber,
         openaiKey: options.openaiKey || undefined,

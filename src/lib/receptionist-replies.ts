@@ -5,7 +5,6 @@ import {
   groceryFromHandbook,
   localPlaceHint,
   relevantHandbookSnippet,
-  replyLangFor,
 } from "@/lib/receptionist-intent";
 
 export type HoursMode = "always" | "night";
@@ -36,7 +35,7 @@ export function answerGuestQuestion({
   question,
   properties: listings,
   fallback,
-  language,
+  language: _language,
   hours = "always",
   emergencyNumber = HOST_EMERGENCY_NUMBER,
 }: {
@@ -47,7 +46,7 @@ export function answerGuestQuestion({
   hours?: HoursMode;
   emergencyNumber?: string;
 }) {
-  const lang = replyLangFor(question, language);
+  const lang: ReplyLang = "es";
   const property = matchProperty(question, listings, fallback);
   const night = nightNote(hours, lang);
   const name = property.name;

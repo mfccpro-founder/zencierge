@@ -13,9 +13,9 @@ export type ReceptionistLine = {
 
 const QUICK_PROMPTS = [
   "¿Cuál es la clave del Wi-Fi?",
-  "Where do I park?",
-  "What's the door code?",
-  "There's a water leak in the bathroom",
+  "¿Hay una farmacia cerca?",
+  "¿Dónde puedo comprar comida?",
+  "Hay una fuga de agua en el baño",
 ];
 
 export function AiReceptionistStudio({
@@ -44,6 +44,8 @@ export function AiReceptionistStudio({
   listening,
   speaking,
   transcriptRef,
+  videoRef,
+  videoReady,
 }: {
   phase: ReceptionistPhase;
   voiceName: string;
@@ -70,6 +72,8 @@ export function AiReceptionistStudio({
   listening: boolean;
   speaking: boolean;
   transcriptRef: RefObject<HTMLDivElement | null>;
+  videoRef?: RefObject<HTMLVideoElement | null>;
+  videoReady?: boolean;
 }) {
   const handbook = selectedProperty.handbook.trim();
 
@@ -82,8 +86,8 @@ export function AiReceptionistStudio({
           </p>
           <h3 className="text-lg font-semibold text-white mt-1">Live avatar session</h3>
           <p className="text-xs text-slate-400 mt-1 max-w-xl">
-            Grounded in the selected unit’s <span className="font-mono text-slate-300">ai_handbook</span>{" "}
-            from Supabase. Guest and receptionist turn-taking in English or Spanish.
+            El cerebro es /api/avatar en español (propiedad en Miami / Miramar). HeyGen solo vocaliza con
+            task_type repeat y voz femenina. Sin knowledge base ni conversación autónoma.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -102,7 +106,21 @@ export function AiReceptionistStudio({
 
       <div className="grid grid-cols-1 xl:grid-cols-[280px_minmax(0,1fr)_minmax(0,1.1fr)] gap-6">
         <div className="flex flex-col items-center justify-start rounded-2xl border border-slate-800/80 bg-slate-950/60 px-4 py-6">
-          <ReceptionistAvatar phase={phase} size="lg" name={voiceName} />
+          <div className="relative w-full aspect-square max-h-56 overflow-hidden rounded-2xl border border-slate-800 bg-slate-950">
+            {videoRef ? (
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                className={`absolute inset-0 h-full w-full object-cover ${videoReady ? "opacity-100" : "opacity-0"}`}
+              />
+            ) : null}
+            {!videoReady ? (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <ReceptionistAvatar phase={phase} size="lg" name={voiceName} />
+              </div>
+            ) : null}
+          </div>
           <p className="mt-3 text-[11px] text-slate-500 text-center">{connectionLabel}</p>
           <button
             type="button"

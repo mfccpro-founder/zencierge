@@ -7,6 +7,7 @@ import { AiReceptionistStudio } from "@/components/dashboard/ai-receptionist-stu
 import type { ReceptionistPhase } from "@/components/dashboard/receptionist-avatar";
 import type { Property } from "@/lib/dashboard-data";
 import { askAvatarReply } from "@/lib/ask-avatar";
+import { useHeygenRepeatAvatar } from "@/components/dashboard/use-heygen-repeat";
 import {
   VOICE_PROFILES,
   getVoiceProfile,
@@ -54,7 +55,7 @@ const inputClass =
 export function VoiceConciergeView() {
   const { properties } = useListings();
   const [voiceId, setVoiceId] = useState<VoiceProfileId>("elena");
-  const [language, setLanguage] = useState<LanguageMode>("auto");
+  const [language, setLanguage] = useState<LanguageMode>("es");
   const [speed, setSpeed] = useState(0.85);
   const [stability, setStability] = useState(68);
   const [floridaLine, setFloridaLine] = useState<FloridaLine>("305");
@@ -93,6 +94,7 @@ export function VoiceConciergeView() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const unlockedRef = useRef(false);
   const speedRef = useRef(0.85);
+  const heygen = useHeygenRepeatAvatar();
 
   const nextId = () => {
     idRef.current += 1;
@@ -139,7 +141,7 @@ export function VoiceConciergeView() {
     ? "thinking"
     : listening
       ? "listening"
-      : speaking
+      : speaking || heygen.speaking
         ? "speaking"
         : "idle";
 
@@ -167,6 +169,7 @@ export function VoiceConciergeView() {
   const endCall = () => {
     stopListening();
     cancelSpeech();
+    void heygen.stop();
     setThinking(false);
     setPartialGuest("");
     setCallActive(false);
@@ -214,10 +217,27 @@ export function VoiceConciergeView() {
     const gen = genRef.current;
     stopListening();
     setResponding(true);
+    const heygenOk = await heygen.start().catch((cause) => {
+      console.error("[heygen] session failed; using /api/tts", cause);
+      return false;
+    });
+    if (heygenOk) {
+      const repeated = await heygen.speakRepeat(text).catch((cause) => {
+        console.error("[heygen] REPEAT failed", cause);
+        return false;
+      });
+      if (repeated && gen === genRef.current) {
+        setResponding(false);
+        setSpeaking(false);
+        setEngineLabel("HeyGen · REPEAT · es");
+        if (callActiveRef.current) startListening();
+        return;
+      }
+    }
     await speakHumanVoice({
       text,
       profile: forProfile,
-      language,
+      language: "es",
       speed: 1,
       stability,
       elevenKey,
@@ -311,7 +331,7 @@ export function VoiceConciergeView() {
       question: text,
       property: selectedProperty,
       properties,
-      language,
+      language: "es",
       hours,
       emergencyNumber,
       openaiKey,
@@ -332,7 +352,7 @@ export function VoiceConciergeView() {
     ensureAudioUnlocked();
     const greeting = buildGreeting({
       profile,
-      language,
+      language: "es",
       hours,
       property: selectedProperty,
       lineNumber: lineMeta.number,
@@ -382,7 +402,7 @@ export function VoiceConciergeView() {
     }
 
     const recognition = new Ctor();
-    recognition.lang = language === "es" ? "es-US" : language === "en" ? "en-US" : "es-US";
+    recognition.lang = "es-US";
     recognition.interimResults = true;
     recognition.continuous = false;
     recognition.onresult = (event) => {
@@ -426,9 +446,10 @@ export function VoiceConciergeView() {
       return;
     }
 
-    if (speaking || responding) cancelSpeech();
+    if (speaking || responding || heygen.speaking) cancelSpeech();
     ensureVoiceSession();
     callActiveRef.current = true;
+    void heygen.start().catch((cause) => console.error("[heygen] start on listen failed", cause));
     startListening();
   };
 
@@ -470,9 +491,13 @@ export function VoiceConciergeView() {
           onLanguageChange={setLanguage}
           callActive={callActive}
           latencyMs={latencyMs}
-          streamReady={streamReady}
+          streamReady={streamReady || heygen.ready}
           connectionLabel={
-            streamReady ? "WebRTC / Audio stream ready" : "Standby · no media session"
+            heygen.ready
+              ? "HeyGen REPEAT · es · voz femenina"
+              : streamReady
+                ? "Audio stream ready · /api/tts nova"
+                : "Standby · no media session"
           }
           lines={lines}
           partialAi={partialAi}
@@ -485,8 +510,10 @@ export function VoiceConciergeView() {
           onListen={toggleListen}
           onStopSpeech={cancelSpeech}
           listening={listening}
-          speaking={speaking}
+          speaking={speaking || heygen.speaking}
           transcriptRef={scrollRef}
+          videoRef={heygen.videoRef}
+          videoReady={heygen.ready}
         />
       </div>
 
