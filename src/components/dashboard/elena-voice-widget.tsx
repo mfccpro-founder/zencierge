@@ -30,12 +30,22 @@ interface BrowserSpeechRecognitionEvent {
   }>;
 }
 
-/** Pick the best Spanish voice available in the browser (es-US → es-ES → any es). */
-function pickSpanishVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | undefined {
+/** Pick the best browser voice for a language: es-US → es-ES → any es; en-US → en-GB → any en. */
+function pickVoice(
+  lang: "es" | "en",
+  voices: SpeechSynthesisVoice[],
+): SpeechSynthesisVoice | undefined {
+  if (lang === "es") {
+    return (
+      voices.find((v) => v.lang === "es-US") ??
+      voices.find((v) => v.lang === "es-ES") ??
+      voices.find((v) => v.lang.toLowerCase().startsWith("es-"))
+    );
+  }
   return (
-    voices.find((v) => v.lang === "es-US") ??
-    voices.find((v) => v.lang === "es-ES") ??
-    voices.find((v) => v.lang.toLowerCase().startsWith("es-"))
+    voices.find((v) => v.lang === "en-US") ??
+    voices.find((v) => v.lang === "en-GB") ??
+    voices.find((v) => v.lang.toLowerCase().startsWith("en-"))
   );
 }
 
@@ -44,11 +54,13 @@ export default function ElenaVoiceWidget() {
   const [status, setStatus] = useState("En espera");
   const [listening, setListening] = useState(false);
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
-  const voiceRef = useRef<SpeechSynthesisVoice | null>(null);
+  const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
+  const langRef = useRef<"es" | "en">("es");
+  const manualStopRef = useRef(false);
 
   useEffect(() => {
     const loadVoices = () => {
-      voiceRef.current = pickSpanishVoice(window.speechSynthesis.getVoices()) ?? null;
+      voicesRef.current = window.speechSynthesis.getVoices();
     };
     loadVoices();
     window.speechSynthesis.addEventListener("voiceschanged", loadVoices);
@@ -58,14 +70,19 @@ export default function ElenaVoiceWidget() {
     };
   }, []);
 
-  /** Native browser TTS — speaks only what we pass (the AI reply), never the raw user input. */
-  const speak = (text: string) => {
+  /** Native browser TTS — speaks a reply in the matching language, never the raw user input. */
+  const speak = (text: string, lang: "es" | "en" = "es") => {
     if (!text.trim()) return;
     const utterance = new SpeechSynthesisUtterance(text);
-    if (voiceRef.current) utterance.voice = voiceRef.current;
-    utterance.lang = voiceRef.current?.lang ?? "es-ES";
-    setStatus("Elena hablando...");
-    utterance.onstart = () => setStatus("Elena hablando...");
+    const voices = voicesRef.current.length
+      ? voicesRef.current
+      : window.speechSynthesis.getVoices();
+    const voice = pickVoice(lang, voices);
+    if (voice) utterance.voice = voice;
+    utterance.lang = voice?.lang ?? (lang === "es" ? "es-ES" : "en-US");
+    langRef.current = lang;
+    setStatus(lang === "es" ? "Elena habla... (ES)" : "Elena speaking... (EN)");
+    utterance.onstart = () => setStatus(lang === "es" ? "Elena habla... (ES)" : "Elena speaking... (EN)");
     utterance.onend = () => setStatus("Listo");
     utterance.onerror = () => setStatus("Listo");
     window.speechSynthesis.cancel();
@@ -74,9 +91,12 @@ export default function ElenaVoiceWidget() {
 
   /**
    * Ask Elena for a generated response to the user's text, then speak ONLY that reply.
-   * Never repeats the user's input back; on any failure speaks a neutral Elena fallback.
+   * Returns the reply plus the language Elena answered in so the right voice is used.
+   * Never repeats the user's input back; on any failure speaks a neutral ES fallback.
    */
-  const getElenaReply = async (text: string): Promise<string> => {
+  const getElenaReply = async (
+    text: string,
+  ): Promise<{ reply: string; lang: "en" | "es" }> => {
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
@@ -84,20 +104,25 @@ export default function ElenaVoiceWidget() {
         body: JSON.stringify({ message: text }),
       });
       if (res.ok) {
-        const data = (await res.json()) as { reply?: string };
-        if (data.reply?.trim()) return data.reply.trim();
+        const data = (await res.json()) as { reply?: string; lang?: "en" | "es" };
+        if (data.reply?.trim()) {
+          return { reply: data.reply.trim(), lang: data.lang === "en" ? "en" : "es" };
+        }
       }
     } catch {
       // Network/server errors are swallowed — no blocking, just a fallback reply.
     }
-    return "Claro, soy Elena. Todo listo por aquí; dime qué necesitas y te ayudo enseguida.";
+    return {
+      reply: "Claro, soy Elena. Todo listo por aquí; dime qué necesitas y te ayudo enseguida.",
+      lang: "es",
+    };
   };
 
   const respondTo = async (text: string) => {
     if (!text.trim()) return;
     setStatus("Pensando...");
-    const reply = await getElenaReply(text);
-    speak(reply);
+    const { reply, lang } = await getElenaReply(text);
+    speak(reply, lang);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -110,6 +135,7 @@ export default function ElenaVoiceWidget() {
 
   const toggleMic = () => {
     if (listening) {
+      manualStopRef.current = true;
       recognitionRef.current?.stop();
       setListening(false);
       setStatus("En espera");
@@ -125,19 +151,32 @@ export default function ElenaVoiceWidget() {
 
     const recognition = new Recognition();
     recognitionRef.current = recognition;
-    recognition.lang = "es-ES";
-    recognition.continuous = false;
-    recognition.interimResults = false;
+    manualStopRef.current = false;
+    // Sync recognition language with the language Elena last replied in (es-ES or
+    // en-US). Browsers don't offer true multi-language auto-detect in one session,
+    // so continuous mode + language sync lets the mic capture both over time.
+    recognition.lang = langRef.current === "en" ? "en-US" : "es-ES";
+    recognition.continuous = true;
+    recognition.interimResults = true;
+
+    let accumulated = "";
+    let silenceTimer: number | undefined;
+
+    const scheduleStop = () => {
+      if (silenceTimer) window.clearTimeout(silenceTimer);
+      silenceTimer = window.setTimeout(() => recognition.stop(), 1800);
+    };
 
     recognition.onresult = (event) => {
-      const transcript = Array.from(event.results)
+      const phrase = Array.from(event.results)
         .map((result) => result[0].transcript)
         .join(" ")
         .trim();
-      if (!transcript) return;
-      setInput(transcript);
-      setStatus(`"${transcript}"`);
-      void respondTo(transcript);
+      if (!phrase) return;
+      accumulated = phrase;
+      setInput(phrase);
+      setStatus(`"${phrase}"`);
+      scheduleStop();
     };
 
     recognition.onerror = () => {
@@ -145,10 +184,18 @@ export default function ElenaVoiceWidget() {
       setStatus("No te he escuchado. Prueba otra vez.");
     };
 
-    recognition.onend = () => setListening(false);
+    recognition.onend = () => {
+      if (silenceTimer) window.clearTimeout(silenceTimer);
+      const wasManual = manualStopRef.current;
+      manualStopRef.current = false;
+      setListening(false);
+      if (!wasManual && accumulated.trim()) {
+        void respondTo(accumulated.trim());
+      }
+    };
 
     setListening(true);
-    setStatus("Escuchando...");
+    setStatus(`Escuchando... (${langRef.current === "en" ? "EN" : "ES"})`);
     recognition.start();
   };
 
