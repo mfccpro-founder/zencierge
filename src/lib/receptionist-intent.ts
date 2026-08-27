@@ -76,6 +76,18 @@ const RESTAURANT_HINTS = [
   "cafe",
   "café",
   "bar",
+  "casual",
+  "playa",
+  "beach",
+  "mariscos",
+  "seafood",
+  "italiano",
+  "italian",
+  "pizza",
+  "pasta",
+  "desayuno",
+  "brunch",
+  "tacos",
 ];
 
 const NEARBY_HINTS = ["cerca", "cercano", "nearby", "around here", "aqui cerca", "aquí cerca", "walking distance"];

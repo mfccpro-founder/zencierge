@@ -79,6 +79,9 @@ export default function ElenaVoiceWidget() {
   const langRef = useRef<"es" | "en">("es");
   const manualStopRef = useRef(false);
 
+  // Short-term memory: recent turns sent to /api/chat so follow-ups keep context.
+  const historyRef = useRef<{ role: "user" | "assistant"; content: string }[]>([]);
+
   useEffect(() => {
     const loadVoices = () => {
       voicesRef.current = window.speechSynthesis.getVoices();
@@ -124,7 +127,10 @@ export default function ElenaVoiceWidget() {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text }),
+        body: JSON.stringify({
+          message: text,
+          history: historyRef.current.slice(-8),
+        }),
       });
       if (res.ok) {
         const data = (await res.json()) as { reply?: string; lang?: "en" | "es" };
@@ -145,6 +151,11 @@ export default function ElenaVoiceWidget() {
     if (!text.trim()) return;
     setStatus("Pensando...");
     const { reply, lang } = await getElenaReply(text);
+    historyRef.current = [
+      ...historyRef.current.slice(-7),
+      { role: "user", content: text.trim().slice(0, 500) },
+      { role: "assistant", content: reply.slice(0, 800) },
+    ];
     speak(reply, lang);
   };
 
