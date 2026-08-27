@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { Mic, MicOff, Sparkles } from "lucide-react";
+import { Mic, MicOff } from "lucide-react";
+import { ElenaAvatar } from "@/components/dashboard/elena-avatar";
 
 declare global {
   interface Window {
@@ -250,10 +251,10 @@ export default function ElenaVoiceWidget() {
       {/* Compact header: Elena mini-avatar + title + status badge */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="relative h-11 w-11 rounded-full bg-gradient-to-br from-emerald-400/40 via-sky-500/30 to-violet-500/40 flex items-center justify-center overflow-hidden border border-emerald-400/40 shadow-[0_0_20px_rgb(16_185_129_/_0.25)]">
-            <Sparkles className="h-5 w-5 text-emerald-300" />
+          <div className="relative">
+            <ElenaAvatar size={44} />
             {listening ? (
-              <div className="absolute bottom-1 flex items-end gap-0.5 h-2.5">
+              <div className="absolute bottom-1 left-1/2 flex -translate-x-1/2 items-end gap-0.5 h-2.5">
                 {Array.from({ length: 3 }, (_, index) => (
                   <span
                     key={index}

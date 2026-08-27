@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import type { Property } from "@/lib/dashboard-data";
 import ElenaVoiceWidget from "@/components/dashboard/elena-voice-widget";
+import { ElenaAvatar } from "@/components/dashboard/elena-avatar";
 import { groceryFromHandbook } from "@/lib/receptionist-intent";
 import { HOST_EMERGENCY_NUMBER } from "@/lib/receptionist-replies";
 import { fetchPropertyById } from "@/lib/supabase-listings";
@@ -89,6 +90,9 @@ export function GuestPortal({ propertyId }: { propertyId: string }) {
         </p>
 
         <section className="mt-8">
+          <div className="mb-5 flex justify-center">
+            <ElenaAvatar size={112} />
+          </div>
           <ElenaVoiceWidget />
         </section>
 
