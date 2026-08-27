@@ -87,10 +87,15 @@ export function LandingPage() {
         }),
       });
       const data = (await response.json()) as { url?: string; error?: string };
-      if (!response.ok || !data.url) {
+      const checkoutUrl = data.url?.trim() ?? "";
+      if (
+        !response.ok ||
+        !/^https?:\/\//i.test(checkoutUrl) ||
+        checkoutUrl.includes("/dashboard")
+      ) {
         throw new Error(data.error ?? "Could not start Square checkout");
       }
-      window.location.href = data.url;
+      window.location.href = checkoutUrl;
     } catch (cause) {
       setIsRedirecting(null);
       window.alert(cause instanceof Error ? cause.message : "Checkout failed");
@@ -144,12 +149,12 @@ export function LandingPage() {
           <Badge>Bilingual EN/ES</Badge>
         </div>
         <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-          <Link
-            href="/signup"
+          <a
+            href="#pricing"
             className="rounded-xl bg-emerald-500 px-5 py-3 text-sm font-bold text-slate-950 shadow-lg shadow-emerald-500/20 hover:bg-emerald-400"
           >
             Start Free Trial
-          </Link>
+          </a>
           <Link
             href="/login"
             className="rounded-xl border border-slate-700 bg-slate-900 px-5 py-3 text-sm font-semibold text-slate-200 hover:bg-slate-800"
@@ -245,7 +250,9 @@ export function LandingPage() {
                 <button
                   type="button"
                   disabled={isRedirecting !== null}
-                  onClick={() => {
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
                     void subscribeWithSquare(plan.id);
                   }}
                   className={`mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl py-2.5 text-center text-xs font-bold disabled:cursor-wait disabled:opacity-70 ${
