@@ -18,10 +18,10 @@ const plans = [
     id: "starter",
     name: "Starter",
     monthly: 29,
-    blurb: "One Florida listing, bilingual voice line, iCal sync.",
+    blurb: "One US listing, bilingual voice line, iCal sync.",
     popular: false,
     features: [
-      "1 property · +1 305 or 954 number",
+      "1 property · Dedicated Local US Phone Line (Any Area Code)",
       "AI handbook (Wi-Fi, locks, parking)",
       "Airbnb + Vrbo Quick Connect",
       "Guest call transcripts",
@@ -34,7 +34,7 @@ const plans = [
     popular: true,
     blurb: "Up to 4 units, owner statements, overnight coverage.",
     features: [
-      "Up to 4 South Florida listings",
+      "Up to 4 US listings · Dedicated local lines",
       "24/7 routing + host emergency transfer",
       "Monthly owner payouts & 18% co-host math",
       "Live Voice Tester + Neural / HD TTS",
@@ -47,7 +47,7 @@ const plans = [
     blurb: "Portfolio ops for co-hosts running multiple owners.",
     popular: false,
     features: [
-      "Unlimited listings in FL",
+      "Unlimited listings nationwide",
       "Multi-owner statements & export",
       "Priority SIP lines · team inbox",
       "White-label guest greeting",
@@ -134,18 +134,18 @@ export function LandingPage() {
 
       <section className="mx-auto max-w-6xl px-6 pb-20 pt-16 text-center">
         <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-400">
-          Host OS · South Florida
+          Host OS · Nationwide
         </p>
         <h1 className="mx-auto mt-4 max-w-4xl text-4xl font-extrabold tracking-tight text-white sm:text-5xl sm:leading-tight">
-          24/7 AI Voice Receptionist for Airbnb &amp; Vrbo Hosts in Florida
+          24/7 AI Voice Receptionist for Airbnb &amp; Vrbo Hosts Across the US
         </h1>
         <p className="mx-auto mt-5 max-w-2xl text-base leading-relaxed text-slate-400">
-          A bilingual concierge answers on your +1 305 / 954 line, reads the unit handbook, and
-          keeps Airbnb and Vrbo blocked so you never double-book a Miami night.
+          A bilingual concierge answers on your dedicated local US line (any area code), reads the
+          unit handbook, and keeps Airbnb and Vrbo blocked so you never double-book a night.
         </p>
         <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
           <Badge>Zero Double-Bookings</Badge>
-          <Badge>Instant +1 305/954 Numbers</Badge>
+          <Badge>Dedicated Local US Numbers</Badge>
           <Badge>Bilingual EN/ES</Badge>
         </div>
         <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
@@ -179,14 +179,14 @@ export function LandingPage() {
           <ValueCard
             icon={<Banknote className="h-5 w-5 text-amber-400" />}
             title="Co-Host Financials"
-            body="Automatic owner statements: 18% admin fee, cleaning, net payouts, and export for Miami Beach through Sunny Isles."
+            body="Automatic owner statements: 18% admin fee, cleaning, net payouts, and export for listings in any US state."
           />
         </div>
       </section>
 
       <section id="pricing" className="mx-auto max-w-6xl px-6 pb-20">
         <div className="mb-8 flex flex-col items-center gap-4 text-center">
-          <h2 className="text-2xl font-bold text-white">Simple pricing for Florida hosts</h2>
+          <h2 className="text-2xl font-bold text-white">Simple pricing for hosts nationwide</h2>
           <div className="flex items-center gap-3 rounded-full border border-slate-800 bg-slate-900 p-1">
             <button
               type="button"
@@ -299,10 +299,10 @@ export function LandingPage() {
           <div className="mx-auto mb-4 flex h-10 w-10 items-center justify-center rounded-full border border-emerald-500/30 bg-emerald-500/15">
             <Phone className="h-4 w-4 text-emerald-400" />
           </div>
-          <h2 className="text-2xl font-bold text-white">Put a Florida receptionist on every listing</h2>
+          <h2 className="text-2xl font-bold text-white">Put a nationwide receptionist on every listing</h2>
           <p className="mx-auto mt-3 max-w-xl text-sm text-slate-400">
-            Open the live Host Command Center — four properties, a 305 line, and the calendar already
-            synced.
+            Open the live Host Command Center — your US listings, a dedicated local line, and the
+            calendar already synced.
           </p>
           <Link
             href="/login"
@@ -316,7 +316,7 @@ export function LandingPage() {
 
       <footer className="border-t border-slate-800/80">
         <div className="mx-auto flex max-w-6xl flex-col gap-6 px-6 py-8 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-xs text-slate-500">Zencierge · AI host OS for Florida short-term rentals</p>
+          <p className="text-xs text-slate-500">Zencierge · AI host OS for US short-term rentals</p>
           <nav className="flex flex-wrap gap-4 text-xs text-slate-400">
             <a href="#product" className="hover:text-white">
               Product

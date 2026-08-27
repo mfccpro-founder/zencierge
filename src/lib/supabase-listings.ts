@@ -1,5 +1,6 @@
 import {
   properties as seedProperties,
+  reservations as seedReservations,
   propertyCities,
   type BookingPlatform,
   type OccupancyStatus,
@@ -236,6 +237,12 @@ export async function fetchPropertyById(id: string): Promise<Property | null> {
   const { data, error } = await supabase.from("properties").select("*").eq("id", id).maybeSingle();
   if (!error && data) return propertyFromRow(data as PropertyRow);
   return seedProperties.find((property) => property.id === id) ?? null;
+}
+
+export async function fetchReservationById(id: string): Promise<Reservation | null> {
+  const { data, error } = await supabase.from("reservations").select("*").eq("id", id).maybeSingle();
+  if (!error && data) return reservationFromRow(data as ReservationRow);
+  return seedReservations.find((reservation) => reservation.id === id) ?? null;
 }
 
 export async function upsertProperty(property: Property) {

@@ -13,9 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Zencierge · 24/7 AI Voice Receptionist for Florida Hosts",
+  title: "Zencierge · 24/7 AI Voice Receptionist for Hosts Across the US",
   description:
-    "Bilingual AI receptionist, Airbnb & Vrbo calendar sync, and co-host payouts for Superhosts in South Florida.",
+    "Bilingual AI receptionist, Airbnb & Vrbo calendar sync, and co-host payouts for Superhosts nationwide.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

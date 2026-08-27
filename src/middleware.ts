@@ -2,7 +2,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { updateAuthSession } from "@/lib/supabase-auth-session";
 
 function staysOnPublicSurface(path: string) {
-  return path === "/" || path.startsWith("/api/checkout") || path.startsWith("/guest");
+  return path === "/" || path.startsWith("/api/checkout") || path.startsWith("/guest") || path.startsWith("/verify");
 }
 
 export async function middleware(request: NextRequest) {
@@ -35,5 +35,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/", "/api/checkout", "/api/checkout/:path*", "/dashboard/:path*", "/login", "/signup"],
+  matcher: ["/", "/api/checkout", "/api/checkout/:path*", "/verify/:path*", "/dashboard/:path*", "/login", "/signup"],
 };
