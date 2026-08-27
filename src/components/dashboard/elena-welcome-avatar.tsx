@@ -6,7 +6,6 @@ import type { Property } from "@/lib/dashboard-data";
 import { askAvatarReply } from "@/lib/ask-avatar";
 import { HOST_EMERGENCY_NUMBER } from "@/lib/receptionist-replies";
 import { ReceptionistAvatar, type ReceptionistPhase } from "@/components/dashboard/receptionist-avatar";
-import { useHeygenRepeatAvatar } from "@/components/dashboard/use-heygen-repeat";
 
 type SpeechResultList = ArrayLike<{ isFinal: boolean } & ArrayLike<{ transcript: string }>>;
 type SpeechRec = {
@@ -24,23 +23,21 @@ declare global {
   interface Window {
     SpeechRecognition?: new () => SpeechRec;
     webkitSpeechRecognition?: new () => SpeechRec;
+    webkitAudioContext?: typeof AudioContext;
   }
 }
 
-const PLAYBACK_START_MS = 7000;
+const SILENT_WAV =
+  "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
 
 export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
   const property = properties[0];
-  const heygen = useHeygenRepeatAvatar();
   const recRef = useRef<SpeechRec | null>(null);
   const wantMicRef = useRef(false);
   const genRef = useRef(0);
   const linesRef = useRef<{ role: "guest" | "ai"; text: string }[]>([]);
-  const abortRef = useRef<AbortController | null>(null);
-  const safetyRef = useRef(0);
-  const playbackStartedRef = useRef(false);
-  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
-  const currentAudioUrlRef = useRef<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioUrlRef = useRef<string | null>(null);
 
   const [isListening, setIsListening] = useState(false);
   const [thinking, setThinking] = useState(false);
@@ -49,77 +46,59 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
   const [draft, setDraft] = useState("");
   const [guestBubble, setGuestBubble] = useState("");
   const [aiBubble, setAiBubble] = useState("");
-  const [status, setStatus] = useState("Elena responde en español desde Zencierge, no desde la base de HeyGen.");
+  const [status, setStatus] = useState("Elena responde en español. El audio sale de /api/tts.");
 
-  const speaking = heygen.speaking || ttsSpeaking;
   const phase: ReceptionistPhase = thinking || responding
     ? "thinking"
     : isListening
       ? "listening"
-      : speaking
+      : ttsSpeaking
         ? "speaking"
         : "idle";
 
-  const clearSafety = () => {
-    if (safetyRef.current) {
-      window.clearTimeout(safetyRef.current);
-      safetyRef.current = 0;
+  const unlockAudio = () => {
+    const audio = audioRef.current ?? new Audio();
+    audioRef.current = audio;
+    audio.muted = false;
+    audio.volume = 1;
+    audio.src = SILENT_WAV;
+    void audio.play().catch((cause) => {
+      console.error("[avatar] unlock play failed", cause);
+    });
+    try {
+      const Ctor = window.AudioContext || window.webkitAudioContext;
+      if (Ctor) {
+        const ctx = new Ctor();
+        void ctx.resume();
+        const oscillator = ctx.createOscillator();
+        const gain = ctx.createGain();
+        gain.gain.value = 0;
+        oscillator.connect(gain);
+        gain.connect(ctx.destination);
+        oscillator.start();
+        oscillator.stop(ctx.currentTime + 0.05);
+      }
+    } catch (cause) {
+      console.error("[avatar] AudioContext unlock failed", cause);
     }
   };
 
-  const markPlaybackStarted = () => {
-    playbackStartedRef.current = true;
-    clearSafety();
-    setResponding(false);
-  };
-
   const stopCurrentAudio = () => {
-    const audio = currentAudioRef.current;
+    const audio = audioRef.current;
     if (audio) {
       audio.onended = null;
       audio.onerror = null;
       audio.pause();
-      audio.src = "";
-      currentAudioRef.current = null;
     }
-    if (currentAudioUrlRef.current) {
-      URL.revokeObjectURL(currentAudioUrlRef.current);
-      currentAudioUrlRef.current = null;
+    if (audioUrlRef.current) {
+      URL.revokeObjectURL(audioUrlRef.current);
+      audioUrlRef.current = null;
     }
-  };
-
-  const goIdle = (listen: boolean) => {
-    clearSafety();
-    abortRef.current?.abort();
-    abortRef.current = null;
-    genRef.current += 1;
-    playbackStartedRef.current = false;
-    setThinking(false);
-    setResponding(false);
-    setTtsSpeaking(false);
-    stopListening();
-    stopCurrentAudio();
-    void heygen.interrupt();
-    if (listen && wantMicRef.current) startListening();
-  };
-
-  const armSafety = () => {
-    clearSafety();
-    playbackStartedRef.current = false;
-    safetyRef.current = window.setTimeout(() => {
-      if (playbackStartedRef.current) return;
-      console.error("[avatar] 7s safety: playback never started — reset idle");
-      wantMicRef.current = true;
-      goIdle(true);
-    }, PLAYBACK_START_MS);
   };
 
   useEffect(() => {
     return () => {
-      clearSafety();
-      abortRef.current?.abort();
       recRef.current?.stop();
-      void heygen.stop();
       stopCurrentAudio();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -137,7 +116,6 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
     setIsListening(true);
 
     const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
-
     if (!SpeechRecognitionCtor) {
       console.error("SpeechRecognition no soportado en este navegador");
       setStatus("Este navegador no admite el micrófono. Escribe tu pregunta abajo y pulsa Enviar.");
@@ -180,8 +158,21 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
     }
   };
 
+  const cancelTurn = () => {
+    genRef.current += 1;
+    stopListening();
+    stopCurrentAudio();
+    setThinking(false);
+    setResponding(false);
+    setTtsSpeaking(false);
+    wantMicRef.current = true;
+    startListening();
+    setStatus("Turno cancelado. Puedes hablar ahora.");
+  };
+
   const toggleListening = () => {
     console.log("Botón presionado: iniciando escucha...");
+    unlockAudio();
     if (thinking || responding || ttsSpeaking) {
       cancelTurn();
       return;
@@ -198,53 +189,63 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
     const text = draft.trim();
     if (!text) return;
     console.log("Pregunta escrita enviada:", text);
+    unlockAudio();
     setDraft("");
     wantMicRef.current = false;
     stopListening();
     void handleUtterance(text);
   };
 
-  const speakBackendSpanish = async (respuestaTexto: string) => {
+  const playElenaMp3 = async (respuestaTexto: string) => {
     const gen = genRef.current;
     stopListening();
     setResponding(true);
-    setTtsSpeaking(false);
-    armSafety();
     try {
-      const response = await fetch("/api/tts", {
+      const res = await fetch("/api/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: respuestaTexto, voice: "nova" }),
       });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        console.error("Error en /api/tts:", res.status, errData);
+        return;
+      }
 
-      if (!response.ok) throw new Error("Error en /api/tts: " + response.statusText);
-
-      const audioBlob = await response.blob();
+      const blob = await res.blob();
+      if (!blob.size || blob.type.includes("json")) {
+        console.error("Error en /api/tts: respuesta vacía o JSON", blob.type, blob.size);
+        return;
+      }
       if (gen !== genRef.current) return;
-      const audioUrl = URL.createObjectURL(audioBlob);
-      const audio = new Audio(audioUrl);
-      currentAudioRef.current = audio;
-      currentAudioUrlRef.current = audioUrl;
 
-      markPlaybackStarted();
+      stopCurrentAudio();
+      const url = URL.createObjectURL(blob);
+      audioUrlRef.current = url;
+      const audio = audioRef.current ?? new Audio();
+      audioRef.current = audio;
+      audio.volume = 1;
+      audio.src = url;
+
       setTtsSpeaking(true);
       setResponding(false);
-
+      console.log("Intentando reproducir audio...");
       await audio.play();
-      await new Promise<void>((resolve, reject) => {
+      console.log("Audio reproduciéndose con éxito");
+
+      await new Promise<void>((resolve) => {
         audio.onended = () => resolve();
-        audio.onerror = () => reject(new Error("Audio playback failed"));
+        audio.onerror = () => {
+          console.error("Fallo al reproducir audio de Elena:", audio.error);
+          resolve();
+        };
       });
-    } catch (cause) {
-      console.error("[avatar] /api/tts failed", cause);
-      throw cause;
+    } catch (error) {
+      console.error("Fallo al reproducir audio de Elena:", error);
     } finally {
       setTtsSpeaking(false);
       setResponding(false);
-      stopCurrentAudio();
-      if (gen === genRef.current && wantMicRef.current) {
-        startListening();
-      }
+      if (gen === genRef.current && wantMicRef.current) startListening();
     }
   };
 
@@ -252,15 +253,11 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
     const text = raw.trim();
     if (!text || !property) return;
     stopListening();
-    abortRef.current?.abort();
-    const abort = new AbortController();
-    abortRef.current = abort;
     const gen = ++genRef.current;
     linesRef.current = [...linesRef.current, { role: "guest" as const, text }].slice(-8);
     setGuestBubble(text);
     setThinking(true);
     setResponding(true);
-    armSafety();
     try {
       const reply = await askAvatarReply({
         question: text,
@@ -269,27 +266,17 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
         language: "es",
         emergencyNumber: HOST_EMERGENCY_NUMBER,
         history: linesRef.current,
-        signal: abort.signal,
       });
-      if (abort.signal.aborted || gen !== genRef.current) return;
+      if (gen !== genRef.current) return;
       linesRef.current = [...linesRef.current, { role: "ai" as const, text: reply }].slice(-8);
       setAiBubble(reply);
       setThinking(false);
-      await speakBackendSpanish(reply);
+      await playElenaMp3(reply);
     } catch (cause) {
-      if (abort.signal.aborted || (cause instanceof DOMException && cause.name === "AbortError")) return;
       console.error("[avatar] reply failed", cause);
       setThinking(false);
       setResponding(false);
-    } finally {
-      setThinking(false);
     }
-  };
-
-  const cancelTurn = () => {
-    wantMicRef.current = true;
-    goIdle(true);
-    setStatus("Turno cancelado. Puedes hablar ahora.");
   };
 
   if (!property) return null;
@@ -310,17 +297,9 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
       <div className="grid grid-cols-1 md:grid-cols-[280px_minmax(0,1fr)] gap-5">
         <div className="flex flex-col items-center">
           <div className="relative w-full aspect-[3/4] max-h-80 overflow-hidden rounded-2xl border border-slate-800 bg-slate-950">
-            <video
-              ref={heygen.videoRef}
-              autoPlay
-              playsInline
-              className={`absolute inset-0 h-full w-full object-cover ${heygen.ready ? "opacity-100" : "opacity-0"}`}
-            />
-            {!heygen.ready ? (
-              <div className="absolute inset-0 flex items-center justify-center">
-                <ReceptionistAvatar phase={phase} size="lg" name="Elena" />
-              </div>
-            ) : null}
+            <div className="absolute inset-0 flex items-center justify-center">
+              <ReceptionistAvatar phase={phase} size="lg" name="Elena" />
+            </div>
           </div>
           <button
             type="button"
@@ -366,8 +345,12 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
             type="button"
             onClick={() => {
               wantMicRef.current = false;
-              goIdle(false);
-              void heygen.stop();
+              genRef.current += 1;
+              stopListening();
+              stopCurrentAudio();
+              setThinking(false);
+              setResponding(false);
+              setTtsSpeaking(false);
             }}
             className="mt-2 w-full inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 py-2 text-[11px] font-semibold text-slate-300"
           >

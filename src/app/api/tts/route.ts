@@ -91,6 +91,9 @@ export async function POST(request: Request) {
 }
 
 function mpeg(audio: ArrayBuffer) {
+  if (!audio.byteLength) {
+    return Response.json({ error: "Empty audio buffer" }, { status: 502 });
+  }
   return new Response(audio, {
     headers: {
       "Content-Type": "audio/mpeg",
