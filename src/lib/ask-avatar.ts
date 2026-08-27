@@ -21,7 +21,7 @@ export async function askAvatarReply(options: {
       signal: options.signal,
       body: JSON.stringify({
         question: options.question,
-        language: "es",
+        language: options.language,
         hours: options.hours,
         emergencyNumber: options.emergencyNumber,
         openaiKey: options.openaiKey || undefined,

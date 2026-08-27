@@ -42,7 +42,7 @@ const inputClass =
 export function VoiceConciergeView() {
   const { properties } = useListings();
   const [voiceId, setVoiceId] = useState<VoiceProfileId>("elena");
-  const [language, setLanguage] = useState<LanguageMode>("es");
+  const [language, setLanguage] = useState<LanguageMode>("auto");
   const [speed, setSpeed] = useState(0.85);
   const [stability, setStability] = useState(68);
   const [floridaLine, setFloridaLine] = useState<FloridaLine>("305");
@@ -268,7 +268,7 @@ export function VoiceConciergeView() {
       await speakHumanVoice({
         text,
         profile: forProfile,
-        language: "es",
+        language,
         speed: 1,
         stability,
         elevenKey,
@@ -366,7 +366,7 @@ export function VoiceConciergeView() {
       question: text,
       property: selectedProperty,
       properties,
-      language: "es",
+      language,
       hours,
       emergencyNumber,
       openaiKey,
@@ -395,7 +395,7 @@ export function VoiceConciergeView() {
     ensureAudioUnlocked();
     const greeting = buildGreeting({
       profile,
-      language: "es",
+      language,
       hours,
       property: selectedProperty,
       lineNumber: lineMeta.number,

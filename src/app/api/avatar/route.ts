@@ -29,7 +29,7 @@ export async function POST(request: Request) {
   const emergencyNumber = body.emergencyNumber?.trim() || "+1 (954) 275-3544";
   const system = buildAvatarSystemPrompt({
     property,
-    language: "es",
+    language: body.language ?? "auto",
     hours: body.hours,
     emergencyNumber,
   });
