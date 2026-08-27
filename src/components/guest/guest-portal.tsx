@@ -15,8 +15,9 @@ import {
 } from "lucide-react";
 import type { Property } from "@/lib/dashboard-data";
 import { ReceptionistAvatar, type ReceptionistPhase } from "@/components/dashboard/receptionist-avatar";
+import { askAvatarReply } from "@/lib/ask-avatar";
 import { groceryFromHandbook } from "@/lib/receptionist-intent";
-import { answerGuestQuestion, HOST_EMERGENCY_NUMBER } from "@/lib/receptionist-replies";
+import { HOST_EMERGENCY_NUMBER } from "@/lib/receptionist-replies";
 import {
   getVoiceProfile,
   keepAudioChannelAlive,
@@ -269,19 +270,22 @@ export function GuestPortal({ propertyId }: { propertyId: string }) {
     stopListening();
     setPartialGuest("");
     setLines((current) => [...current, { id: nextId(), speaker: "guest", text }]);
-    const reply = answerGuestQuestion({
-      question: text,
-      properties: [stay],
-      fallback: stay,
-      language: "auto",
-      emergencyNumber: HOST_EMERGENCY_NUMBER,
-    });
     setThinking(true);
     setResponding(true);
-    window.setTimeout(() => {
+    void askAvatarReply({
+      question: text,
+      property: stay,
+      properties: [stay],
+      language: "auto",
+      emergencyNumber: HOST_EMERGENCY_NUMBER,
+      history: lines
+        .filter((line) => line.speaker === "guest" || line.speaker === "ai")
+        .slice(-6)
+        .map((line) => ({ role: line.speaker === "guest" ? ("guest" as const) : ("ai" as const), text: line.text })),
+    }).then((reply) => {
       setThinking(false);
       void speakReply(reply);
-    }, 380);
+    });
   };
 
   const toggleTalk = () => {

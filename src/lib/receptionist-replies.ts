@@ -3,6 +3,7 @@ import type { LanguageMode, ReplyLang } from "@/lib/human-voice";
 import {
   detectGuestIntent,
   groceryFromHandbook,
+  localPlaceHint,
   relevantHandbookSnippet,
   replyLangFor,
 } from "@/lib/receptionist-intent";
@@ -61,8 +62,31 @@ export function answerGuestQuestion({
 
   if (intent === "grocery") {
     const grocery = groceryFromHandbook(property, lang);
-    if (lang === "es") return `Para compras cerca de ${name}. ${grocery}${night}`;
-    return `For groceries near ${name}. ${grocery}${night}`;
+    if (lang === "es") return `${grocery}${night}`;
+    return `${grocery}${night}`;
+  }
+
+  if (intent === "pharmacy") {
+    const passage = relevantHandbookSnippet(question, property.handbook);
+    const hint = passage || localPlaceHint(property, "pharmacy", lang);
+    return `${hint}${night}`;
+  }
+
+  if (intent === "restaurant") {
+    const passage = relevantHandbookSnippet(question, property.handbook);
+    const hint = passage || localPlaceHint(property, "restaurant", lang);
+    return `${hint}${night}`;
+  }
+
+  if (intent === "nearby") {
+    return `${localPlaceHint(property, "nearby", lang)}${night}`;
+  }
+
+  if (intent === "greeting") {
+    if (lang === "es") {
+      return `Hola. Soy Elena, tu conserje en ${name}, ${property.address}, ${property.city}. Dime qué necesitas.${night}`;
+    }
+    return `Hi. I'm Elena, your concierge at ${name}, ${property.address}, ${property.city}. What do you need?${night}`;
   }
 
   if (intent === "wifi") {
@@ -120,7 +144,7 @@ export function answerGuestQuestion({
   }
 
   if (lang === "es") {
-    return `Puedo ayudarte con tu estadía en ${name}. Wi-Fi, supermercado, parking, horarios, o el código de la puerta. ¿Qué necesitas?${night}`;
+    return `No tengo ese detalle exacto en el handbook de ${name}. Estás en ${property.address}, ${property.city}. Dime qué buscas — por ejemplo una farmacia, un súper o un restaurante — y te oriento desde ahí.${night}`;
   }
-  return `I can help with your stay at ${name}. Wi-Fi, grocery stores, parking, check-in times, or the door code. What do you need?${night}`;
+  return `I don't have that exact note in the ${name} handbook. You're at ${property.address}, ${property.city}. Tell me what you need — a pharmacy, grocery, or restaurant — and I'll point you from there.${night}`;
 }

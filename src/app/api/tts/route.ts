@@ -1,10 +1,10 @@
-import { VOICE_PROFILES, type VoiceProfileId } from "@/lib/human-voice";
+import { FEMALE_ELEVENLABS_VOICE_ID, FEMALE_OPENAI_VOICE } from "@/lib/human-voice";
 
 type TtsBody = {
   provider?: "elevenlabs" | "openai" | "auto";
   apiKey?: string;
   text?: string;
-  voiceProfile?: VoiceProfileId;
+  voiceProfile?: string;
   speed?: number;
   stability?: number;
 };
@@ -22,8 +22,6 @@ export async function POST(request: Request) {
     return Response.json({ error: "Text is required" }, { status: 400 });
   }
 
-  const profile =
-    VOICE_PROFILES.find((item) => item.id === body.voiceProfile) ?? VOICE_PROFILES[0];
   const elevenKey =
     (body.provider !== "openai" ? body.apiKey?.trim() : "") || process.env.ELEVENLABS_API_KEY || "";
   const openaiKey =
@@ -36,12 +34,13 @@ export async function POST(request: Request) {
 
   try {
     const stability = clamp((body.stability ?? 48) / 100, 0.28, 0.62);
-    const openaiVoice = profile.openaiVoice === "alloy" ? "alloy" : "nova";
+    const openaiVoice = FEMALE_OPENAI_VOICE;
+    const elevenVoiceId = FEMALE_ELEVENLABS_VOICE_ID;
 
     if (requested === "auto") {
       if (elevenKey) {
         try {
-          return mpeg(await fetchElevenLabsTts(elevenKey, text, profile.elevenLabsVoiceId, stability));
+          return mpeg(await fetchElevenLabsTts(elevenKey, text, elevenVoiceId, stability));
         } catch (cause) {
           console.error("[tts] ElevenLabs failed in auto mode, trying OpenAI", cause);
         }
@@ -71,7 +70,7 @@ export async function POST(request: Request) {
     }
 
     try {
-      return mpeg(await fetchElevenLabsTts(apiKey, text, profile.elevenLabsVoiceId, stability));
+      return mpeg(await fetchElevenLabsTts(apiKey, text, elevenVoiceId, stability));
     } catch (cause) {
       console.error("[tts] ElevenLabs TTS failed", cause);
       throw cause;
@@ -97,7 +96,7 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
-async function fetchOpenAiTts(apiKey: string, text: string, voice: "nova" | "alloy") {
+async function fetchOpenAiTts(apiKey: string, text: string, voice: typeof FEMALE_OPENAI_VOICE) {
   try {
     const response = await fetch("https://api.openai.com/v1/audio/speech", {
       method: "POST",

@@ -2,14 +2,18 @@ export type VoiceProfileId = "elena" | "mateo" | "sarah";
 export type LanguageMode = "auto" | "en" | "es";
 export type ReplyLang = "en" | "es";
 
+/** Fixed female studio voice — never alloy/onyx/Adam. */
+export const FEMALE_OPENAI_VOICE = "nova" as const;
+export const FEMALE_ELEVENLABS_VOICE_ID = "21m00Tcm4TlvDq8ikWAM";
+
 export type VoiceProfile = {
   id: VoiceProfileId;
   name: string;
   title: string;
   hint: string;
-  openaiVoice: "nova" | "alloy" | "onyx" | "shimmer";
+  openaiVoice: typeof FEMALE_OPENAI_VOICE;
   elevenLabsVoiceId: string;
-  gender: "female" | "male";
+  gender: "female";
   rate: number;
   pitch: number;
   preview: { en: string; es: string };
@@ -21,8 +25,8 @@ export const VOICE_PROFILES: VoiceProfile[] = [
     name: "Elena",
     title: "Cálida & Bilingüe (Miami Hostess)",
     hint: "Proyección firme, clara y con aire",
-    openaiVoice: "nova",
-    elevenLabsVoiceId: "21m00Tcm4TlvDq8ikWAM",
+    openaiVoice: FEMALE_OPENAI_VOICE,
+    elevenLabsVoiceId: FEMALE_ELEVENLABS_VOICE_ID,
     gender: "female",
     rate: 1,
     pitch: 1,
@@ -35,10 +39,10 @@ export const VOICE_PROFILES: VoiceProfile[] = [
     id: "mateo",
     name: "Mateo",
     title: "Concierge de Lujo",
-    hint: "Voz profunda, educada y tranquila",
-    openaiVoice: "alloy",
-    elevenLabsVoiceId: "pNInz6obpgDQGcFmaJgB",
-    gender: "male",
+    hint: "Voz femenina de estudio (nova)",
+    openaiVoice: FEMALE_OPENAI_VOICE,
+    elevenLabsVoiceId: FEMALE_ELEVENLABS_VOICE_ID,
+    gender: "female",
     rate: 1,
     pitch: 1,
     preview: {
@@ -51,8 +55,8 @@ export const VOICE_PROFILES: VoiceProfile[] = [
     name: "Sarah",
     title: "Friendly American Host",
     hint: "Inglés nativo fluido y enérgico",
-    openaiVoice: "nova",
-    elevenLabsVoiceId: "EXAVITQu4vr4xnSDxMaL",
+    openaiVoice: FEMALE_OPENAI_VOICE,
+    elevenLabsVoiceId: FEMALE_ELEVENLABS_VOICE_ID,
     gender: "female",
     rate: 1,
     pitch: 1,

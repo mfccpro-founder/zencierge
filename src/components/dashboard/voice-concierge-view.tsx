@@ -6,7 +6,7 @@ import { useListings } from "@/components/dashboard/listings-provider";
 import { AiReceptionistStudio } from "@/components/dashboard/ai-receptionist-studio";
 import type { ReceptionistPhase } from "@/components/dashboard/receptionist-avatar";
 import type { Property } from "@/lib/dashboard-data";
-import { answerGuestQuestion } from "@/lib/receptionist-replies";
+import { askAvatarReply } from "@/lib/ask-avatar";
 import {
   VOICE_PROFILES,
   getVoiceProfile,
@@ -291,7 +291,7 @@ export function VoiceConciergeView() {
 
   const handleGuestUtterance = (raw: string) => {
     const text = raw.trim();
-    if (!text) return;
+    if (!text || !selectedProperty) return;
     ensureVoiceSession();
     callActiveRef.current = true;
     stopListening();
@@ -299,26 +299,33 @@ export function VoiceConciergeView() {
     setDraft("");
     setLines((current) => [...current, { id: nextId(), speaker: "guest", text }]);
 
-    const reply = answerGuestQuestion({
-      question: text,
-      properties,
-      fallback: selectedProperty,
-      language,
-      hours,
-      emergencyNumber,
-    });
+    const history = lines
+      .filter((line) => line.speaker === "guest" || line.speaker === "ai")
+      .slice(-6)
+      .map((line) => ({ role: line.speaker === "guest" ? ("guest" as const) : ("ai" as const), text: line.text }));
+
     setThinking(true);
     setResponding(true);
     const started = performance.now();
-    window.setTimeout(() => {
+    void askAvatarReply({
+      question: text,
+      property: selectedProperty,
+      properties,
+      language,
+      hours,
+      emergencyNumber,
+      openaiKey,
+      history,
+    }).then((reply) => {
       if (!callActiveRef.current) {
         setThinking(false);
+        setResponding(false);
         return;
       }
       setLatencyMs(Math.round(performance.now() - started));
       setThinking(false);
       void streamReply(reply);
-    }, 420);
+    });
   };
 
   const startCall = () => {
@@ -788,17 +795,17 @@ function buildGreeting({
 
   if (profile.id === "mateo") {
     return lang === "es"
-      ? `Buenas noches. Soy Mateo, concierge de ${property.name}. Qué gusto atenderle. Está usted en la ${lineNumber}.${night} Deme un momento. ¿En qué puedo servirle?`
-      : `Good evening. This is Mateo, concierge for ${property.name}. A pleasure to greet you on ${lineNumber}.${night} Take your time. How may I help?`;
+      ? `Buenas noches. Soy tu conserje en ${property.name}, ${property.address}, ${property.city}. Qué gusto atenderle. Está usted en la ${lineNumber}.${night} Deme un momento. ¿En qué puedo servirle?`
+      : `Good evening. This is your concierge for ${property.name}, ${property.address}, ${property.city}. A pleasure to greet you on ${lineNumber}.${night} Take your time. How may I help?`;
   }
 
   if (profile.id === "sarah") {
     return lang === "es"
-      ? `Hola. Soy Sarah, tu host en ${property.name}. Qué bueno que llamas. Estás en la ${lineNumber}.${night} Dime, ¿qué necesitas?`
-      : `Hey. I'm Sarah, your host at ${property.name}. So glad you called. You're on ${lineNumber}.${night} What's going on? I'm here.`;
+      ? `Hola. Soy Sarah, tu host en ${property.name}, ${property.address}, ${property.city}. Qué bueno que llamas. Estás en la ${lineNumber}.${night} Dime, ¿qué necesitas?`
+      : `Hey. I'm Sarah, your host at ${property.name}, ${property.address}, ${property.city}. So glad you called. You're on ${lineNumber}.${night} What's going on? I'm here.`;
   }
 
   return lang === "es"
-    ? `Hola. Qué gusto escucharte. Soy Elena, tu anfitriona de ${property.name}, aquí en Florida. Llamas al ${lineNumber}.${night} Cuéntame. ¿En qué te ayudo hoy?`
-    : `Hi there. So nice to hear from you. I'm Elena, your host at ${property.name}, here in Florida. You're on ${lineNumber}.${night} Tell me. What can I do for you?`;
+    ? `Hola. Qué gusto escucharte. Soy Elena, tu anfitriona de ${property.name}, en ${property.address}, ${property.city}. Llamas al ${lineNumber}.${night} Cuéntame. ¿En qué te ayudo hoy?`
+    : `Hi there. So nice to hear from you. I'm Elena, your host at ${property.name}, ${property.address}, ${property.city}. You're on ${lineNumber}.${night} Tell me. What can I do for you?`;
 }

@@ -4,6 +4,10 @@ import type { LanguageMode, ReplyLang } from "@/lib/human-voice";
 export type GuestIntent =
   | "emergency"
   | "grocery"
+  | "pharmacy"
+  | "restaurant"
+  | "nearby"
+  | "greeting"
   | "wifi"
   | "parking"
   | "door"
@@ -41,12 +45,40 @@ const GROCERY_HINTS = [
   "tiendas",
   "comprar",
   "compras",
-  "comida",
   "alimentos",
   "whole foods",
   "trader joe",
-  "market",
+  "walmart",
 ];
+
+const PHARMACY_HINTS = [
+  "farmacia",
+  "pharmacy",
+  "cvs",
+  "walgreens",
+  "medicamento",
+  "medicina",
+  "prescription",
+  "drugstore",
+];
+
+const RESTAURANT_HINTS = [
+  "restaurante",
+  "restaurant",
+  "comer",
+  "cenar",
+  "almorzar",
+  "desayunar",
+  "dinner",
+  "lunch",
+  "breakfast",
+  "comida",
+  "cafe",
+  "café",
+  "bar",
+];
+
+const NEARBY_HINTS = ["cerca", "cercano", "nearby", "around here", "aqui cerca", "aquí cerca", "walking distance"];
 
 const WIFI_HINTS = [
   "wifi",
@@ -98,7 +130,10 @@ export function detectGuestIntent(raw: string): GuestIntent {
   const blob = padded(q);
 
   if (hasAny(q, EMERGENCY_HINTS)) return "emergency";
+  if (PHARMACY_HINTS.some((hint) => q.includes(hint))) return "pharmacy";
   if (GROCERY_HINTS.some((hint) => q.includes(hint))) return "grocery";
+  if (RESTAURANT_HINTS.some((hint) => q.includes(hint))) return "restaurant";
+  if (NEARBY_HINTS.some((hint) => q.includes(hint))) return "nearby";
 
   const wantsDoorClave =
     q.includes("clave") && (q.includes("puerta") || q.includes("entrar") || q.includes("cerradura") || q.includes("acceso"));
@@ -112,6 +147,9 @@ export function detectGuestIntent(raw: string): GuestIntent {
     return "checkin";
   }
   if (RULES_HINTS.some((hint) => q.includes(hint))) return "rules";
+  if (/^(hola|hello|hi|hey|buenas|buenos dias|good morning|good evening)(\s.*)?$/.test(q) && q.split(" ").length <= 4) {
+    return "greeting";
+  }
   return "open";
 }
 
@@ -143,10 +181,43 @@ const GROCERY_HANDBOOK_NEEDLES = [
 export function groceryFromHandbook(property: Property, lang: ReplyLang) {
   const passage = extractHandbookPassages(property.handbook, GROCERY_HANDBOOK_NEEDLES);
   if (passage) return passage;
-  if (lang === "es") {
-    return "El supermercado más cercano es Publix, ubicado a 3 minutos caminando por Collins Ave.";
+  return localPlaceHint(property, "grocery", lang);
+}
+
+export function localPlaceHint(
+  property: Property,
+  kind: "grocery" | "pharmacy" | "restaurant" | "nearby",
+  lang: ReplyLang,
+) {
+  const where = `${property.address}, ${property.city}`;
+  if (kind === "pharmacy") {
+    return lang === "es"
+      ? `Desde ${where} busca un CVS o Walgreens en Maps. En ${property.city} suele haber uno a pocos minutos a pie o en auto corto.`
+      : `From ${where}, search Maps for a CVS or Walgreens. In ${property.city} there is usually one a short walk or a few minutes' drive.`;
   }
-  return "The nearest grocery is Publix, a 3-minute walk on Collins Ave.";
+  if (kind === "restaurant") {
+    return lang === "es"
+      ? `Estás en ${where}. Abre Maps y busca restaurantes cerca. En ${property.city} hay varias opciones a poca distancia; dime si quieres algo casual, playa o más formal.`
+      : `You're at ${where}. Open Maps for restaurants nearby. ${property.city} has plenty within a short walk or drive. Tell me if you want casual, beachy, or nicer.`;
+  }
+  if (kind === "nearby") {
+    return lang === "es"
+      ? `La propiedad está en ${where}. Dime si buscas farmacia, supermercado o restaurante y te oriento desde esa dirección.`
+      : `The listing is at ${where}. Tell me if you need a pharmacy, grocery, or restaurant and I'll point you from that address.`;
+  }
+  if (property.city === "Miami Beach" || property.city === "Sunny Isles") {
+    return lang === "es"
+      ? `Cerca de ${where} lo más práctico es un Publix sobre Collins Ave. Ábrelo en Maps desde esa dirección; suele ser un tramo corto a pie o en auto.`
+      : `Near ${where}, Publix on Collins Ave is the practical grocery. Open Maps from that address; it's usually a short walk or drive.`;
+  }
+  if (property.city === "Brickell") {
+    return lang === "es"
+      ? `Desde ${where} el Publix de Brickell queda a pocos minutos. Búscalo en Maps; también hay mercados en Brickell City Centre.`
+      : `From ${where}, Publix in Brickell is a few minutes away on Maps. Brickell City Centre also has markets.`;
+  }
+  return lang === "es"
+    ? `Desde ${where} busca un Publix o un supermercado en Maps; en Fort Lauderdale suele haber uno a pocos minutos en auto.`
+    : `From ${where}, search Maps for Publix or a grocery; in Fort Lauderdale it's usually a short drive.`;
 }
 
 export function relevantHandbookSnippet(question: string, handbook: string) {
