@@ -10,6 +10,7 @@ import { askAvatarReply } from "@/lib/ask-avatar";
 import { useHeygenRepeatAvatar } from "@/components/dashboard/use-heygen-repeat";
 import {
   VOICE_PROFILES,
+  detectReplyLang,
   getVoiceProfile,
   keepAudioChannelAlive,
   resumePersistentAudio,
@@ -221,9 +222,12 @@ export function VoiceConciergeView() {
   };
 
   const ensureAudioUnlocked = () => {
-    const audio = audioRef.current;
-    if (!audio || unlockedRef.current) return;
-    unlockSpeechAudio(audio);
+    // Called synchronously from the click handler (Simulate inbound call) so the
+    // browser treats this gesture as the unlock for all later playback.
+    unlockSpeechAudio(audioRef.current);
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.resume();
+    }
     unlockedRef.current = true;
   };
 
@@ -245,6 +249,45 @@ export function VoiceConciergeView() {
       console.error("[voice] Tocar para escuchar failed", cause);
       setSpeaking(false);
     }
+  };
+
+  const speakWithBrowserTts = (text: string, mode: LanguageMode) => {
+    // Guaranteed-vocalization fallback: if Studio/HeyGen TTS is unavailable,
+    // Elena still speaks the /api/avatar reply with the browser's own voice.
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    const synth = window.speechSynthesis;
+    synth.cancel();
+    synth.resume();
+    const lang = detectReplyLang(text, mode);
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = lang === "en" ? "en-US" : "es-ES";
+    const prefix = lang === "en" ? "en" : "es";
+    const voices = synth.getVoices();
+    const voice =
+      voices.find(
+        (item) =>
+          item.lang.toLowerCase().startsWith(prefix) &&
+          /natural|google|sabina|helena|monica|paulina/i.test(item.name),
+      ) ?? voices.find((item) => item.lang.toLowerCase().startsWith(prefix));
+    if (voice) utterance.voice = voice;
+    utterance.rate = 0.95;
+    utterance.pitch = 1;
+    utterance.onstart = () => {
+      if (genRef.current) markPlaybackStarted();
+      setSpeaking(true);
+    };
+    utterance.onend = () => {
+      setSpeaking(false);
+      setResponding(false);
+      clearSafety();
+    };
+    utterance.onerror = () => {
+      setSpeaking(false);
+      setResponding(false);
+      clearSafety();
+    };
+    setSpeaking(true);
+    synth.speak(utterance);
   };
 
   const speak = async (text: string, forProfile = profile) => {
@@ -298,7 +341,8 @@ export function VoiceConciergeView() {
         },
       });
     } catch (cause) {
-      console.error("[voice] speak failed", cause);
+      console.error("[voice] speak failed; vocalizing with browser speech synthesis", cause);
+      speakWithBrowserTts(text, language);
     } finally {
       if (!playbackStartedRef.current) setResponding(false);
     }
