@@ -32,12 +32,14 @@ const SILENT_WAV =
 
 export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
   const property = properties[0];
-  const recRef = useRef<SpeechRec | null>(null);
+  const recognitionRef = useRef<SpeechRec | null>(null);
   const wantMicRef = useRef(false);
   const genRef = useRef(0);
   const linesRef = useRef<{ role: "guest" | "ai"; text: string }[]>([]);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioUrlRef = useRef<string | null>(null);
+  const silenceTimerRef = useRef(0);
+  const handleUtteranceRef = useRef<(text: string) => void>(() => {});
 
   const [isListening, setIsListening] = useState(false);
   const [thinking, setThinking] = useState(false);
@@ -96,40 +98,27 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
     }
   };
 
-  useEffect(() => {
-    return () => {
-      recRef.current?.stop();
-      stopCurrentAudio();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const clearSilenceTimer = () => {
+    if (silenceTimerRef.current) {
+      window.clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = 0;
+    }
+  };
 
-  const stopListening = () => {
-    recRef.current?.stop();
-    recRef.current = null;
+  const goIdle = () => {
+    clearSilenceTimer();
+    wantMicRef.current = false;
     setIsListening(false);
   };
 
-  const startListening = () => {
-    console.log("Botón presionado: iniciando escucha...");
-    wantMicRef.current = true;
-    setIsListening(true);
-
+  useEffect(() => {
     const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognitionCtor) {
       console.error("SpeechRecognition no soportado en este navegador");
-      setStatus("Este navegador no admite el micrófono. Escribe tu pregunta abajo y pulsa Enviar.");
       return;
     }
 
-    try {
-      recRef.current?.stop();
-    } catch {
-      /* already stopped */
-    }
-
     const recognition = new SpeechRecognitionCtor();
-    recRef.current = recognition;
     recognition.lang = "es-US";
     recognition.interimResults = true;
     recognition.continuous = false;
@@ -140,21 +129,76 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
         const piece = result?.[0]?.transcript ?? "";
         if (result?.isFinal) finalText += piece;
       }
-      if (finalText.trim()) {
-        wantMicRef.current = true;
-        void handleUtterance(finalText);
+      if (!finalText.trim()) return;
+      clearSilenceTimer();
+      try {
+        recognition.stop();
+      } catch {
+        /* already stopped */
       }
+      goIdle();
+      handleUtteranceRef.current(finalText.trim());
     };
     recognition.onerror = (event?: { error?: string }) => {
       console.error("SpeechRecognition error", event?.error ?? event);
-      setIsListening(false);
+      goIdle();
     };
-    recognition.onend = () => setIsListening(false);
+    recognition.onend = () => {
+      goIdle();
+    };
+    recognitionRef.current = recognition;
+
+    return () => {
+      clearSilenceTimer();
+      recognition.onresult = null;
+      recognition.onerror = null;
+      recognition.onend = null;
+      try {
+        recognition.stop();
+      } catch {
+        /* already stopped */
+      }
+      recognitionRef.current = null;
+      stopCurrentAudio();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const stopListening = () => {
+    clearSilenceTimer();
+    try {
+      recognitionRef.current?.stop();
+    } catch {
+      /* already stopped */
+    }
+    goIdle();
+  };
+
+  const startListening = () => {
+    console.log("Botón presionado: iniciando escucha...");
+    const recognition = recognitionRef.current;
+    if (!recognition) {
+      console.error("SpeechRecognition no soportado en este navegador");
+      setStatus("Este navegador no admite el micrófono. Escribe tu pregunta abajo y pulsa Enviar.");
+      goIdle();
+      return;
+    }
+    wantMicRef.current = true;
+    setIsListening(true);
+    clearSilenceTimer();
+    silenceTimerRef.current = window.setTimeout(() => {
+      try {
+        recognitionRef.current?.stop();
+      } catch {
+        /* already stopped */
+      }
+      goIdle();
+    }, 6000);
     try {
       recognition.start();
     } catch (cause) {
       console.error("[avatar] SpeechRecognition start failed", cause);
-      setIsListening(false);
+      goIdle();
     }
   };
 
@@ -165,8 +209,6 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
     setThinking(false);
     setResponding(false);
     setTtsSpeaking(false);
-    wantMicRef.current = true;
-    startListening();
     setStatus("Turno cancelado. Puedes hablar ahora.");
   };
 
@@ -178,7 +220,6 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
       return;
     }
     if (isListening) {
-      wantMicRef.current = false;
       stopListening();
       return;
     }
@@ -191,13 +232,14 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
     console.log("Pregunta escrita enviada:", text);
     unlockAudio();
     setDraft("");
-    wantMicRef.current = false;
+    recognitionRef.current?.stop();
     stopListening();
     void handleUtterance(text);
   };
 
   const playElenaMp3 = async (respuestaTexto: string) => {
     const gen = genRef.current;
+    recognitionRef.current?.stop();
     stopListening();
     setResponding(true);
     try {
@@ -245,13 +287,13 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
     } finally {
       setTtsSpeaking(false);
       setResponding(false);
-      if (gen === genRef.current && wantMicRef.current) startListening();
     }
   };
 
   const handleUtterance = async (raw: string) => {
     const text = raw.trim();
     if (!text || !property) return;
+    recognitionRef.current?.stop();
     stopListening();
     const gen = ++genRef.current;
     linesRef.current = [...linesRef.current, { role: "guest" as const, text }].slice(-8);
@@ -277,6 +319,9 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
       setThinking(false);
       setResponding(false);
     }
+  };
+  handleUtteranceRef.current = (text) => {
+    void handleUtterance(text);
   };
 
   if (!property) return null;
