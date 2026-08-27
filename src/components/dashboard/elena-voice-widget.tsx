@@ -30,22 +30,43 @@ interface BrowserSpeechRecognitionEvent {
   }>;
 }
 
-/** Pick the best browser voice for a language: es-US → es-ES → any es; en-US → en-GB → any en. */
+/** Voice names that indicate a high-quality, natural-sounding voice. */
+const NATURAL_VOICE_MARKERS = ["Natural", "Google", "Sabina", "Helena", "Monica", "Paulina"];
+
+function isNaturalVoice(voice: SpeechSynthesisVoice): boolean {
+  const name = voice.name.toLowerCase();
+  return NATURAL_VOICE_MARKERS.some((marker) => name.includes(marker.toLowerCase()));
+}
+
+/**
+ * Pick the best browser voice for a language, prioritizing natural voices.
+ * Candidates are filtered to the target language, then ranked by name markers
+ * (Natural, Google, Sabina, Helena, Monica, Paulina) and exact locale.
+ */
 function pickVoice(
   lang: "es" | "en",
   voices: SpeechSynthesisVoice[],
 ): SpeechSynthesisVoice | undefined {
+  if (!voices.length) return undefined;
+
+  const prefix = lang === "es" ? "es-" : "en-";
+  const langVoices = voices.filter((v) => v.lang.toLowerCase().startsWith(prefix));
+  const pool = langVoices.length ? langVoices : voices;
+  const ranked = pool.filter(isNaturalVoice).length ? pool.filter(isNaturalVoice) : pool;
+
   if (lang === "es") {
     return (
-      voices.find((v) => v.lang === "es-US") ??
-      voices.find((v) => v.lang === "es-ES") ??
-      voices.find((v) => v.lang.toLowerCase().startsWith("es-"))
+      ranked.find((v) => v.lang === "es-US") ??
+      ranked.find((v) => v.lang === "es-ES") ??
+      ranked.find((v) => v.lang.toLowerCase().startsWith("es-")) ??
+      ranked[0]
     );
   }
   return (
-    voices.find((v) => v.lang === "en-US") ??
-    voices.find((v) => v.lang === "en-GB") ??
-    voices.find((v) => v.lang.toLowerCase().startsWith("en-"))
+    ranked.find((v) => v.lang === "en-US") ??
+    ranked.find((v) => v.lang === "en-GB") ??
+    ranked.find((v) => v.lang.toLowerCase().startsWith("en-")) ??
+    ranked[0]
   );
 }
 
@@ -80,6 +101,8 @@ export default function ElenaVoiceWidget() {
     const voice = pickVoice(lang, voices);
     if (voice) utterance.voice = voice;
     utterance.lang = voice?.lang ?? (lang === "es" ? "es-ES" : "en-US");
+    utterance.pitch = 1.0;
+    utterance.rate = 0.95;
     langRef.current = lang;
     setStatus(lang === "es" ? "Elena habla... (ES)" : "Elena speaking... (EN)");
     utterance.onstart = () => setStatus(lang === "es" ? "Elena habla... (ES)" : "Elena speaking... (EN)");
@@ -152,10 +175,10 @@ export default function ElenaVoiceWidget() {
     const recognition = new Recognition();
     recognitionRef.current = recognition;
     manualStopRef.current = false;
-    // Sync recognition language with the language Elena last replied in (es-ES or
-    // en-US). Browsers don't offer true multi-language auto-detect in one session,
-    // so continuous mode + language sync lets the mic capture both over time.
-    recognition.lang = langRef.current === "en" ? "en-US" : "es-ES";
+    // Default to Spanish (es-US) so the mic transcribes Spanish correctly without
+    // mangling words. Recognition stays in Spanish; the reply language is decided
+    // by /api/chat on the transcribed text.
+    recognition.lang = "es-US";
     recognition.continuous = true;
     recognition.interimResults = true;
 
@@ -195,7 +218,7 @@ export default function ElenaVoiceWidget() {
     };
 
     setListening(true);
-    setStatus(`Escuchando... (${langRef.current === "en" ? "EN" : "ES"})`);
+    setStatus("Escuchando... (ES)");
     recognition.start();
   };
 

@@ -39,8 +39,9 @@ const EN_HINTS = new Set([
 
 /**
  * Detect whether the incoming message is mostly English or Spanish.
- * Strong Spanish markers (¿ ¡ or accented letters) win immediately; otherwise the
- * majority of recognized ES/EN keywords decides. Ties resolve to Spanish.
+ * Strong Spanish markers (¿ ¡ or accented letters) win immediately. Spanish is the
+ * default: English is only returned when English keywords clearly outnumber Spanish
+ * ones. Ties and unknown words resolve to Spanish.
  */
 function detectLang(text: string): "en" | "es" {
   if (/[¿¡]/.test(text)) return "es";
@@ -60,7 +61,7 @@ function detectLang(text: string): "en" | "es" {
     if (EN_HINTS.has(word)) enScore += 1;
   }
 
-  return esScore >= enScore ? "es" : "en";
+  return enScore > esScore && enScore > 0 ? "en" : "es";
 }
 
 export async function POST(req: NextRequest) {
