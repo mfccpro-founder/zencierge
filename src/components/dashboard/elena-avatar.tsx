@@ -33,7 +33,7 @@ export function ElenaAvatar({
           alt="Elena · AI Concierge"
           fill
           sizes={`${size}px`}
-          className="rounded-full object-cover object-top"
+          className="scale-[1.65] origin-top rounded-full object-cover object-top"
           onError={() => setOk(false)}
           priority={size >= 80}
         />

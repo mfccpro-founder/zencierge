@@ -249,28 +249,28 @@ export default function ElenaVoiceWidget() {
   return (
     <div className="p-5 bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm mx-auto text-white shadow-xl space-y-4">
       {/* Compact header: Elena mini-avatar + title + status badge */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-3.5 min-w-0">
           <div className="relative">
-            <ElenaAvatar size={44} />
+            <ElenaAvatar size={64} />
             {listening ? (
-              <div className="absolute bottom-1 left-1/2 flex -translate-x-1/2 items-end gap-0.5 h-2.5">
+              <div className="absolute bottom-1.5 left-1/2 flex -translate-x-1/2 items-end gap-0.5 h-3">
                 {Array.from({ length: 3 }, (_, index) => (
                   <span
                     key={index}
-                    className="w-0.5 h-2.5 rounded-full bg-emerald-300"
+                    className="w-0.5 h-3 rounded-full bg-emerald-300"
                     style={{ animationDelay: `${index * 0.07}s` }}
                   />
                 ))}
               </div>
             ) : null}
           </div>
-          <div className="leading-tight">
-            <h2 className="text-lg font-bold">Elena · Receptionist</h2>
+          <div className="leading-tight min-w-0">
+            <h2 className="text-lg font-bold truncate">Elena · Receptionist</h2>
             <p className="text-[11px] text-slate-500">AI Voice Concierge</p>
           </div>
         </div>
-        <span className="text-xs px-2 py-1 bg-emerald-900/60 text-emerald-400 border border-emerald-700 rounded-md">
+        <span className="shrink-0 text-xs px-2 py-1 bg-emerald-900/60 text-emerald-400 border border-emerald-700 rounded-md">
           {status}
         </span>
       </div>
