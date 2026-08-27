@@ -33,7 +33,6 @@ import { FinancesView } from "@/components/dashboard/finances-view";
 import { SettingsView } from "@/components/dashboard/settings-view";
 import { AiAvatarGuide, type AiAvatarGuideHandle } from "@/components/dashboard/ai-avatar-guide";
 import { ReceptionistAvatar } from "@/components/dashboard/receptionist-avatar";
-import { ElenaWelcomeAvatar } from "@/components/dashboard/elena-welcome-avatar";
 import { HostSignOutButton } from "@/components/auth/host-sign-out-button";
 import { createAuthBrowserClient } from "@/lib/supabase-auth-browser";
 import { hostDisplayName } from "@/lib/host-display-name";
@@ -168,16 +167,6 @@ export function DashboardApp({ initialTab = "overview" }: { initialTab?: NavId }
             onOpenReceptionist={() => setActiveTab("voice")}
             onOpenTutorial={() => avatarGuideRef.current?.openTutorial()}
           />
-        </div>
-
-        <div
-          className={
-            activeTab === "overview"
-              ? "relative z-20 isolate pointer-events-auto mb-8"
-              : "hidden"
-          }
-        >
-          <ElenaWelcomeAvatar />
         </div>
 
         <div key={activeTab} className="view-enter">
