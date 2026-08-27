@@ -34,20 +34,32 @@ export async function POST(request: Request) {
     emergencyNumber,
   });
 
+  // The client may prefix the question with mirror instructions — extract the
+  // raw guest text so the LLM receives a clean message plus an explicit
+  // language flag (never a rigid language template).
+  const guestText = extractGuestText(question);
+  const forcedLang = body.language === "es" || body.language === "en" ? body.language : null;
+  const guestLang = forcedLang ?? detectGuestLang(guestText);
+  const langFlag =
+    guestLang === "es"
+      ? "[User language: Spanish - Reply strictly in Spanish]"
+      : "[User language: English - Reply strictly in English]";
+  const userContent = `${langFlag}\n\nGuest: ${guestText}`;
+
   const openaiKey = body.openaiKey?.trim() || process.env.OPENAI_API_KEY || process.env.OPENAI_TTS_API_KEY || "";
   const anthropicKey = process.env.ANTHROPIC_API_KEY || "";
 
   try {
     if (anthropicKey) {
       try {
-        const reply = await fetchClaudeReply(anthropicKey, system, question, body.history ?? []);
+        const reply = await fetchClaudeReply(anthropicKey, system, userContent, body.history ?? []);
         return Response.json({ reply, engine: "claude" });
       } catch (cause) {
         console.error("[avatar] Claude failed, trying OpenAI", cause);
       }
     }
     if (openaiKey) {
-      const reply = await fetchOpenAiReply(openaiKey, system, question, body.history ?? []);
+      const reply = await fetchOpenAiReply(openaiKey, system, userContent, body.history ?? []);
       return Response.json({ reply, engine: "openai" });
     }
     return Response.json({ error: "No LLM key" }, { status: 401 });
@@ -55,6 +67,33 @@ export async function POST(request: Request) {
     console.error("[avatar] LLM failed", cause);
     return Response.json({ error: "Avatar LLM failed" }, { status: 502 });
   }
+}
+
+/** Strips any client-side mirror instruction so only the guest text reaches the LLM. */
+function extractGuestText(question: string) {
+  const marker = "\n\nGuest: ";
+  const idx = question.lastIndexOf(marker);
+  if (idx !== -1) return question.slice(idx + marker.length).trim();
+  const guestIdx = question.indexOf("Guest: ");
+  if (guestIdx !== -1) return question.slice(guestIdx + 7).trim();
+  return question.trim();
+}
+
+/** Spanish is the base language: English needs clear keyword evidence. */
+function detectGuestLang(text: string): "es" | "en" {
+  const t = text.toLowerCase();
+  const hasSpanishMarks = /[áéíóúüñ¿¡]/.test(text);
+  const esHits =
+    t.match(
+      /\b(el|la|los|las|un|una|unos|unas|y|o|de|del|qué|que|dónde|donde|cómo|como|está|están|hola|gracias|necesito|quiero|cerca|restaurante|comida|cenar|almorzar|desayuno|ayuda|puedo|favor|baño|clave|hay|para|con|por|playa|buenas|días|noches|tarde|cuál|tengo|soy|estoy|buscando)\b/g,
+    )?.length ?? 0;
+  const enHits =
+    t.match(
+      /\b(i|i'm|im|you|we|the|a|an|is|are|was|need|want|where|what|how|hello|hi|hey|please|thanks|thank|restaurant|near|nearby|close|recommend|wifi|password|door|code|help|can|could|would|my|me|looking|food|eat|hungry|dinner|lunch|breakfast|pharmacy|store|beach|check-in|checkout|towels|pool|parking|tonight|good)\b/g,
+    )?.length ?? 0;
+  if (hasSpanishMarks || esHits > 0) return "es";
+  if (enHits > 0) return "en";
+  return "es";
 }
 
 function chatTurns(history: AvatarChatTurn[]) {
@@ -84,7 +123,8 @@ async function fetchOpenAiReply(
       messages: [
         { role: "system", content: system },
         ...chatTurns(history),
-        { role: "user", content: `Responde en español, de forma directa, a esto:\n${question}` },
+        // question already carries the explicit language flag + guest text.
+        { role: "user", content: question },
       ],
     }),
   });
@@ -119,7 +159,8 @@ async function fetchClaudeReply(
       system,
       messages: [
         ...chatTurns(history),
-        { role: "user", content: `Responde en español, de forma directa, a esto:\n${question}` },
+        // question already carries the explicit language flag + guest text.
+        { role: "user", content: question },
       ],
     }),
   });
