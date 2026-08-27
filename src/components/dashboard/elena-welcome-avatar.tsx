@@ -26,6 +26,8 @@ type SpeechRec = {
   stop: () => void;
 };
 
+const PLAYBACK_START_MS = 7000;
+
 function getSpeechRecognitionCtor(): (new () => SpeechRec) | null {
   if (typeof window === "undefined") return null;
   const extra = window as unknown as {
@@ -44,12 +46,17 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
   const genRef = useRef(0);
   const unlockedRef = useRef(false);
   const linesRef = useRef<{ role: "guest" | "ai"; text: string }[]>([]);
+  const abortRef = useRef<AbortController | null>(null);
+  const safetyRef = useRef(0);
+  const playbackStartedRef = useRef(false);
+  const heygenSpeakingRef = useRef(false);
 
   const [listening, setListening] = useState(false);
   const [thinking, setThinking] = useState(false);
   const [responding, setResponding] = useState(false);
   const [ttsSpeaking, setTtsSpeaking] = useState(false);
-  const [caption, setCaption] = useState("");
+  const [guestBubble, setGuestBubble] = useState("");
+  const [aiBubble, setAiBubble] = useState("");
   const [status, setStatus] = useState("Elena responde en español desde Zencierge, no desde la base de HeyGen.");
 
   const speaking = heygen.speaking || ttsSpeaking;
@@ -61,14 +68,68 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
         ? "speaking"
         : "idle";
 
+  const clearSafety = () => {
+    if (safetyRef.current) {
+      window.clearTimeout(safetyRef.current);
+      safetyRef.current = 0;
+    }
+  };
+
+  const markPlaybackStarted = () => {
+    playbackStartedRef.current = true;
+    clearSafety();
+    setResponding(false);
+  };
+
+  const goIdle = (listen: boolean) => {
+    clearSafety();
+    abortRef.current?.abort();
+    abortRef.current = null;
+    genRef.current += 1;
+    playbackStartedRef.current = false;
+    setThinking(false);
+    setResponding(false);
+    setTtsSpeaking(false);
+    stopListening();
+    stopHumanVoice(audioRef);
+    void heygen.interrupt();
+    if (listen && wantMicRef.current) startListening();
+  };
+
+  const armSafety = () => {
+    clearSafety();
+    playbackStartedRef.current = false;
+    safetyRef.current = window.setTimeout(() => {
+      if (playbackStartedRef.current) return;
+      console.error("[avatar] 7s safety: playback never started — reset idle");
+      wantMicRef.current = true;
+      goIdle(true);
+    }, PLAYBACK_START_MS);
+  };
+
   useEffect(() => {
     return () => {
+      clearSafety();
+      abortRef.current?.abort();
       recRef.current?.stop();
       void heygen.stop();
       stopHumanVoice(audioRef);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    const wasSpeaking = heygenSpeakingRef.current;
+    heygenSpeakingRef.current = heygen.speaking;
+    if (heygen.speaking) {
+      markPlaybackStarted();
+      return;
+    }
+    if (wasSpeaking && wantMicRef.current && !thinking && !responding) {
+      startListening();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [heygen.speaking]);
 
   const stopListening = () => {
     recRef.current?.stop();
@@ -103,65 +164,106 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
     recognition.onerror = () => setListening(false);
     recognition.onend = () => setListening(false);
     setListening(true);
-    recognition.start();
+    try {
+      recognition.start();
+    } catch (cause) {
+      console.error("[avatar] SpeechRecognition start failed", cause);
+      setListening(false);
+    }
   };
 
   const speakBackendSpanish = async (text: string) => {
     const gen = genRef.current;
     stopListening();
     setResponding(true);
-    const usedHeygen = await heygen.speakRepeat(text).catch((cause) => {
-      console.error("[heygen] REPEAT speak failed", cause);
-      return false;
-    });
-    if (usedHeygen) {
-      setResponding(false);
-      return;
+    armSafety();
+    try {
+      const usedHeygen = await heygen.speakRepeat(text);
+      if (usedHeygen) {
+        if (!playbackStartedRef.current && gen === genRef.current) {
+          setResponding(true);
+        }
+        return;
+      }
+      if (gen !== genRef.current) return;
+      await speakHumanVoice({
+        text,
+        profile: getVoiceProfile("elena"),
+        language: "es",
+        speed: 1,
+        stability: 48,
+        audioRef,
+        shouldCancel: () => gen !== genRef.current,
+        onPlaybackStart: () => {
+          markPlaybackStarted();
+          setTtsSpeaking(true);
+        },
+        onPlaybackEnd: () => {
+          setTtsSpeaking(false);
+          setResponding(false);
+          if (wantMicRef.current && gen === genRef.current) startListening();
+        },
+        onAutoplayBlocked: () => {
+          setResponding(false);
+          clearSafety();
+        },
+      });
+    } catch (cause) {
+      console.error("[avatar] speak failed", cause);
+    } finally {
+      if (!playbackStartedRef.current) setResponding(false);
     }
-    if (gen !== genRef.current) return;
-    await speakHumanVoice({
-      text,
-      profile: getVoiceProfile("elena"),
-      language: "es",
-      speed: 1,
-      stability: 48,
-      audioRef,
-      shouldCancel: () => gen !== genRef.current,
-      onPlaybackStart: () => {
-        setResponding(false);
-        setTtsSpeaking(true);
-      },
-      onPlaybackEnd: () => {
-        setTtsSpeaking(false);
-        setResponding(false);
-        if (wantMicRef.current) startListening();
-      },
-    });
   };
 
   const handleUtterance = async (raw: string) => {
     const text = raw.trim();
     if (!text || !property) return;
     stopListening();
+    abortRef.current?.abort();
+    const abort = new AbortController();
+    abortRef.current = abort;
+    const gen = ++genRef.current;
     linesRef.current = [...linesRef.current, { role: "guest" as const, text }].slice(-8);
-    setCaption(text);
+    setGuestBubble(text);
     setThinking(true);
     setResponding(true);
-    const reply = await askAvatarReply({
-      question: text,
-      property,
-      properties,
-      language: "es",
-      emergencyNumber: HOST_EMERGENCY_NUMBER,
-      history: linesRef.current,
-    });
-    linesRef.current = [...linesRef.current, { role: "ai" as const, text: reply }].slice(-8);
-    setCaption(reply);
-    setThinking(false);
-    await speakBackendSpanish(reply);
+    armSafety();
+    try {
+      const reply = await askAvatarReply({
+        question: text,
+        property,
+        properties,
+        language: "es",
+        emergencyNumber: HOST_EMERGENCY_NUMBER,
+        history: linesRef.current,
+        signal: abort.signal,
+      });
+      if (abort.signal.aborted || gen !== genRef.current) return;
+      linesRef.current = [...linesRef.current, { role: "ai" as const, text: reply }].slice(-8);
+      setAiBubble(reply);
+      setThinking(false);
+      await speakBackendSpanish(reply);
+    } catch (cause) {
+      if (abort.signal.aborted || (cause instanceof DOMException && cause.name === "AbortError")) return;
+      console.error("[avatar] reply failed", cause);
+      setThinking(false);
+      setResponding(false);
+    } finally {
+      setThinking(false);
+    }
+  };
+
+  const cancelTurn = () => {
+    wantMicRef.current = true;
+    goIdle(true);
+    setStatus("Turno cancelado. Puedes hablar ahora.");
   };
 
   const onTalk = async () => {
+    if (thinking || responding) {
+      cancelTurn();
+      return;
+    }
     if (!unlockedRef.current && audioRef.current) {
       unlockSpeechAudio(audioRef.current);
       unlockedRef.current = true;
@@ -183,13 +285,6 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
     );
     startListening();
   };
-
-  useEffect(() => {
-    if (!heygen.speaking && wantMicRef.current && !thinking && !responding && !listening) {
-      startListening();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [heygen.speaking]);
 
   if (!property) return null;
 
@@ -225,22 +320,27 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
           <button
             type="button"
             onClick={() => void onTalk()}
-            disabled={thinking}
             className={`mt-4 w-full flex items-center justify-center gap-2 rounded-2xl py-3 text-sm font-bold ${
-              listening ? "bg-sky-500 text-slate-950" : "bg-emerald-500 text-slate-950 hover:bg-emerald-400"
+              listening
+                ? "bg-sky-500 text-slate-950"
+                : thinking || responding
+                  ? "bg-amber-400 text-slate-950"
+                  : "bg-emerald-500 text-slate-950 hover:bg-emerald-400"
             }`}
           >
             <Mic className="h-4 w-4" />
-            {listening ? "Escuchando…" : responding ? "Elena está respondiendo..." : "Hablar con Elena"}
+            {listening
+              ? "Escuchando…"
+              : thinking || responding
+                ? "Elena está respondiendo... (toca para cancelar)"
+                : "Hablar con Elena"}
           </button>
           <button
             type="button"
             onClick={() => {
-              genRef.current += 1;
-              stopListening();
-              stopHumanVoice(audioRef);
-              void heygen.stop();
               wantMicRef.current = false;
+              goIdle(false);
+              void heygen.stop();
             }}
             className="mt-2 w-full inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 py-2 text-[11px] font-semibold text-slate-300"
           >
@@ -248,13 +348,28 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
             Silenciar / cerrar sesión
           </button>
         </div>
-        <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+        <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4 space-y-3">
           <p className="text-[11px] text-slate-500">{status}</p>
-          {responding || thinking ? (
-            <p className="mt-3 text-sm font-medium text-emerald-300">Elena está respondiendo...</p>
+          {thinking || responding ? (
+            <button
+              type="button"
+              onClick={cancelTurn}
+              className="text-sm font-medium text-emerald-300 underline-offset-2 hover:underline"
+            >
+              Elena está respondiendo... (toca para cancelar)
+            </button>
           ) : null}
-          {caption ? <p className="mt-3 text-sm text-slate-200 leading-relaxed">{caption}</p> : (
-            <p className="mt-3 text-sm text-slate-500">
+          {guestBubble ? (
+            <div className="rounded-2xl rounded-tl-sm bg-slate-800 px-3 py-2 text-sm text-slate-100">
+              {guestBubble}
+            </div>
+          ) : null}
+          {aiBubble ? (
+            <div className="rounded-2xl rounded-tr-sm bg-emerald-500/15 border border-emerald-500/20 px-3 py-2 text-sm text-emerald-50">
+              {aiBubble}
+            </div>
+          ) : (
+            <p className="text-sm text-slate-500">
               Ejemplo: «¿Hay una farmacia cerca?» — Elena usa {property.address}, {property.city}.
             </p>
           )}

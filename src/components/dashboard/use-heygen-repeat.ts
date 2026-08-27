@@ -62,7 +62,11 @@ export function useHeygenRepeatAvatar() {
         if (video && stream) {
           video.srcObject = stream;
           video.muted = false;
-          void video.play().catch((cause) => console.error("[heygen] video play blocked", cause));
+          void video
+            .play()
+            .catch((cause) => {
+              console.error("[heygen] video play blocked", cause);
+            });
         }
         setReady(true);
       });
@@ -73,19 +77,24 @@ export function useHeygenRepeatAvatar() {
         avatarRef.current = null;
       });
 
-      await avatar.createStartAvatar({
-        quality: AvatarQuality.Medium,
-        avatarName,
-        language: session.language || HEYGEN_LANGUAGE,
-        voice: {
-          voiceId,
-          rate: session.voice?.rate ?? 1.0,
-          emotion: VoiceEmotion.FRIENDLY,
-          model: ElevenLabsModel.eleven_multilingual_v2,
-        },
-        disableIdleTimeout: true,
-        activityIdleTimeout: 3600,
-      });
+      await Promise.race([
+        avatar.createStartAvatar({
+          quality: AvatarQuality.Medium,
+          avatarName,
+          language: session.language || HEYGEN_LANGUAGE,
+          voice: {
+            voiceId,
+            rate: session.voice?.rate ?? 1.0,
+            emotion: VoiceEmotion.FRIENDLY,
+            model: ElevenLabsModel.eleven_multilingual_v2,
+          },
+          disableIdleTimeout: true,
+          activityIdleTimeout: 3600,
+        }),
+        new Promise<never>((_, reject) => {
+          window.setTimeout(() => reject(new Error("heygen-start-timeout")), 7000);
+        }),
+      ]);
       return true;
     } catch (cause) {
       console.error("[heygen] createStartAvatar failed", cause);
@@ -99,15 +108,31 @@ export function useHeygenRepeatAvatar() {
     const avatar = avatarRef.current;
     const clean = text.trim();
     if (!avatar || !clean) return false;
-    setSpeaking(true);
-    await avatar.speak({
-      text: clean,
-      task_type: TaskType.REPEAT,
-      taskType: TaskType.REPEAT,
-      taskMode: TaskMode.SYNC,
-    });
-    return true;
+    try {
+      await avatar.speak({
+        text: clean,
+        task_type: TaskType.REPEAT,
+        taskType: TaskType.REPEAT,
+        taskMode: TaskMode.ASYNC,
+      });
+      return true;
+    } catch (cause) {
+      console.error("[heygen] avatar.speak failed", cause);
+      setSpeaking(false);
+      return false;
+    } finally {
+      /* START/STOP_TALKING own the speaking flag if playback actually begins */
+    }
   }, []);
 
-  return { videoRef, ready, speaking, start, stop, speakRepeat };
+  const interrupt = useCallback(async () => {
+    setSpeaking(false);
+    try {
+      await avatarRef.current?.interrupt();
+    } catch (cause) {
+      console.error("[heygen] interrupt failed", cause);
+    }
+  }, []);
+
+  return { videoRef, ready, speaking, start, stop, speakRepeat, interrupt };
 }

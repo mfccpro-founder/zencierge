@@ -12,11 +12,13 @@ export async function askAvatarReply(options: {
   emergencyNumber?: string;
   openaiKey?: string;
   history?: AvatarChatTurn[];
+  signal?: AbortSignal;
 }) {
   try {
     const response = await fetch("/api/avatar", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal: options.signal,
       body: JSON.stringify({
         question: options.question,
         language: "es",
@@ -32,8 +34,11 @@ export async function askAvatarReply(options: {
       if (data.reply?.trim()) return data.reply.trim();
     }
   } catch (cause) {
+    if (options.signal?.aborted) throw cause;
     console.error("[avatar] client request failed, using local reply", cause);
   }
+
+  if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
 
   return answerGuestQuestion({
     question: options.question,

@@ -125,7 +125,6 @@ export function AiReceptionistStudio({
           <button
             type="button"
             onClick={onListen}
-            disabled={phase === "thinking"}
             className={`mt-4 w-full flex items-center justify-center gap-2 rounded-2xl py-3 text-sm font-bold transition-all ${
               listening
                 ? "bg-sky-500 text-slate-950 shadow-lg shadow-sky-500/25"
@@ -133,7 +132,7 @@ export function AiReceptionistStudio({
             }`}
           >
             <Mic className="h-4 w-4" />
-            {listening ? "Escuchando… suelta para enviar" : "Hablar con el Avatar"}
+            {listening ? "Escuchando… suelta para enviar" : phase === "thinking" ? "Elena está respondiendo... (toca para cancelar)" : "Hablar con el Avatar"}
           </button>
           <button
             type="button"
@@ -270,8 +269,7 @@ export function AiReceptionistStudio({
             <button
               type="button"
               onClick={onListen}
-              disabled={phase === "thinking"}
-              className={`shrink-0 rounded-xl p-2 border transition-colors disabled:opacity-40 ${
+              className={`shrink-0 rounded-xl p-2 border transition-colors ${
                 listening
                   ? "bg-sky-500/20 border-sky-500/40 text-sky-300"
                   : "bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800"

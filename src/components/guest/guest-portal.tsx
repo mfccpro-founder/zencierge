@@ -75,6 +75,9 @@ export function GuestPortal({ propertyId }: { propertyId: string }) {
   const idRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const propertyRef = useRef<Property | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const safetyRef = useRef(0);
+  const playbackStartedRef = useRef(false);
 
   const nextId = () => {
     idRef.current += 1;
@@ -125,6 +128,42 @@ export function GuestPortal({ propertyId }: { propertyId: string }) {
     recRef.current?.stop();
     recRef.current = null;
     setListening(false);
+  };
+
+  const clearSafety = () => {
+    if (safetyRef.current) {
+      window.clearTimeout(safetyRef.current);
+      safetyRef.current = 0;
+    }
+  };
+
+  const armSafety = () => {
+    clearSafety();
+    playbackStartedRef.current = false;
+    safetyRef.current = window.setTimeout(() => {
+      if (playbackStartedRef.current) return;
+      console.error("[guest] 7s safety: playback never started — reset idle");
+      const keepMic = true;
+      stopSpeech();
+      if (keepMic) {
+        wantMicRef.current = true;
+        startListening();
+      }
+    }, 7000);
+  };
+
+  const stopSpeech = () => {
+    genRef.current += 1;
+    abortRef.current?.abort();
+    abortRef.current = null;
+    clearSafety();
+    playbackStartedRef.current = false;
+    wantMicRef.current = false;
+    stopHumanVoice(audioRef);
+    setTapToListen(false);
+    setResponding(false);
+    setSpeaking(false);
+    setThinking(false);
   };
 
   const resumeMicAfterElena = () => {
@@ -206,17 +245,9 @@ export function GuestPortal({ propertyId }: { propertyId: string }) {
       await resumePersistentAudio(audio);
     } catch (cause) {
       console.error("[guest] Tocar para escuchar failed", cause);
-      setSpeaking(false);
+    } finally {
+      if (audio.paused) setSpeaking(false);
     }
-  };
-
-  const stopSpeech = () => {
-    genRef.current += 1;
-    wantMicRef.current = false;
-    stopHumanVoice(audioRef);
-    setTapToListen(false);
-    setResponding(false);
-    setSpeaking(false);
   };
 
   const speakReply = async (text: string) => {
@@ -225,6 +256,7 @@ export function GuestPortal({ propertyId }: { propertyId: string }) {
     setLines((current) => [...current, { id: nextId(), speaker: "ai", text }]);
     setResponding(true);
     setSpeaking(false);
+    armSafety();
     try {
       await speakHumanVoice({
         text,
@@ -237,11 +269,14 @@ export function GuestPortal({ propertyId }: { propertyId: string }) {
         onAutoplayBlocked: () => {
           if (gen === genRef.current) {
             setResponding(false);
+            clearSafety();
             setTapToListen(true);
           }
         },
         onPlaybackStart: () => {
           if (gen === genRef.current) {
+            playbackStartedRef.current = true;
+            clearSafety();
             setResponding(false);
             setSpeaking(true);
           }
@@ -253,12 +288,15 @@ export function GuestPortal({ propertyId }: { propertyId: string }) {
     } catch (cause) {
       console.error("[guest] Elena studio voice failed", cause);
       if (gen === genRef.current) {
-        setResponding(false);
-        setSpeaking(false);
         setLines((current) => [
           ...current,
           { id: nextId(), speaker: "system", text: "Elena está respondiendo… no se pudo cargar el audio de estudio." },
         ]);
+      }
+    } finally {
+      if (gen === genRef.current && !playbackStartedRef.current) {
+        setResponding(false);
+        setSpeaking(false);
       }
     }
   };
@@ -268,28 +306,48 @@ export function GuestPortal({ propertyId }: { propertyId: string }) {
     const text = raw.trim();
     if (!text || !stay) return;
     stopListening();
+    abortRef.current?.abort();
+    const abort = new AbortController();
+    abortRef.current = abort;
     setPartialGuest("");
     setLines((current) => [...current, { id: nextId(), speaker: "guest", text }]);
     setThinking(true);
     setResponding(true);
+    armSafety();
     void askAvatarReply({
       question: text,
       property: stay,
       properties: [stay],
       language: "auto",
       emergencyNumber: HOST_EMERGENCY_NUMBER,
+      signal: abort.signal,
       history: lines
         .filter((line) => line.speaker === "guest" || line.speaker === "ai")
         .slice(-6)
         .map((line) => ({ role: line.speaker === "guest" ? ("guest" as const) : ("ai" as const), text: line.text })),
-    }).then((reply) => {
-      setThinking(false);
-      void speakReply(reply);
-    });
+    })
+      .then((reply) => {
+        if (abort.signal.aborted) return;
+        setThinking(false);
+        void speakReply(reply);
+      })
+      .catch((cause) => {
+        if (abort.signal.aborted) return;
+        console.error("[guest] avatar reply failed", cause);
+        setThinking(false);
+        setResponding(false);
+      });
   };
 
   const toggleTalk = () => {
     ensureAudioUnlocked();
+    if (thinking || responding) {
+      wantMicRef.current = true;
+      stopSpeech();
+      wantMicRef.current = true;
+      startListening();
+      return;
+    }
     if (listening) {
       const leftover = partialGuest.trim();
       stopListening();
@@ -301,7 +359,7 @@ export function GuestPortal({ propertyId }: { propertyId: string }) {
       wantMicRef.current = false;
       return;
     }
-    if (speaking || responding) stopSpeech();
+    if (speaking) stopSpeech();
     wantMicRef.current = true;
     startListening();
   };
@@ -355,20 +413,36 @@ export function GuestPortal({ propertyId }: { propertyId: string }) {
           <button
             type="button"
             onClick={toggleTalk}
-            disabled={thinking || responding}
             className={`mt-5 w-full rounded-2xl py-3.5 text-sm font-bold transition-all ${
               listening
                 ? "bg-sky-400 text-slate-950 shadow-lg shadow-sky-500/20"
-                : "bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-500/25 hover:bg-emerald-400"
+                : thinking || responding
+                  ? "bg-amber-400 text-slate-950"
+                  : "bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-500/25 hover:bg-emerald-400"
             }`}
           >
             <span className="inline-flex items-center justify-center gap-2">
               <Mic className="h-4 w-4" />
-              {listening ? "Escuchando…" : responding ? "Elena está respondiendo..." : "Hablar con tu Conserje"}
+              {listening
+                ? "Escuchando…"
+                : thinking || responding
+                  ? "Elena está respondiendo... (toca para cancelar)"
+                  : "Hablar con tu Conserje"}
             </span>
           </button>
           {responding ? (
-            <p className="mt-3 text-center text-xs font-medium text-emerald-300">Elena está respondiendo...</p>
+            <button
+              type="button"
+              onClick={() => {
+                wantMicRef.current = true;
+                stopSpeech();
+                wantMicRef.current = true;
+                startListening();
+              }}
+              className="mt-3 w-full text-center text-xs font-medium text-emerald-300 hover:underline"
+            >
+              Elena está respondiendo... (toca para cancelar)
+            </button>
           ) : null}
           {tapToListen ? (
             <button

@@ -95,6 +95,11 @@ export function VoiceConciergeView() {
   const unlockedRef = useRef(false);
   const speedRef = useRef(0.85);
   const heygen = useHeygenRepeatAvatar();
+  const abortRef = useRef<AbortController | null>(null);
+  const safetyRef = useRef(0);
+  const playbackStartedRef = useRef(false);
+  const heygenSpeakingRef = useRef(false);
+  const startListeningRef = useRef<() => void>(() => {});
 
   const nextId = () => {
     idRef.current += 1;
@@ -124,8 +129,28 @@ export function VoiceConciergeView() {
   }, []);
 
   useEffect(() => {
+    const wasSpeaking = heygenSpeakingRef.current;
+    heygenSpeakingRef.current = heygen.speaking;
+    if (heygen.speaking) {
+      playbackStartedRef.current = true;
+      if (safetyRef.current) {
+        window.clearTimeout(safetyRef.current);
+        safetyRef.current = 0;
+      }
+      setResponding(false);
+      setSpeaking(true);
+      return;
+    }
+    if (wasSpeaking && callActiveRef.current) {
+      setSpeaking(false);
+      setResponding(false);
+      startListeningRef.current();
+    }
+  }, [heygen.speaking]);
+
+  useEffect(() => {
     if (properties.length > 0 && !properties.some((item) => item.id === propertyId)) {
-      setPropertyId(properties[0].id);
+      setPropertyId(properties[0]!.id);
     }
   }, [properties, propertyId]);
 
@@ -156,14 +181,44 @@ export function VoiceConciergeView() {
     setListening(false);
   };
 
+  const clearSafety = () => {
+    if (safetyRef.current) {
+      window.clearTimeout(safetyRef.current);
+      safetyRef.current = 0;
+    }
+  };
+
+  const armSafety = () => {
+    clearSafety();
+    playbackStartedRef.current = false;
+    safetyRef.current = window.setTimeout(() => {
+      if (playbackStartedRef.current) return;
+      console.error("[voice] 7s safety: playback never started — reset idle");
+      cancelSpeech();
+      if (callActiveRef.current) startListening();
+    }, 7000);
+  };
+
+  const markPlaybackStarted = () => {
+    playbackStartedRef.current = true;
+    clearSafety();
+    setResponding(false);
+  };
+
   const cancelSpeech = () => {
     genRef.current += 1;
+    abortRef.current?.abort();
+    abortRef.current = null;
+    clearSafety();
+    playbackStartedRef.current = false;
     stopHumanVoice(audioRef);
+    void heygen.interrupt();
     setSpeaking(false);
     setPreviewing(null);
     setPartialAi("");
     setTapToListen(false);
     setResponding(false);
+    setThinking(false);
   };
 
   const endCall = () => {
@@ -217,79 +272,77 @@ export function VoiceConciergeView() {
     const gen = genRef.current;
     stopListening();
     setResponding(true);
-    const heygenOk = await heygen.start().catch((cause) => {
-      console.error("[heygen] session failed; using /api/tts", cause);
-      return false;
-    });
-    if (heygenOk) {
-      const repeated = await heygen.speakRepeat(text).catch((cause) => {
-        console.error("[heygen] REPEAT failed", cause);
+    armSafety();
+    try {
+      const heygenOk = await heygen.start().catch((cause) => {
+        console.error("[heygen] session failed; using /api/tts", cause);
         return false;
       });
-      if (repeated && gen === genRef.current) {
-        setResponding(false);
-        setSpeaking(false);
-        setEngineLabel("HeyGen · REPEAT · es");
-        if (callActiveRef.current) startListening();
-        return;
+      if (heygenOk) {
+        const repeated = await heygen.speakRepeat(text);
+        if (repeated && gen === genRef.current) {
+          setEngineLabel("HeyGen · REPEAT · es");
+          return;
+        }
       }
+      if (gen !== genRef.current) return;
+      await speakHumanVoice({
+        text,
+        profile: forProfile,
+        language: "es",
+        speed: 1,
+        stability,
+        elevenKey,
+        openaiKey,
+        audioRef,
+        shouldCancel: () => gen !== genRef.current,
+        onAutoplayBlocked: () => {
+          if (gen === genRef.current) {
+            setResponding(false);
+            clearSafety();
+            setTapToListen(true);
+          }
+        },
+        onPlaybackStart: () => {
+          if (gen === genRef.current) {
+            markPlaybackStarted();
+            setSpeaking(true);
+          }
+        },
+        onPlaybackEnd: () => {
+          if (gen !== genRef.current) return;
+          setSpeaking(false);
+          setResponding(false);
+          if (callActiveRef.current) startListening();
+        },
+        onEngine: (engine) => {
+          setEngineLabel(engine === "elevenlabs" ? "Studio · ElevenLabs" : "Studio · OpenAI HD");
+        },
+      });
+    } catch (cause) {
+      console.error("[voice] speak failed", cause);
+    } finally {
+      if (!playbackStartedRef.current) setResponding(false);
     }
-    await speakHumanVoice({
-      text,
-      profile: forProfile,
-      language: "es",
-      speed: 1,
-      stability,
-      elevenKey,
-      openaiKey,
-      audioRef,
-      shouldCancel: () => gen !== genRef.current,
-      onAutoplayBlocked: () => {
-        if (gen === genRef.current) {
-          setResponding(false);
-          setTapToListen(true);
-        }
-      },
-      onPlaybackStart: () => {
-        if (gen === genRef.current) {
-          setResponding(false);
-          setSpeaking(true);
-        }
-      },
-      onPlaybackEnd: () => {
-        if (gen !== genRef.current) return;
-        setSpeaking(false);
-        setResponding(false);
-        if (callActiveRef.current) startListening();
-      },
-      onEngine: (engine) => {
-        setEngineLabel(engine === "elevenlabs" ? "Studio · ElevenLabs" : "Studio · OpenAI HD");
-      },
-    });
   };
 
   const streamReply = async (text: string) => {
     const gen = ++genRef.current;
-    setPartialAi(text);
-    setResponding(true);
     stopListening();
-
-    const playback = speak(text).catch((cause) => {
-      console.error("[voice] Studio TTS failed", cause);
-      setResponding(false);
-      setSpeaking(false);
-    });
-
-    const step = Math.max(2, Math.round(4 * speedRef.current));
-    for (let i = 0; i <= text.length; i += step) {
-      if (gen !== genRef.current) return;
-      setPartialAi(text.slice(0, Math.min(i, text.length)));
-    }
-    if (gen !== genRef.current) return;
     setPartialAi("");
     setLines((current) => [...current, { id: nextId(), speaker: "ai", text }]);
-    await playback;
-    if (gen !== genRef.current) return;
+    setResponding(true);
+    armSafety();
+    try {
+      await speak(text);
+    } catch (cause) {
+      console.error("[voice] Studio TTS failed", cause);
+    } finally {
+      if (gen === genRef.current && !playbackStartedRef.current) {
+        setResponding(false);
+        setSpeaking(false);
+      }
+    }
   };
 
   const ensureVoiceSession = () => {
@@ -324,8 +377,12 @@ export function VoiceConciergeView() {
       .slice(-6)
       .map((line) => ({ role: line.speaker === "guest" ? ("guest" as const) : ("ai" as const), text: line.text }));
 
+    abortRef.current?.abort();
+    const abort = new AbortController();
+    abortRef.current = abort;
     setThinking(true);
     setResponding(true);
+    armSafety();
     const started = performance.now();
     void askAvatarReply({
       question: text,
@@ -336,16 +393,24 @@ export function VoiceConciergeView() {
       emergencyNumber,
       openaiKey,
       history,
-    }).then((reply) => {
-      if (!callActiveRef.current) {
+      signal: abort.signal,
+    })
+      .then((reply) => {
+        if (!callActiveRef.current || abort.signal.aborted) {
+          setThinking(false);
+          setResponding(false);
+          return;
+        }
+        setLatencyMs(Math.round(performance.now() - started));
+        setThinking(false);
+        void streamReply(reply);
+      })
+      .catch((cause) => {
+        if (abort.signal.aborted) return;
+        console.error("[voice] avatar reply failed", cause);
         setThinking(false);
         setResponding(false);
-        return;
-      }
-      setLatencyMs(Math.round(performance.now() - started));
-      setThinking(false);
-      void streamReply(reply);
-    });
+      });
   };
 
   const startCall = () => {
@@ -435,6 +500,7 @@ export function VoiceConciergeView() {
       setListening(false);
     }
   };
+  startListeningRef.current = startListening;
 
   const toggleListen = () => {
     ensureAudioUnlocked();
@@ -468,7 +534,16 @@ export function VoiceConciergeView() {
       <audio ref={audioRef} className="sr-only" preload="auto" playsInline />
       <div id="ai-receptionist">
         {responding ? (
-          <p className="mb-3 text-center text-xs font-medium text-emerald-300">Elena está respondiendo...</p>
+          <button
+            type="button"
+            onClick={() => {
+              cancelSpeech();
+              if (callActiveRef.current) startListening();
+            }}
+            className="mb-3 w-full text-center text-xs font-medium text-emerald-300 hover:underline"
+          >
+            Elena está respondiendo... (toca para cancelar)
+          </button>
         ) : null}
         {tapToListen ? (
           <button

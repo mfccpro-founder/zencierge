@@ -328,9 +328,20 @@ async function speakStudioAudio(options: {
     };
 
     let started = false;
+    const startWatch = window.setTimeout(() => {
+      if (!started) {
+        cleanup();
+        console.error("[voice] playback did not start within 7s");
+        keepAudioChannelAlive(audio);
+        options.onPlaybackEnd?.();
+        reject(new Error("playback-start-timeout"));
+      }
+    }, 7000);
+
     const startPlayback = () => {
       if (started) return;
       started = true;
+      window.clearTimeout(startWatch);
       cleanup();
       if (options.shouldCancel()) {
         keepAudioChannelAlive(audio);
@@ -339,16 +350,25 @@ async function speakStudioAudio(options: {
         return;
       }
       options.onPlaybackStart?.();
-      void audio.play().catch((cause) => {
-        console.error("[voice] MP3 play() blocked or failed", cause);
-        if (isAutoplayError(cause)) {
-          reject(new AutoplayBlockedError());
-          return;
-        }
+      try {
+        void audio
+          .play()
+          .catch((cause) => {
+            console.error("[voice] MP3 play() blocked or failed", cause);
+            if (isAutoplayError(cause)) {
+              reject(new AutoplayBlockedError());
+              return;
+            }
+            keepAudioChannelAlive(audio);
+            options.onPlaybackEnd?.();
+            reject(cause instanceof Error ? cause : new Error("Audio playback failed"));
+          });
+      } catch (cause) {
+        console.error("[voice] MP3 play() threw", cause);
         keepAudioChannelAlive(audio);
         options.onPlaybackEnd?.();
         reject(cause instanceof Error ? cause : new Error("Audio playback failed"));
-      });
+      }
     };
 
     audio.oncanplaythrough = () => startPlayback();
