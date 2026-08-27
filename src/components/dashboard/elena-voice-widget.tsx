@@ -58,7 +58,7 @@ export default function ElenaVoiceWidget() {
     };
   }, []);
 
-  /** Native browser TTS — no server calls, no server-error blocking. */
+  /** Native browser TTS — speaks only what we pass (the AI reply), never the raw user input. */
   const speak = (text: string) => {
     if (!text.trim()) return;
     const utterance = new SpeechSynthesisUtterance(text);
@@ -72,12 +72,40 @@ export default function ElenaVoiceWidget() {
     window.speechSynthesis.speak(utterance);
   };
 
+  /**
+   * Ask Elena for a generated response to the user's text, then speak ONLY that reply.
+   * Never repeats the user's input back; on any failure speaks a neutral Elena fallback.
+   */
+  const getElenaReply = async (text: string): Promise<string> => {
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text }),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { reply?: string };
+        if (data.reply?.trim()) return data.reply.trim();
+      }
+    } catch {
+      // Network/server errors are swallowed — no blocking, just a fallback reply.
+    }
+    return "Claro, soy Elena. Todo listo por aquí; dime qué necesitas y te ayudo enseguida.";
+  };
+
+  const respondTo = async (text: string) => {
+    if (!text.trim()) return;
+    setStatus("Pensando...");
+    const reply = await getElenaReply(text);
+    speak(reply);
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim()) return;
     const text = input.trim();
     setInput("");
-    speak(text);
+    void respondTo(text);
   };
 
   const toggleMic = () => {
@@ -109,7 +137,7 @@ export default function ElenaVoiceWidget() {
       if (!transcript) return;
       setInput(transcript);
       setStatus(`"${transcript}"`);
-      speak(transcript);
+      void respondTo(transcript);
     };
 
     recognition.onerror = () => {
