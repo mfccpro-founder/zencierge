@@ -72,8 +72,9 @@ function pickVoice(
 
 export default function ElenaVoiceWidget() {
   const [input, setInput] = useState("");
-  const [status, setStatus] = useState("En espera");
+  const [status, setStatus] = useState("Ready");
   const [listening, setListening] = useState(false);
+  const [muted, setMuted] = useState(false);
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
   const langRef = useRef<"es" | "en">("es");
@@ -107,12 +108,24 @@ export default function ElenaVoiceWidget() {
     utterance.pitch = 1.0;
     utterance.rate = 0.95;
     langRef.current = lang;
-    setStatus(lang === "es" ? "Elena habla... (ES)" : "Elena speaking... (EN)");
-    utterance.onstart = () => setStatus(lang === "es" ? "Elena habla... (ES)" : "Elena speaking... (EN)");
-    utterance.onend = () => setStatus("Listo");
-    utterance.onerror = () => setStatus("Listo");
+    setMuted(false);
+    setStatus("Speaking...");
+    utterance.onstart = () => setStatus("Speaking...");
+    utterance.onend = () => setStatus("Ready");
+    utterance.onerror = () => setStatus("Ready");
     window.speechSynthesis.cancel();
     window.speechSynthesis.speak(utterance);
+  };
+
+  /** Immediately stop any spoken audio and microphone listening. */
+  const stopVoice = () => {
+    window.speechSynthesis.cancel();
+    recognitionRef.current?.abort();
+    recognitionRef.current = null;
+    manualStopRef.current = true;
+    setListening(false);
+    setMuted(true);
+    setStatus("Ready");
   };
 
   /**
@@ -149,7 +162,7 @@ export default function ElenaVoiceWidget() {
 
   const respondTo = async (text: string) => {
     if (!text.trim()) return;
-    setStatus("Pensando...");
+    setStatus("Thinking...");
     const { reply, lang } = await getElenaReply(text);
     historyRef.current = [
       ...historyRef.current.slice(-7),
@@ -172,14 +185,14 @@ export default function ElenaVoiceWidget() {
       manualStopRef.current = true;
       recognitionRef.current?.stop();
       setListening(false);
-      setStatus("En espera");
+      setStatus("Ready");
       return;
     }
 
     const Recognition =
       window.webkitSpeechRecognition ?? window.SpeechRecognition;
     if (!Recognition) {
-      setStatus("Micrófono no soportado en este navegador");
+      setStatus("Mic not supported in this browser");
       return;
     }
 
@@ -209,13 +222,12 @@ export default function ElenaVoiceWidget() {
       if (!phrase) return;
       accumulated = phrase;
       setInput(phrase);
-      setStatus(`"${phrase}"`);
       scheduleStop();
     };
 
     recognition.onerror = () => {
       setListening(false);
-      setStatus("No te he escuchado. Prueba otra vez.");
+      setStatus("Didn't catch that. Try again.");
     };
 
     recognition.onend = () => {
@@ -229,37 +241,53 @@ export default function ElenaVoiceWidget() {
     };
 
     setListening(true);
-    setStatus("Escuchando... (ES)");
+    setStatus("Listening...");
     recognition.start();
   };
 
   return (
-    <div className="p-6 bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg mx-auto text-white shadow-xl">
-      <div className="flex items-center justify-between mb-4">
+    <div className="p-5 bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm mx-auto text-white shadow-xl space-y-4">
+      {/* Compact header: Elena mini-avatar + title + status badge */}
+      <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          {/* Original Elena avatar/icon restored: circular emerald→sky→violet badge with Sparkles. */}
-          <div className="relative h-12 w-12 rounded-full bg-gradient-to-br from-emerald-400/40 via-sky-500/30 to-violet-500/40 flex items-center justify-center overflow-hidden border border-emerald-400/40 shadow-[0_0_24px_rgb(16_185_129_/_0.25)]">
+          <div className="relative h-11 w-11 rounded-full bg-gradient-to-br from-emerald-400/40 via-sky-500/30 to-violet-500/40 flex items-center justify-center overflow-hidden border border-emerald-400/40 shadow-[0_0_20px_rgb(16_185_129_/_0.25)]">
             <Sparkles className="h-5 w-5 text-emerald-300" />
+            {listening ? (
+              <div className="absolute bottom-1 flex items-end gap-0.5 h-2.5">
+                {Array.from({ length: 3 }, (_, index) => (
+                  <span
+                    key={index}
+                    className="w-0.5 h-2.5 rounded-full bg-emerald-300"
+                    style={{ animationDelay: `${index * 0.07}s` }}
+                  />
+                ))}
+              </div>
+            ) : null}
           </div>
-          <h2 className="text-xl font-bold">Elena Asistente</h2>
+          <div className="leading-tight">
+            <h2 className="text-lg font-bold">Elena · Receptionist</h2>
+            <p className="text-[11px] text-slate-500">AI Voice Concierge</p>
+          </div>
         </div>
         <span className="text-xs px-2 py-1 bg-emerald-900/60 text-emerald-400 border border-emerald-700 rounded-md">
           {status}
         </span>
       </div>
+
+      {/* Controls row: input + mic + send */}
       <form onSubmit={handleSubmit} className="flex flex-row items-center gap-2 w-full">
         <input
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Escribe lo que quieres que Elena diga..."
-          className="flex-1 min-w-0 px-4 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          placeholder="Type a message..."
+          className="flex-1 min-w-0 px-3 py-2 bg-slate-950 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm"
         />
         <button
           type="button"
           onClick={toggleMic}
-          aria-label={listening ? "Detener micrófono" : "Hablar por micrófono"}
-          className={`shrink-0 flex items-center justify-center w-11 h-[42px] rounded-lg transition ${
+          aria-label={listening ? "Stop microphone" : "Speak into the microphone"}
+          className={`shrink-0 flex items-center justify-center w-11 h-[40px] rounded-lg transition ${
             listening
               ? "bg-rose-600 hover:bg-rose-500 text-white"
               : "bg-slate-700 hover:bg-slate-600 text-white"
@@ -269,11 +297,25 @@ export default function ElenaVoiceWidget() {
         </button>
         <button
           type="submit"
-          className="shrink-0 px-5 py-2 bg-blue-600 hover:bg-blue-500 font-semibold rounded-lg transition"
+          className="shrink-0 px-4 py-2 bg-blue-600 hover:bg-blue-500 font-semibold rounded-lg transition text-sm"
         >
-          Enviar
+          Send
         </button>
       </form>
+
+      {/* Session status + wide mute button */}
+      <div className="space-y-2">
+        <p className="text-[11px] text-slate-500">
+          {listening ? "Listening for speech..." : muted ? "Voice muted" : "Standby · no media session"}
+        </p>
+        <button
+          type="button"
+          onClick={stopVoice}
+          className="w-full rounded-lg border border-slate-700 bg-slate-950/60 px-3 py-2 tabular text-xs font-semibold text-slate-300 hover:bg-slate-900 hover:text-white transition"
+        >
+          {muted ? "Stopped" : "Mute / Stop voice"}
+        </button>
+      </div>
     </div>
   );
 }
