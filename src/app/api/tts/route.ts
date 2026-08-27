@@ -4,6 +4,7 @@ type TtsBody = {
   provider?: "elevenlabs" | "openai" | "auto";
   apiKey?: string;
   text?: string;
+  voice?: string;
   voiceProfile?: string;
   speed?: number;
   stability?: number;
@@ -30,11 +31,19 @@ export async function POST(request: Request) {
     process.env.OPENAI_TTS_API_KEY ||
     "";
 
-  const requested = body.provider === "openai" ? "openai" : body.provider === "elevenlabs" ? "elevenlabs" : "auto";
+  const requested =
+    body.voice === "nova"
+      ? "openai"
+      : body.provider === "openai"
+        ? "openai"
+        : body.provider === "elevenlabs"
+          ? "elevenlabs"
+          : "auto";
 
   try {
     const stability = clamp((body.stability ?? 48) / 100, 0.28, 0.62);
-    const openaiVoice = FEMALE_OPENAI_VOICE;
+    const openaiVoice =
+      body.voice === "alloy" ? FEMALE_OPENAI_VOICE : body.voice === "nova" ? "nova" : FEMALE_OPENAI_VOICE;
     const elevenVoiceId = FEMALE_ELEVENLABS_VOICE_ID;
 
     if (requested === "auto") {

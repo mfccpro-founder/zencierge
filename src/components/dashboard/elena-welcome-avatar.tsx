@@ -7,12 +7,6 @@ import { askAvatarReply } from "@/lib/ask-avatar";
 import { HOST_EMERGENCY_NUMBER } from "@/lib/receptionist-replies";
 import { ReceptionistAvatar, type ReceptionistPhase } from "@/components/dashboard/receptionist-avatar";
 import { useHeygenRepeatAvatar } from "@/components/dashboard/use-heygen-repeat";
-import {
-  getVoiceProfile,
-  speakHumanVoice,
-  stopHumanVoice,
-  unlockSpeechAudio,
-} from "@/lib/human-voice";
 
 type SpeechResultList = ArrayLike<{ isFinal: boolean } & ArrayLike<{ transcript: string }>>;
 type SpeechRec = {
@@ -40,16 +34,15 @@ function getSpeechRecognitionCtor(): (new () => SpeechRec) | null {
 export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
   const property = properties[0];
   const heygen = useHeygenRepeatAvatar();
-  const audioRef = useRef<HTMLAudioElement | null>(null);
   const recRef = useRef<SpeechRec | null>(null);
   const wantMicRef = useRef(false);
   const genRef = useRef(0);
-  const unlockedRef = useRef(false);
   const linesRef = useRef<{ role: "guest" | "ai"; text: string }[]>([]);
   const abortRef = useRef<AbortController | null>(null);
   const safetyRef = useRef(0);
   const playbackStartedRef = useRef(false);
-  const heygenSpeakingRef = useRef(false);
+  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
+  const currentAudioUrlRef = useRef<string | null>(null);
 
   const [listening, setListening] = useState(false);
   const [thinking, setThinking] = useState(false);
@@ -81,6 +74,21 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
     setResponding(false);
   };
 
+  const stopCurrentAudio = () => {
+    const audio = currentAudioRef.current;
+    if (audio) {
+      audio.onended = null;
+      audio.onerror = null;
+      audio.pause();
+      audio.src = "";
+      currentAudioRef.current = null;
+    }
+    if (currentAudioUrlRef.current) {
+      URL.revokeObjectURL(currentAudioUrlRef.current);
+      currentAudioUrlRef.current = null;
+    }
+  };
+
   const goIdle = (listen: boolean) => {
     clearSafety();
     abortRef.current?.abort();
@@ -91,7 +99,7 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
     setResponding(false);
     setTtsSpeaking(false);
     stopListening();
-    stopHumanVoice(audioRef);
+    stopCurrentAudio();
     void heygen.interrupt();
     if (listen && wantMicRef.current) startListening();
   };
@@ -113,23 +121,10 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
       abortRef.current?.abort();
       recRef.current?.stop();
       void heygen.stop();
-      stopHumanVoice(audioRef);
+      stopCurrentAudio();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  useEffect(() => {
-    const wasSpeaking = heygenSpeakingRef.current;
-    heygenSpeakingRef.current = heygen.speaking;
-    if (heygen.speaking) {
-      markPlaybackStarted();
-      return;
-    }
-    if (wasSpeaking && wantMicRef.current && !thinking && !responding) {
-      startListening();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [heygen.speaking]);
 
   const stopListening = () => {
     recRef.current?.stop();
@@ -172,46 +167,47 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
     }
   };
 
-  const speakBackendSpanish = async (text: string) => {
+  const speakBackendSpanish = async (respuestaTexto: string) => {
     const gen = genRef.current;
     stopListening();
     setResponding(true);
+    setTtsSpeaking(false);
     armSafety();
     try {
-      const usedHeygen = await heygen.speakRepeat(text);
-      if (usedHeygen) {
-        if (!playbackStartedRef.current && gen === genRef.current) {
-          setResponding(true);
-        }
-        return;
-      }
+      const response = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: respuestaTexto, voice: "nova" }),
+      });
+
+      if (!response.ok) throw new Error("Error en /api/tts: " + response.statusText);
+
+      const audioBlob = await response.blob();
       if (gen !== genRef.current) return;
-      await speakHumanVoice({
-        text,
-        profile: getVoiceProfile("elena"),
-        language: "es",
-        speed: 1,
-        stability: 48,
-        audioRef,
-        shouldCancel: () => gen !== genRef.current,
-        onPlaybackStart: () => {
-          markPlaybackStarted();
-          setTtsSpeaking(true);
-        },
-        onPlaybackEnd: () => {
-          setTtsSpeaking(false);
-          setResponding(false);
-          if (wantMicRef.current && gen === genRef.current) startListening();
-        },
-        onAutoplayBlocked: () => {
-          setResponding(false);
-          clearSafety();
-        },
+      const audioUrl = URL.createObjectURL(audioBlob);
+      const audio = new Audio(audioUrl);
+      currentAudioRef.current = audio;
+      currentAudioUrlRef.current = audioUrl;
+
+      markPlaybackStarted();
+      setTtsSpeaking(true);
+      setResponding(false);
+
+      await audio.play();
+      await new Promise<void>((resolve, reject) => {
+        audio.onended = () => resolve();
+        audio.onerror = () => reject(new Error("Audio playback failed"));
       });
     } catch (cause) {
-      console.error("[avatar] speak failed", cause);
+      console.error("[avatar] /api/tts failed", cause);
+      throw cause;
     } finally {
-      if (!playbackStartedRef.current) setResponding(false);
+      setTtsSpeaking(false);
+      setResponding(false);
+      stopCurrentAudio();
+      if (gen === genRef.current && wantMicRef.current) {
+        startListening();
+      }
     }
   };
 
@@ -260,13 +256,9 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
   };
 
   const onTalk = async () => {
-    if (thinking || responding) {
+    if (thinking || responding || ttsSpeaking) {
       cancelTurn();
       return;
-    }
-    if (!unlockedRef.current && audioRef.current) {
-      unlockSpeechAudio(audioRef.current);
-      unlockedRef.current = true;
     }
     if (listening) {
       stopListening();
@@ -274,15 +266,7 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
       return;
     }
     wantMicRef.current = true;
-    const started = await heygen.start().catch((cause) => {
-      console.error("[heygen] session start failed; using /api/tts only", cause);
-      return false;
-    });
-    setStatus(
-      started
-        ? "Sesión HeyGen en modo REPEAT. El texto lo escribe /api/avatar en español."
-        : "HeyGen no está configurado. Vocalizo el español de /api/avatar con /api/tts (nova).",
-    );
+    setStatus("Cada respuesta llama a /api/tts (voz nova) y luego se reproduce el MP3.");
     startListening();
   };
 
@@ -290,14 +274,13 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
 
   return (
     <section className="rounded-3xl border border-emerald-500/25 bg-gradient-to-br from-slate-900 via-slate-950 to-emerald-950/20 p-5 sm:p-6">
-      <audio ref={audioRef} preload="auto" playsInline className="hidden" />
       <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
         <div>
           <p className="text-[10px] uppercase tracking-[0.2em] text-emerald-400/80 font-semibold">Avatar Elena</p>
           <h3 className="text-lg font-semibold text-white mt-1">Conserje en español</h3>
           <p className="text-xs text-slate-400 mt-1 max-w-xl">
             Pregunta en español. GPT responde con la dirección de {property.name} ({property.address}, {property.city}).
-            HeyGen solo repite ese texto (task_type: repeat). Sin knowledge base ni voz masculina.
+            El audio sale siempre de POST /api/tts con voice nova.
           </p>
         </div>
       </div>
@@ -323,17 +306,17 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
             className={`mt-4 w-full flex items-center justify-center gap-2 rounded-2xl py-3 text-sm font-bold ${
               listening
                 ? "bg-sky-500 text-slate-950"
-                : thinking || responding
+                : thinking || responding || ttsSpeaking
                   ? "bg-amber-400 text-slate-950"
                   : "bg-emerald-500 text-slate-950 hover:bg-emerald-400"
             }`}
           >
             <Mic className="h-4 w-4" />
             {listening
-              ? "Escuchando…"
-              : thinking || responding
+              ? "Escuchando..."
+              : thinking || responding || ttsSpeaking
                 ? "Elena está respondiendo... (toca para cancelar)"
-                : "Hablar con Elena"}
+                : "Hablar"}
           </button>
           <button
             type="button"
