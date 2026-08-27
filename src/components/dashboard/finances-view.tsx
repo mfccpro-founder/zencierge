@@ -3,247 +3,221 @@
 import { useMemo, useState, type ReactNode } from "react";
 import {
   Banknote,
+  CalendarDays,
   Calculator,
   Download,
-  Printer,
-  Sparkles,
-  Wrench,
+  Percent,
+  TrendingDown,
+  TrendingUp,
+  Wallet,
 } from "lucide-react";
+import { useListings } from "@/components/dashboard/listings-provider";
+import { calendarToday, properties as seedProperties } from "@/lib/dashboard-data";
 import {
-  financePeriods,
-  properties,
-  settlementCommission,
-  settlementNet,
-  type FinancePeriodId,
-  type SettlementRow,
-} from "@/lib/dashboard-data";
+  deltaPct,
+  filterTransactions,
+  ledgerToCsv,
+  monthlySeries,
+  previousMonthWindow,
+  rangeFor,
+  statusLabel,
+  stayTransactions,
+  summarizeLedger,
+  usd,
+  type FinanceRangeId,
+  type StayTransaction,
+} from "@/lib/financials";
 
-type PeriodChoice = FinancePeriodId | "custom";
-
-const BAR_COLORS: Record<string, string> = {
-  "prop-1": "bg-emerald-400",
-  "prop-2": "bg-sky-400",
-  "prop-3": "bg-violet-400",
-  "prop-4": "bg-amber-400",
-};
-
-function usd(value: number) {
-  const rounded = Math.round(value);
-  const abs = Math.abs(rounded).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  return `${rounded < 0 ? "-" : ""}$${abs}`;
-}
-
-function pct(rate: number) {
-  return `${Math.round(rate * 100)}%`;
-}
-
-function propertyName(id: string) {
-  return properties.find((property) => property.id === id)?.name ?? id;
-}
-
-function utcDaysInclusive(fromIso: string, toIso: string) {
-  const from = Date.parse(`${fromIso}T00:00:00.000Z`);
-  const to = Date.parse(`${toIso}T00:00:00.000Z`);
-  if (Number.isNaN(from) || Number.isNaN(to) || to < from) return 0;
-  return Math.floor((to - from) / 86_400_000) + 1;
-}
-
-function scaleRows(rows: SettlementRow[], factor: number): SettlementRow[] {
-  return rows.map((row) => ({
-    ...row,
-    nights: Math.max(0, Math.round(row.nights * factor)),
-    gross: Math.round(row.gross * factor),
-    expenses: Math.round(row.expenses * factor),
-  }));
-}
-
-function summarize(rows: SettlementRow[]) {
-  const gross = rows.reduce((sum, row) => sum + row.gross, 0);
-  const commission = rows.reduce((sum, row) => sum + settlementCommission(row), 0);
-  const expenses = rows.reduce((sum, row) => sum + row.expenses, 0);
-  const net = rows.reduce((sum, row) => sum + settlementNet(row), 0);
-  return { gross, commission, expenses, net };
-}
-
-function statementText(periodLabel: string, rows: SettlementRow[]) {
-  const totals = summarize(rows);
-  const lines = [
-    "Zencierge · Owner statement",
-    periodLabel,
-    "South Florida co-hosting portfolio",
-    "",
-    "Property | Owner | Nights | ADR | Gross | Commission | Expenses | Net | Status",
-    ...rows.map((row) =>
-      [
-        propertyName(row.propertyId),
-        row.owner,
-        row.nights,
-        usd(row.adr),
-        usd(row.gross),
-        `${pct(row.commissionRate)} ${usd(settlementCommission(row))}`,
-        usd(row.expenses),
-        usd(settlementNet(row)),
-        row.status,
-      ].join(" | "),
-    ),
-    "",
-    `Gross revenue: ${usd(totals.gross)}`,
-    `Co-host commission: ${usd(totals.commission)}`,
-    `Cleaning & maintenance: ${usd(totals.expenses)}`,
-    `Net owner payouts: ${usd(totals.net)}`,
-  ];
-  return lines.join("\n");
-}
+const RANGE_OPTIONS: { id: FinanceRangeId; label: string }[] = [
+  { id: "this_month", label: "Este mes" },
+  { id: "last_quarter", label: "Último trimestre" },
+  { id: "ytd", label: "Año en curso" },
+];
 
 export function FinancesView() {
-  const [period, setPeriod] = useState<PeriodChoice>("august");
-  const [customFrom, setCustomFrom] = useState("2026-08-01");
-  const [customTo, setCustomTo] = useState("2026-08-26");
+  const { properties } = useListings();
+  const [propertyId, setPropertyId] = useState<string | "all">("all");
+  const [rangeId, setRangeId] = useState<FinanceRangeId>("this_month");
+  const [hovered, setHovered] = useState<string | null>(null);
+
   const [quoteNights, setQuoteNights] = useState(22);
   const [quoteAdr, setQuoteAdr] = useState(220);
   const [quoteRate, setQuoteRate] = useState(18);
   const [quoteCleans, setQuoteCleans] = useState(4);
   const [quoteCleanFee, setQuoteCleanFee] = useState(165);
 
-  const { rows, periodLabel } = useMemo(() => {
-    if (period === "custom") {
-      const days = utcDaysInclusive(customFrom, customTo);
-      const factor = days / 31;
-      return {
-        rows: scaleRows(financePeriods.august.settlements, factor),
-        periodLabel: `Custom · ${customFrom} to ${customTo}`,
-      };
-    }
-    const pack = financePeriods[period];
-    return { rows: pack.settlements, periodLabel: pack.label };
-  }, [period, customFrom, customTo]);
+  const propertyName = (id: string) =>
+    properties.find((property) => property.id === id)?.name ?? id;
 
-  const totals = summarize(rows);
-  const maxGross = Math.max(...rows.map((row) => row.gross), 1);
+  const range = rangeFor(rangeId, calendarToday);
+  const prevMonth = previousMonthWindow(calendarToday);
+  const propertyCount = propertyId === "all" ? Math.max(properties.length, seedProperties.length, 1) : 1;
+
+  const rows = useMemo(
+    () =>
+      filterTransactions(stayTransactions, propertyId, range.start, range.endExclusive).sort((a, b) =>
+        b.check_in.localeCompare(a.check_in),
+      ),
+    [propertyId, range.start, range.endExclusive],
+  );
+
+  const prevRows = useMemo(
+    () => filterTransactions(stayTransactions, propertyId, prevMonth.start, prevMonth.endExclusive),
+    [propertyId, prevMonth.start, prevMonth.endExclusive],
+  );
+
+  const kpis = summarizeLedger(rows, range.start, range.endExclusive, propertyCount);
+  const prevKpis = summarizeLedger(prevRows, prevMonth.start, prevMonth.endExclusive, propertyCount);
+  const series = monthlySeries(stayTransactions, propertyId, calendarToday, 6);
+  const maxBar = Math.max(...series.flatMap((point) => [point.gross, point.net]), 1);
 
   const quoteGross = quoteNights * quoteAdr;
   const quoteCommission = quoteGross * (quoteRate / 100);
   const quoteExpenses = quoteCleans * quoteCleanFee;
   const quoteNet = quoteGross - quoteCommission - quoteExpenses;
 
-  const exportStatement = (printAfter: boolean) => {
-    const body = statementText(periodLabel, rows);
-    const blob = new Blob([body], { type: "text/plain;charset=utf-8" });
+  const exportCsv = () => {
+    const body = ledgerToCsv(rows, propertyName);
+    const blob = new Blob([body], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = "zencierge-owner-statement.txt";
+    link.download = "zencierge-reporte-financiero.csv";
     link.click();
     URL.revokeObjectURL(url);
-
-    if (!printAfter) return;
-    const popup = window.open("", "_blank", "noopener,noreferrer,width=800,height=900");
-    if (!popup) return;
-    popup.document.write(
-      `<pre style="font-family:ui-monospace,monospace;padding:24px;white-space:pre-wrap">${body.replace(/</g, "&lt;")}</pre>`,
-    );
-    popup.document.close();
-    popup.focus();
-    popup.print();
   };
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <p className="text-xs text-slate-500">Co-hosting reports · 18% default admin fee</p>
+          <p className="text-xs text-slate-500">Revenue Command Center · South Florida portfolio</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {(
-            [
-              ["august", financePeriods.august.label],
-              ["ytd", financePeriods.ytd.label],
-              ["custom", "Custom range"],
-            ] as const
-          ).map(([id, label]) => (
+          <label className="text-[11px] text-slate-500">
+            Propiedad
+            <select
+              value={propertyId}
+              onChange={(event) => setPropertyId(event.target.value)}
+              className="ml-2 rounded-full border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-200"
+            >
+              <option value="all">Todas las propiedades</option>
+              {properties.map((property) => (
+                <option key={property.id} value={property.id}>
+                  {property.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          {RANGE_OPTIONS.map((option) => (
             <button
-              key={id}
+              key={option.id}
               type="button"
-              onClick={() => setPeriod(id)}
+              onClick={() => setRangeId(option.id)}
               className={`rounded-full border px-3 py-1.5 text-xs font-medium ${
-                period === id
+                rangeId === option.id
                   ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-300"
                   : "border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200"
               }`}
             >
-              {label}
+              {option.label}
             </button>
           ))}
         </div>
       </div>
 
-      {period === "custom" ? (
-        <div className="flex flex-wrap gap-3">
-          <label className="text-xs text-slate-400">
-            From
-            <input
-              type="date"
-              value={customFrom}
-              onChange={(event) => setCustomFrom(event.target.value)}
-              className="mt-1 block rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-200"
-            />
-          </label>
-          <label className="text-xs text-slate-400">
-            To
-            <input
-              type="date"
-              value={customTo}
-              onChange={(event) => setCustomTo(event.target.value)}
-              className="mt-1 block rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-200"
-            />
-          </label>
-        </div>
-      ) : null}
-
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         <Kpi
-          label="Gross Revenue"
-          value={usd(totals.gross)}
-          hint="Collected guest stay revenue"
+          label="Ingresos Netos Totales"
+          value={usd(kpis.net)}
+          hint={`${range.label} · vs mes anterior`}
+          delta={deltaPct(kpis.net, prevKpis.net)}
           icon={<Banknote className="h-4 w-4 text-emerald-400" />}
         />
         <Kpi
-          label="Co-Hosting Commission Earned"
-          value={usd(totals.commission)}
-          hint="18% management fee on gross"
-          icon={<Sparkles className="h-4 w-4 text-sky-400" />}
+          label="ADR"
+          value={usd(kpis.adr)}
+          hint="Tarifa promedio diaria"
+          delta={deltaPct(kpis.adr, prevKpis.adr)}
+          icon={<CalendarDays className="h-4 w-4 text-sky-400" />}
         />
         <Kpi
-          label="Cleaning & Maintenance Fees"
-          value={usd(totals.expenses)}
-          hint="Turnovers, tech visits, supplies"
-          icon={<Wrench className="h-4 w-4 text-amber-400" />}
+          label="Tasa de Ocupación"
+          value={`${Math.round(kpis.occupancy * 100)}%`}
+          hint={`${kpis.nights} noches ocupadas`}
+          delta={deltaPct(kpis.occupancy, prevKpis.occupancy)}
+          icon={<Percent className="h-4 w-4 text-violet-400" />}
         />
         <Kpi
-          label="Net Owner Payouts"
-          value={usd(totals.net)}
-          hint="Gross − commission − ops"
-          icon={<Banknote className="h-4 w-4 text-violet-400" />}
+          label="Próximos Pagos Pendientes"
+          value={usd(kpis.pending)}
+          hint="Payouts en camino"
+          delta={deltaPct(kpis.pending, prevKpis.pending)}
+          icon={<Wallet className="h-4 w-4 text-amber-400" />}
         />
       </div>
 
       <section className="rounded-2xl border border-slate-800/80 bg-slate-900/50 p-5">
-        <h3 className="text-sm font-semibold text-white mb-4">Revenue by Florida property</h3>
-        <div className="flex items-end gap-4 h-48">
-          {rows.map((row) => {
-            const height = Math.max(8, (row.gross / maxGross) * 100);
+        <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+          <div>
+            <h3 className="text-sm font-semibold text-white">Ingresos brutos vs ganancia neta</h3>
+            <p className="text-[11px] text-slate-500 mt-0.5">Últimos 6 meses · pasa el cursor sobre un mes</p>
+          </div>
+          <div className="flex items-center gap-3 text-[11px] text-slate-400">
+            <span className="inline-flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-sm bg-sky-400" /> Bruto
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-sm bg-emerald-400" /> Neto
+            </span>
+          </div>
+        </div>
+        <div className="flex items-end gap-3 sm:gap-5 h-56">
+          {series.map((point) => {
+            const active = hovered === point.key;
             return (
-              <div key={row.propertyId} className="flex-1 flex flex-col items-center gap-2 h-full justify-end">
-                <span className="text-[11px] font-medium text-slate-300">{usd(row.gross)}</span>
+              <button
+                key={point.key}
+                type="button"
+                onMouseEnter={() => setHovered(point.key)}
+                onMouseLeave={() => setHovered(null)}
+                onFocus={() => setHovered(point.key)}
+                onBlur={() => setHovered(null)}
+                className="flex-1 h-full flex flex-col items-center justify-end gap-2 rounded-xl outline-none"
+              >
                 <div
-                  className={`w-full max-w-[72px] rounded-t-lg ${BAR_COLORS[row.propertyId] ?? "bg-slate-500"}`}
-                  style={{ height: `${height}%` }}
-                  title={propertyName(row.propertyId)}
-                />
-                <span className="text-[10px] text-slate-500 text-center leading-tight px-1">
-                  {propertyName(row.propertyId)}
+                  className={`text-[10px] font-medium transition-opacity ${
+                    active ? "text-slate-100 opacity-100" : "text-slate-400 opacity-80"
+                  }`}
+                >
+                  {active ? (
+                    <span className="block text-center leading-tight">
+                      {usd(point.gross)}
+                      <br />
+                      <span className="text-emerald-300">{usd(point.net)}</span>
+                    </span>
+                  ) : (
+                    usd(point.net)
+                  )}
+                </div>
+                <div className="w-full flex items-end justify-center gap-1 h-40">
+                  <div
+                    className={`w-[42%] max-w-[28px] rounded-t-md bg-sky-400/90 ${
+                      active ? "shadow-[0_0_18px_rgb(56_189_248_/_0.45)]" : "opacity-80"
+                    }`}
+                    style={{ height: `${Math.max(6, (point.gross / maxBar) * 100)}%` }}
+                  />
+                  <div
+                    className={`w-[42%] max-w-[28px] rounded-t-md bg-emerald-400 ${
+                      active ? "shadow-[0_0_18px_rgb(52_211_153_/_0.45)]" : "opacity-90"
+                    }`}
+                    style={{ height: `${Math.max(6, (point.net / maxBar) * 100)}%` }}
+                  />
+                </div>
+                <span className={`text-[11px] ${active ? "text-white font-semibold" : "text-slate-500"}`}>
+                  {point.label}
                 </span>
-              </div>
+              </button>
             );
           })}
         </div>
@@ -252,69 +226,46 @@ export function FinancesView() {
       <section className="rounded-2xl border border-slate-800/80 bg-slate-900/50 overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b border-slate-800">
           <div>
-            <h3 className="text-sm font-semibold text-white">Monthly settlements by unit</h3>
-            <p className="text-[11px] text-slate-500 mt-0.5">{periodLabel}</p>
+            <h3 className="text-sm font-semibold text-white">Desglose de payouts</h3>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              {range.label} · {rows.length} transacciones
+            </p>
           </div>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => exportStatement(false)}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-[11px] font-semibold text-slate-200 hover:bg-slate-800"
-            >
-              <Download className="h-3.5 w-3.5" />
-              Export Owner Statement
-            </button>
-            <button
-              type="button"
-              onClick={() => exportStatement(true)}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-3 py-2 text-[11px] font-bold text-slate-950 hover:bg-emerald-400"
-            >
-              <Printer className="h-3.5 w-3.5" />
-              Print
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={exportCsv}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-3 py-2 text-[11px] font-bold text-slate-950 hover:bg-emerald-400"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Exportar a CSV / Reporte Financiero
+          </button>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead className="text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-800">
               <tr>
-                <th className="px-4 py-3 font-semibold">Property</th>
-                <th className="px-4 py-3 font-semibold">Owner</th>
-                <th className="px-4 py-3 font-semibold">Nights</th>
-                <th className="px-4 py-3 font-semibold">Avg rate</th>
-                <th className="px-4 py-3 font-semibold">Gross</th>
-                <th className="px-4 py-3 font-semibold">Co-host %</th>
-                <th className="px-4 py-3 font-semibold">Expenses</th>
-                <th className="px-4 py-3 font-semibold">Net payout</th>
-                <th className="px-4 py-3 font-semibold">Status</th>
+                <th className="px-4 py-3 font-semibold">Fecha</th>
+                <th className="px-4 py-3 font-semibold">Propiedad</th>
+                <th className="px-4 py-3 font-semibold">Huésped</th>
+                <th className="px-4 py-3 font-semibold">Canal</th>
+                <th className="px-4 py-3 font-semibold">Bruto</th>
+                <th className="px-4 py-3 font-semibold">Limpieza</th>
+                <th className="px-4 py-3 font-semibold">Comisión</th>
+                <th className="px-4 py-3 font-semibold">Impuestos</th>
+                <th className="px-4 py-3 font-semibold">Neto</th>
+                <th className="px-4 py-3 font-semibold">Estado</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
-                <tr key={row.propertyId} className="border-b border-slate-800/70 last:border-0">
-                  <td className="px-4 py-3 text-slate-200 font-medium">{propertyName(row.propertyId)}</td>
-                  <td className="px-4 py-3 text-slate-400">{row.owner}</td>
-                  <td className="px-4 py-3 text-slate-300">{row.nights}</td>
-                  <td className="px-4 py-3 text-slate-300">{usd(row.adr)}</td>
-                  <td className="px-4 py-3 text-slate-200">{usd(row.gross)}</td>
-                  <td className="px-4 py-3 text-sky-300">
-                    {pct(row.commissionRate)} · {usd(settlementCommission(row))}
-                  </td>
-                  <td className="px-4 py-3 text-amber-200">{usd(row.expenses)}</td>
-                  <td className="px-4 py-3 text-emerald-300 font-semibold">{usd(settlementNet(row))}</td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
-                        row.status === "Paid"
-                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
-                          : "border-amber-500/30 bg-amber-500/10 text-amber-300"
-                      }`}
-                    >
-                      {row.status}
-                    </span>
+              {rows.length === 0 ? (
+                <tr>
+                  <td colSpan={10} className="px-4 py-8 text-center text-slate-500">
+                    No hay transacciones en este rango.
                   </td>
                 </tr>
-              ))}
+              ) : (
+                rows.map((row) => <LedgerRow key={row.id} row={row} propertyName={propertyName} />)
+              )}
             </tbody>
           </table>
         </div>
@@ -346,17 +297,72 @@ export function FinancesView() {
   );
 }
 
+function LedgerRow({
+  row,
+  propertyName,
+}: {
+  row: StayTransaction;
+  propertyName: (id: string) => string;
+}) {
+  const paid = row.status === "completed";
+  const pending = row.status === "payout_pending";
+  return (
+    <tr className="border-b border-slate-800/70 last:border-0">
+      <td className="px-4 py-3 text-slate-300 whitespace-nowrap">
+        {row.check_in}
+        <span className="block text-[10px] text-slate-500">{row.check_out}</span>
+      </td>
+      <td className="px-4 py-3 text-slate-200 font-medium">{propertyName(row.property_id)}</td>
+      <td className="px-4 py-3 text-slate-300">{row.guest_name}</td>
+      <td className="px-4 py-3">
+        <span
+          className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+            row.channel === "Airbnb"
+              ? "border-rose-500/30 bg-rose-500/10 text-rose-300"
+              : row.channel === "Vrbo"
+                ? "border-sky-500/30 bg-sky-500/10 text-sky-300"
+                : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+          }`}
+        >
+          {row.channel}
+        </span>
+      </td>
+      <td className="px-4 py-3 text-slate-200">{usd(row.gross_revenue)}</td>
+      <td className="px-4 py-3 text-amber-200">{usd(row.cleaning_fee)}</td>
+      <td className="px-4 py-3 text-sky-300">{usd(row.platform_fee)}</td>
+      <td className="px-4 py-3 text-slate-400">{usd(row.taxes)}</td>
+      <td className="px-4 py-3 text-emerald-300 font-semibold">{usd(row.net_profit)}</td>
+      <td className="px-4 py-3">
+        <span
+          className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+            paid
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+              : pending
+                ? "border-amber-500/30 bg-amber-500/10 text-amber-300"
+                : "border-sky-500/30 bg-sky-500/10 text-sky-300"
+          }`}
+        >
+          {statusLabel(row.status)}
+        </span>
+      </td>
+    </tr>
+  );
+}
+
 function Kpi({
   label,
   value,
   hint,
+  delta,
   icon,
 }: {
   label: string;
   value: string;
   hint: string;
+  delta: number;
   icon: ReactNode;
 }) {
+  const up = delta >= 0;
   return (
     <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800/80">
       <div className="flex items-center justify-between">
@@ -364,7 +370,12 @@ function Kpi({
         {icon}
       </div>
       <div className="text-2xl font-extrabold text-white mt-3">{value}</div>
-      <div className="text-xs text-slate-500 mt-2">{hint}</div>
+      <div className={`mt-2 flex items-center gap-1 text-xs font-medium ${up ? "text-emerald-400" : "text-rose-400"}`}>
+        {up ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
+        {up ? "+" : ""}
+        {delta.toFixed(1)}% vs mes anterior
+      </div>
+      <div className="text-[11px] text-slate-500 mt-1">{hint}</div>
     </div>
   );
 }

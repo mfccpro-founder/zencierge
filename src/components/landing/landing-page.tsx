@@ -2,11 +2,13 @@
 
 import { useState, type ReactNode } from "react";
 import Link from "next/link";
+import type { ZenciergePlanId } from "@/lib/zencierge-plans";
 import {
   Banknote,
   CalendarDays,
   Check,
   Headphones,
+  Loader2,
   Phone,
   ShieldCheck,
 } from "lucide-react";
@@ -70,6 +72,30 @@ const testimonials = [
 
 export function LandingPage() {
   const [annual, setAnnual] = useState(false);
+  const [isRedirecting, setIsRedirecting] = useState<ZenciergePlanId | null>(null);
+
+  const subscribeWithSquare = async (planId: ZenciergePlanId) => {
+    if (isRedirecting) return;
+    setIsRedirecting(planId);
+    try {
+      const response = await fetch("/api/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          planId,
+          billing: annual ? "annual" : "monthly",
+        }),
+      });
+      const data = (await response.json()) as { url?: string; error?: string };
+      if (!response.ok || !data.url) {
+        throw new Error(data.error ?? "Could not start Square checkout");
+      }
+      window.location.href = data.url;
+    } catch (cause) {
+      setIsRedirecting(null);
+      window.alert(cause instanceof Error ? cause.message : "Checkout failed");
+    }
+  };
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -88,15 +114,15 @@ export function LandingPage() {
             <a href="#pricing" className="hover:text-white">
               Pricing
             </a>
-            <Link href="/dashboard" className="hover:text-white">
+            <Link href="/login" className="hover:text-white">
               Dashboard
             </Link>
           </nav>
           <Link
-            href="/dashboard"
+            href="/login"
             className="rounded-xl bg-emerald-500 px-3.5 py-2 text-xs font-bold text-slate-950 hover:bg-emerald-400"
           >
-            View Dashboard Demo
+            Iniciar sesión
           </Link>
         </div>
       </header>
@@ -119,16 +145,16 @@ export function LandingPage() {
         </div>
         <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
           <Link
-            href="/dashboard"
+            href="/signup"
             className="rounded-xl bg-emerald-500 px-5 py-3 text-sm font-bold text-slate-950 shadow-lg shadow-emerald-500/20 hover:bg-emerald-400"
           >
             Start Free Trial
           </Link>
           <Link
-            href="/dashboard"
+            href="/login"
             className="rounded-xl border border-slate-700 bg-slate-900 px-5 py-3 text-sm font-semibold text-slate-200 hover:bg-slate-800"
           >
-            View Dashboard Demo
+            Iniciar sesión
           </Link>
         </div>
       </section>
@@ -216,16 +242,27 @@ export function LandingPage() {
                     </li>
                   ))}
                 </ul>
-                <Link
-                  href="/dashboard"
-                  className={`mt-6 block rounded-xl py-2.5 text-center text-xs font-bold ${
+                <button
+                  type="button"
+                  disabled={isRedirecting !== null}
+                  onClick={() => {
+                    void subscribeWithSquare(plan.id);
+                  }}
+                  className={`mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl py-2.5 text-center text-xs font-bold disabled:cursor-wait disabled:opacity-70 ${
                     plan.popular
                       ? "bg-emerald-500 text-slate-950 hover:bg-emerald-400"
                       : "border border-slate-700 text-slate-200 hover:bg-slate-800"
                   }`}
                 >
-                  Start Free Trial
-                </Link>
+                  {isRedirecting === plan.id ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+                      Cargando Square...
+                    </>
+                  ) : (
+                    "Subscribe with Square"
+                  )}
+                </button>
               </article>
             );
           })}
@@ -261,7 +298,7 @@ export function LandingPage() {
             synced.
           </p>
           <Link
-            href="/dashboard"
+            href="/login"
             className="mt-6 inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-5 py-3 text-sm font-bold text-slate-950 hover:bg-emerald-400"
           >
             <ShieldCheck className="h-4 w-4" />
@@ -280,11 +317,11 @@ export function LandingPage() {
             <a href="#pricing" className="hover:text-white">
               Pricing
             </a>
-            <Link href="/dashboard" className="hover:text-white">
+            <Link href="/login" className="hover:text-white">
               Dashboard
             </Link>
-            <Link href="/dashboard" className="hover:text-white">
-              Host Command Center
+            <Link href="/signup" className="hover:text-white">
+              Crear cuenta
             </Link>
           </nav>
         </div>

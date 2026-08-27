@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
   Banknote,
@@ -16,28 +16,32 @@ import {
   TrendingUp,
   MapPin,
   Clock,
-  ShieldCheck,
 } from "lucide-react";
 import {
   calls,
-  upcomingCheckins,
+  calendarToday,
   metrics,
   operations,
   type NavId,
   type Call,
 } from "@/lib/dashboard-data";
+import { useListings } from "@/components/dashboard/listings-provider";
 import { PropertiesView } from "@/components/dashboard/properties-view";
 import { VoiceConciergeView } from "@/components/dashboard/voice-concierge-view";
 import { CalendarView } from "@/components/dashboard/calendar-view";
 import { FinancesView } from "@/components/dashboard/finances-view";
 import { SettingsView } from "@/components/dashboard/settings-view";
 import { AiAvatarGuide, type AiAvatarGuideHandle } from "@/components/dashboard/ai-avatar-guide";
+import { ReceptionistAvatar } from "@/components/dashboard/receptionist-avatar";
+import { HostSignOutButton } from "@/components/auth/host-sign-out-button";
+import { createAuthBrowserClient } from "@/lib/supabase-auth-browser";
+import { hostDisplayName } from "@/lib/host-display-name";
 
 const navItems: { id: NavId; label: string; icon: LucideIcon }[] = [
   { id: "overview", label: "Overview", icon: LayoutDashboard },
   { id: "properties", label: "Properties", icon: Building2 },
   { id: "calendar", label: "Calendar", icon: CalendarDays },
-  { id: "finances", label: "Finances", icon: Banknote },
+  { id: "finances", label: "Financials", icon: Banknote },
   { id: "voice", label: "Voice Concierge", icon: Headphones },
   { id: "settings", label: "Settings", icon: Settings },
 ];
@@ -56,12 +60,12 @@ const pageMeta: Record<NavId, { title: string; subtitle: string }> = {
     subtitle: "Reservations and turnover windows",
   },
   finances: {
-    title: "Finances",
-    subtitle: "Co-hosting settlements, owner payouts, and commission quotes",
+    title: "Financial & Revenue Command Center",
+    subtitle: "Net profit, ADR, occupancy, and payouts across your Florida listings",
   },
   voice: {
     title: "Voice Concierge",
-    subtitle: "Virtual line, voice model, and live call tools",
+    subtitle: "AI Receptionist avatar, handbook grounding, and live call tools",
   },
   settings: {
     title: "Settings",
@@ -69,12 +73,24 @@ const pageMeta: Record<NavId, { title: string; subtitle: string }> = {
   },
 };
 
-export function DashboardApp() {
-  const [activeTab, setActiveTab] = useState<NavId>("overview");
+export function DashboardApp({ initialTab = "overview" }: { initialTab?: NavId }) {
+  const [activeTab, setActiveTab] = useState<NavId>(initialTab);
   const [selectedCall, setSelectedCall] = useState<Call | null>(calls[0]);
   const avatarGuideRef = useRef<AiAvatarGuideHandle>(null);
+  const [hostName, setHostName] = useState("Javier");
   const meta = pageMeta[activeTab];
   const showPageHeader = activeTab !== "voice";
+
+  useEffect(() => {
+    const supabase = createAuthBrowserClient();
+    void supabase.auth.getUser().then(({ data }) => {
+      setHostName(hostDisplayName(data.user));
+    });
+    const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
+      setHostName(hostDisplayName(session?.user ?? null));
+    });
+    return () => subscription.subscription.unsubscribe();
+  }, []);
 
   return (
     <div className="flex min-h-screen bg-slate-950 text-slate-100">
@@ -107,40 +123,51 @@ export function DashboardApp() {
                 >
                   <Icon className={`h-4 w-4 ${isActive ? "text-emerald-400" : "text-slate-400"}`} />
                   {item.label}
+                  {item.id === "voice" ? (
+                    <span className="ml-auto text-[9px] uppercase tracking-wide font-semibold text-emerald-400/80 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded-md">
+                      Avatar
+                    </span>
+                  ) : null}
                 </button>
               );
             })}
           </nav>
         </div>
 
-        <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="relative flex h-2.5 w-2.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+        <div>
+          <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+              </span>
+              <span className="text-xs font-medium text-slate-300">Voice Line Active</span>
+            </div>
+            <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded-md font-mono">
+              +1 (305) 555-0199
             </span>
-            <span className="text-xs font-medium text-slate-300">Voice Line Active</span>
           </div>
-          <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded-md font-mono">
-            +1 (305) 555-0199
-          </span>
+          <HostSignOutButton />
         </div>
       </aside>
 
       <main className="flex-1 p-8 overflow-y-auto space-y-8">
-        {showPageHeader ? (
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-2xl font-bold text-white tracking-tight">{meta.title}</h2>
-              <p className="text-sm text-slate-400 mt-0.5">{meta.subtitle}</p>
-            </div>
-            <StatusChrome />
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-bold text-white">¡Bienvenido, {hostName}! 👋</h1>
+            <p className="mt-1 text-sm text-slate-400">Panel de Control de Anfitrión | Zencierge</p>
+            {showPageHeader ? (
+              <div className="mt-4">
+                <h2 className="text-lg font-semibold text-white tracking-tight">{meta.title}</h2>
+                <p className="text-sm text-slate-500 mt-0.5">{meta.subtitle}</p>
+              </div>
+            ) : null}
           </div>
-        ) : (
-          <div className="flex items-center justify-end">
-            <StatusChrome />
-          </div>
-        )}
+          <StatusChrome
+            onOpenReceptionist={() => setActiveTab("voice")}
+            onOpenTutorial={() => avatarGuideRef.current?.openTutorial()}
+          />
+        </div>
 
         <div key={activeTab} className="view-enter">
           {activeTab === "overview" ? (
@@ -164,13 +191,35 @@ export function DashboardApp() {
   );
 }
 
-function StatusChrome() {
+function StatusChrome({
+  onOpenReceptionist,
+  onOpenTutorial,
+}: {
+  onOpenReceptionist: () => void;
+  onOpenTutorial: () => void;
+}) {
   return (
     <div className="flex items-center gap-3">
-      <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-medium">
-        <ShieldCheck className="h-3.5 w-3.5" />
+      <button
+        type="button"
+        onClick={onOpenTutorial}
+        className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-violet-500/15 border border-violet-400/30 text-violet-200 text-xs font-semibold hover:bg-violet-500/25 transition-colors shadow-sm shadow-violet-500/10"
+      >
+        🎓 Video Guía / Tutorial
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          onOpenReceptionist();
+          window.requestAnimationFrame(() => {
+            document.getElementById("ai-receptionist")?.scrollIntoView({ behavior: "smooth", block: "start" });
+          });
+        }}
+        className="flex items-center gap-2 pl-1.5 pr-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/25 text-emerald-300 text-xs font-medium hover:bg-emerald-500/20 transition-colors"
+      >
+        <ReceptionistAvatar phase="idle" size="sm" name="Elena" />
         AI Receptionist Ready
-      </div>
+      </button>
       <div className="h-9 w-9 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center font-bold text-xs text-white">
         JM
       </div>
@@ -185,6 +234,18 @@ function OverviewPanel({
   selectedCall: Call | null;
   setSelectedCall: (call: Call | null) => void;
 }) {
+  const { properties, reservations } = useListings();
+  const upcoming = reservations
+    .filter((item) => item.checkIn >= calendarToday)
+    .sort((a, b) => a.checkIn.localeCompare(b.checkIn) || a.checkInTime.localeCompare(b.checkInTime))
+    .slice(0, 4);
+
+  const propertyLabel = (id: string) =>
+    properties.find((property) => property.id === id)?.name ?? id;
+
+  const whenLabel = (iso: string, time: string) =>
+    iso === calendarToday ? `Today, ${time}` : `${iso} · ${time}`;
+
   return (
     <div className="space-y-8">
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -220,7 +281,7 @@ function OverviewPanel({
             </span>
             <CalendarDays className="h-4 w-4 text-violet-400" />
           </div>
-          <div className="text-3xl font-extrabold text-white mt-3">{metrics.upcomingCheckIns}</div>
+          <div className="text-3xl font-extrabold text-white mt-3">{upcoming.length}</div>
           <div className="text-xs text-slate-400 mt-2">{metrics.checkInsSubtitle}</div>
         </div>
 
@@ -328,20 +389,23 @@ function OverviewPanel({
           <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800/80 space-y-4">
             <h3 className="font-semibold text-white text-sm">Upcoming Check-ins</h3>
             <div className="space-y-3">
-              {upcomingCheckins.map((checkin, idx) => (
+              {upcoming.length === 0 ? (
+                <p className="text-xs text-slate-500">No upcoming stays in listings.</p>
+              ) : null}
+              {upcoming.map((checkin) => (
                 <div
-                  key={idx}
+                  key={checkin.id}
                   className="flex items-center justify-between pb-3 border-b border-slate-800/60 last:border-0 last:pb-0"
                 >
                   <div>
                     <div className="text-sm font-medium text-white">{checkin.guest}</div>
                     <div className="text-xs text-slate-400 flex items-center gap-1 mt-0.5">
                       <MapPin className="h-3 w-3 text-slate-500" />
-                      {checkin.property}
+                      {propertyLabel(checkin.propertyId)}
                     </div>
                   </div>
                   <span className="text-xs font-medium text-slate-300 bg-slate-800 px-2 py-1 rounded-md">
-                    {checkin.time}
+                    {whenLabel(checkin.checkIn, checkin.checkInTime)}
                   </span>
                 </div>
               ))}

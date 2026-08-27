@@ -4,12 +4,15 @@ import { useEffect, useMemo, useRef, useState, forwardRef, useImperativeHandle }
 import {
   ChevronUp,
   Headphones,
-  Pause,
-  Play,
+  Link2,
   Sparkles,
   Wand2,
   X,
 } from "lucide-react";
+import {
+  primeVoices,
+  stopHumanVoice,
+} from "@/lib/human-voice";
 
 type GuideLang = "en" | "es";
 
@@ -20,33 +23,55 @@ type Chapter = {
 };
 
 const STORAGE_KEY = "zencierge.hideAvatarGuide";
-const DURATION = 70;
+const DURATION = 80;
 
 const CHAPTERS: Chapter[] = [
   {
     at: 0,
     title: {
-      en: "Florida Phone Number Setup",
-      es: "Configuración del número de Florida",
+      en: "Welcome — host tutorial",
+      es: "Bienvenida — tutorial del anfitrión",
     },
     caption: {
-      en: "Assign a +1 305 or +1 954 virtual line so guests in South Florida always reach Zencierge first.",
-      es: "Asigna una línea virtual +1 305 o +1 954 para que los huéspedes en el sur de Florida lleguen primero a Zencierge.",
+      en: "Hi, I'm Elena. In under a minute I'll show you how to set up a property, test the voice simulator, and share the guest portal link.",
+      es: "Hola, soy Elena. En un minuto te muestro cómo configurar una propiedad, probar el simulador de voz y compartir el enlace del Portal del Huésped.",
     },
   },
   {
-    at: 20,
+    at: 14,
     title: {
-      en: "AI House Rules & Wi-Fi Knowledge Base",
-      es: "Reglas de la casa e IA de Wi-Fi",
+      en: "Configure properties & the AI handbook",
+      es: "Configura propiedades y el handbook de IA",
     },
     caption: {
-      en: "Load door codes, Wi-Fi, parking, and handbooks so the voice agent answers from your real property data.",
-      es: "Carga códigos, Wi-Fi, estacionamiento y handbooks para que la voz responda con los datos reales de tus unidades.",
+      en: "Open Properties. Add Wi-Fi, door codes, check-in hours, and the AI handbook. That text is what I read when a guest asks a question.",
+      es: "Abre Properties. Carga Wi-Fi, códigos, horarios de check-in y el handbook de IA. Ese texto es lo que leo cuando un huésped pregunta.",
     },
   },
   {
     at: 32,
+    title: {
+      en: "Test the voice simulator",
+      es: "Prueba el simulador de voz",
+    },
+    caption: {
+      en: "Go to Voice Concierge, pick the listing, and tap Hablar con el Avatar. Ask for Wi-Fi or the grocery store — I answer from that unit's handbook.",
+      es: "Ve a Voice Concierge, elige el listing y pulsa Hablar con el Avatar. Pregunta el Wi-Fi o el súper: respondo con el handbook de esa unidad.",
+    },
+  },
+  {
+    at: 50,
+    title: {
+      en: "Share the Guest Portal link",
+      es: "Comparte el Portal del Huésped",
+    },
+    caption: {
+      en: "In Properties, tap Ver Portal del Huésped. It opens /guest/ plus the listing id — a public page with no host sidebar. Send that link to your Airbnb guests.",
+      es: "En Properties, pulsa Ver Portal del Huésped. Abre /guest/ más el id del listing: una página pública, sin menú de host. Envía ese enlace a tus huéspedes de Airbnb.",
+    },
+  },
+  {
+    at: 66,
     title: {
       en: "Calendar Sync · Airbnb & Vrbo iCal",
       es: "Sincronización de calendarios · iCal Airbnb y Vrbo",
@@ -54,17 +79,6 @@ const CHAPTERS: Chapter[] = [
     caption: {
       en: "One-click Quick Connect, or paste each listing’s iCal link. We test the feed and keep both calendars blocked — zero double-bookings.",
       es: "Conecta en un clic o pega el iCal de cada anuncio. Probamos el feed y bloqueamos ambos calendarios: cero dobles reservas.",
-    },
-  },
-  {
-    at: 45,
-    title: {
-      en: "24/7 Guest Call Routing & Emergency Escalation",
-      es: "Enrutamiento 24/7 y escalamiento de emergencias",
-    },
-    caption: {
-      en: "Night coverage stays on. Leaks and lockouts transfer instantly to your host emergency number.",
-      es: "La cobertura nocturna sigue activa. Fugas y cierres se transfieren al instante a tu número de emergencia.",
     },
   },
 ];
@@ -78,6 +92,7 @@ const copy = {
     pause: "Pause",
     setup: "Start Setup Wizard",
     testCall: "Test Voice Call",
+    guestLink: "Open Guest Portal setup",
     dontShow: "Don't show again on login",
     close: "Close",
     open: "Open demo",
@@ -91,6 +106,7 @@ const copy = {
     pause: "Pausa",
     setup: "Iniciar asistente de alta",
     testCall: "Probar llamada de voz",
+    guestLink: "Configurar Portal del Huésped",
     dontShow: "No volver a mostrar al entrar",
     close: "Cerrar",
     open: "Abrir demo",
@@ -113,10 +129,11 @@ function chapterForTime(time: number): Chapter {
   return current;
 }
 
-export const CALENDAR_SYNC_AT = 32;
+export const CALENDAR_SYNC_AT = 66;
 
 export type AiAvatarGuideHandle = {
   openCalendarSync: () => void;
+  openTutorial: () => void;
 };
 
 type AiAvatarGuideProps = {
@@ -133,17 +150,21 @@ export const AiAvatarGuide = forwardRef<AiAvatarGuideHandle, AiAvatarGuideProps>
   const [playing, setPlaying] = useState(false);
   const [time, setTime] = useState(0);
   const [dontShow, setDontShow] = useState(false);
+  const [modal, setModal] = useState(false);
 
   const playingRef = useRef(false);
   const timeRef = useRef(0);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const speechGen = useRef(0);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
 
   const labels = copy[lang];
   const activeChapter = useMemo(() => chapterForTime(time), [time]);
-  const progress = (time / DURATION) * 100;
 
   useEffect(() => {
     setHidden(window.localStorage.getItem(STORAGE_KEY) === "1");
     setMounted(true);
+    primeVoices();
   }, []);
 
   useEffect(() => {
@@ -154,29 +175,22 @@ export const AiAvatarGuide = forwardRef<AiAvatarGuideHandle, AiAvatarGuideProps>
     timeRef.current = time;
   }, [time]);
 
-  useEffect(() => {
-    if (!playing) return;
-    const id = window.setInterval(() => {
-      const next = timeRef.current + 0.25;
-      if (next >= DURATION) {
-        timeRef.current = DURATION;
-        setTime(DURATION);
-        setPlaying(false);
-        return;
-      }
-      timeRef.current = next;
-      setTime(next);
-    }, 250);
-    return () => window.clearInterval(id);
-  }, [playing]);
-
   useImperativeHandle(ref, () => ({
     openCalendarSync: () => {
       setHidden(false);
       setExpanded(true);
+      setModal(true);
       timeRef.current = CALENDAR_SYNC_AT;
       setTime(CALENDAR_SYNC_AT);
-      setPlaying(true);
+      setPlaying(false);
+    },
+    openTutorial: () => {
+      setHidden(false);
+      setExpanded(true);
+      setModal(true);
+      timeRef.current = 0;
+      setTime(0);
+      setPlaying(false);
     },
   }));
 
@@ -186,36 +200,36 @@ export const AiAvatarGuide = forwardRef<AiAvatarGuideHandle, AiAvatarGuideProps>
   const persistHide = () => {
     if (dontShow) window.localStorage.setItem(STORAGE_KEY, "1");
     setExpanded(false);
+    setModal(false);
     setPlaying(false);
+    speechGen.current += 1;
+    stopHumanVoice(audioRef);
+    videoRef.current?.pause();
     if (dontShow) setHidden(true);
   };
 
   const seekTo = (seconds: number) => {
     timeRef.current = seconds;
     setTime(seconds);
-    setPlaying(true);
-  };
-
-  const togglePlay = () => {
-    if (time >= DURATION) {
-      timeRef.current = 0;
-      setTime(0);
+    const video = videoRef.current;
+    if (video && Number.isFinite(seconds) && video.readyState >= 1) {
+      video.currentTime = seconds;
     }
-    setPlaying((value) => !value);
   };
 
-  return (
-    <div className="fixed bottom-5 right-5 z-50 flex flex-col items-end gap-3 pointer-events-none">
-      {expanded ? (
+  const panel = (
         <div
-          className="pointer-events-auto w-[min(100vw-2rem,400px)] rounded-2xl border border-slate-800/90 bg-slate-950/95 shadow-2xl shadow-emerald-500/10 backdrop-blur-xl overflow-hidden view-enter"
+          className={`pointer-events-auto rounded-2xl border border-violet-400/20 bg-slate-950/95 shadow-2xl shadow-violet-500/10 backdrop-blur-xl view-enter ${
+            modal ? "w-[min(100vw-1.5rem,640px)] max-h-[90vh] overflow-y-auto" : "w-[min(100vw-2rem,420px)] overflow-hidden"
+          }`}
           role="dialog"
           aria-labelledby="ai-guide-title"
+          aria-modal={modal}
         >
           <div className="flex items-start justify-between gap-3 px-4 pt-4 pb-3 border-b border-slate-800">
             <div>
-              <p className="text-[10px] uppercase tracking-wider text-emerald-400 font-semibold">
-                1 min demo
+              <p className="text-[10px] uppercase tracking-wider text-violet-300 font-semibold">
+                🎓 Video Guía / Tutorial
               </p>
               <h3 id="ai-guide-title" className="text-sm font-semibold text-white mt-0.5">
                 {labels.title}
@@ -250,45 +264,27 @@ export const AiAvatarGuide = forwardRef<AiAvatarGuideHandle, AiAvatarGuideProps>
           </div>
 
           <div className="px-4 pt-4">
-            <div className="relative overflow-hidden rounded-2xl border border-slate-800 bg-gradient-to-b from-slate-900 to-slate-950 aspect-video">
-              <AvatarStage speaking={playing} />
-              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950/90 to-transparent p-3">
-                <p className="text-[11px] text-slate-200 leading-relaxed">
-                  {activeChapter.caption[lang]}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={togglePlay}
-                className="absolute inset-0 m-auto h-12 w-12 rounded-full bg-emerald-500 text-slate-950 flex items-center justify-center shadow-lg shadow-emerald-500/30 hover:bg-emerald-400"
-                aria-label={playing ? labels.pause : labels.play}
+            <div className="relative w-full overflow-hidden rounded-2xl border border-violet-400/25 bg-slate-950 aspect-video shadow-[0_0_40px_rgb(139_92_246_/_0.16)]">
+              <video
+                ref={videoRef}
+                src="/onboarding.mp4?v=1"
+                autoPlay={false}
+                controls
+                playsInline
+                preload="auto"
+                className="w-full h-full rounded-xl object-contain bg-black"
+                onTimeUpdate={(event) => {
+                  const seconds = event.currentTarget.currentTime;
+                  timeRef.current = seconds;
+                  setTime(seconds);
+                }}
               >
-                {playing ? <Pause className="h-5 w-5 fill-current" /> : <Play className="h-5 w-5 fill-current ml-0.5" />}
-              </button>
+                <source src="/onboarding.mp4?v=1" type="video/mp4" />
+              </video>
             </div>
-
-            <div className="mt-3 flex items-center gap-2">
-              <span className="text-[10px] font-mono text-slate-500 w-9">{formatTime(time)}</span>
-              <input
-                type="range"
-                min={0}
-                max={DURATION}
-                step={0.25}
-                value={time}
-                onChange={(event) => seekTo(Number(event.target.value))}
-                className="flex-1 accent-emerald-400"
-                aria-label="Demo timeline"
-              />
-              <span className="text-[10px] font-mono text-slate-500 w-9 text-right">
-                {formatTime(DURATION)}
-              </span>
-            </div>
-            <div className="h-1 rounded-full bg-slate-800 mt-1 overflow-hidden">
-              <div
-                className="h-full bg-emerald-400/80"
-                style={{ width: `${progress}%` }}
-              />
-            </div>
+            <p className="mt-3 text-[11px] text-slate-400 leading-relaxed">
+              {activeChapter.caption[lang]}
+            </p>
           </div>
 
           <div className="px-4 py-3 space-y-1.5">
@@ -333,6 +329,7 @@ export const AiAvatarGuide = forwardRef<AiAvatarGuideHandle, AiAvatarGuideProps>
               type="button"
               onClick={() => {
                 setExpanded(false);
+                setModal(false);
                 setPlaying(false);
                 onTestVoiceCall();
               }}
@@ -340,6 +337,17 @@ export const AiAvatarGuide = forwardRef<AiAvatarGuideHandle, AiAvatarGuideProps>
             >
               <Headphones className="h-3.5 w-3.5" />
               {labels.testCall}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                persistHide();
+                onStartSetup();
+              }}
+              className="col-span-2 inline-flex items-center justify-center gap-1.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2.5 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-500/20"
+            >
+              <Link2 className="h-3.5 w-3.5" />
+              {labels.guestLink}
             </button>
           </div>
 
@@ -353,7 +361,25 @@ export const AiAvatarGuide = forwardRef<AiAvatarGuideHandle, AiAvatarGuideProps>
             {labels.dontShow}
           </label>
         </div>
-      ) : null}
+  );
+
+  if (modal && expanded) {
+    return (
+      <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+        <button
+          type="button"
+          className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
+          aria-label={labels.close}
+          onClick={persistHide}
+        />
+        <div className="relative z-10">{panel}</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed bottom-5 right-5 z-50 flex flex-col items-end gap-3 pointer-events-none">
+      {expanded ? panel : null}
 
       <div className="pointer-events-auto group relative">
         <div className="absolute bottom-full right-0 mb-3 hidden group-hover:block w-56">
@@ -363,7 +389,10 @@ export const AiAvatarGuide = forwardRef<AiAvatarGuideHandle, AiAvatarGuideProps>
         </div>
         <button
           type="button"
-          onClick={() => setExpanded((value) => !value)}
+          onClick={() => {
+            setModal(false);
+            setExpanded((value) => !value);
+          }}
           className="relative flex h-16 w-16 items-center justify-center rounded-full border border-emerald-500/40 bg-slate-950 shadow-lg shadow-emerald-500/20 avatar-breathe"
           aria-label={expanded ? labels.close : labels.open}
           aria-expanded={expanded}
@@ -402,30 +431,6 @@ function MiniAvatar({ speaking }: { speaking: boolean }) {
           ))}
         </div>
       ) : null}
-    </div>
-  );
-}
-
-function AvatarStage({ speaking }: { speaking: boolean }) {
-  return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center">
-      <div
-        className={`h-24 w-24 rounded-full bg-gradient-to-br from-emerald-400/40 via-slate-800 to-sky-500/30 border border-emerald-400/30 flex items-center justify-center ${speaking ? "avatar-breathe" : ""}`}
-      >
-        <div className="h-16 w-16 rounded-full bg-slate-900/80 flex items-center justify-center text-emerald-300">
-          <Sparkles className="h-7 w-7" />
-        </div>
-      </div>
-      <p className="mt-3 text-[11px] font-medium text-slate-300">Elena · Miami Hostess</p>
-      <div className="mt-2 flex items-end gap-1 h-6">
-        {Array.from({ length: 7 }, (_, index) => (
-          <span
-            key={index}
-            className={`w-1 rounded-full bg-emerald-400/80 ${speaking ? "voice-bar" : "h-2 opacity-40"}`}
-            style={{ animationDelay: `${index * 0.08}s`, height: speaking ? undefined : 8 }}
-          />
-        ))}
-      </div>
     </div>
   );
 }

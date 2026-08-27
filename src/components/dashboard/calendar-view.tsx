@@ -21,11 +21,11 @@ import {
 import {
   calendarToday,
   icalFeeds as seedFeeds,
-  properties,
-  reservations,
   type IcalFeed,
+  type Property,
   type Reservation,
 } from "@/lib/dashboard-data";
+import { useListings } from "@/components/dashboard/listings-provider";
 
 type ViewMode = "month" | "week";
 
@@ -110,11 +110,20 @@ function looksLikeIcal(url: string) {
   );
 }
 
-function propertyName(id: string) {
-  return properties.find((property) => property.id === id)?.name ?? id;
+function colorFor(propertyId: string) {
+  return (
+    PROPERTY_COLORS[propertyId] ??
+    PROPERTY_COLORS[`prop-${(propertyId.length % 4) + 1}`] ??
+    PROPERTY_COLORS["prop-1"]!
+  );
+}
+
+function propertyName(id: string, listings: Property[]) {
+  return listings.find((property) => property.id === id)?.name ?? id;
 }
 
 export function CalendarView({ onWatchSyncGuide }: { onWatchSyncGuide?: () => void }) {
+  const { properties, reservations, saveReservation, loading, error } = useListings();
   const today = parseDay(calendarToday);
   const [mode, setMode] = useState<ViewMode>("month");
   const [cursor, setCursor] = useState(() => new Date(today));
@@ -127,7 +136,7 @@ export function CalendarView({ onWatchSyncGuide }: { onWatchSyncGuide?: () => vo
   const visibleReservations = useMemo(() => {
     if (propertyFilter === "all") return reservations;
     return reservations.filter((item) => item.propertyId === propertyFilter);
-  }, [propertyFilter]);
+  }, [propertyFilter, reservations]);
 
   const days = useMemo(() => {
     if (mode === "week") {
@@ -194,6 +203,12 @@ export function CalendarView({ onWatchSyncGuide }: { onWatchSyncGuide?: () => vo
 
   return (
     <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-6">
+      <p className="xl:col-span-2 text-[11px] text-slate-500 -mb-2">
+        {loading
+          ? "Loading reservations from Supabase…"
+          : "Reservations live from Supabase"}
+        {error ? ` · ${error}` : ""}
+      </p>
       <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
@@ -252,7 +267,7 @@ export function CalendarView({ onWatchSyncGuide }: { onWatchSyncGuide?: () => vo
               active={propertyFilter === property.id}
               onClick={() => setPropertyFilter(property.id)}
               label={property.name}
-              dot={PROPERTY_COLORS[property.id]?.dot}
+              dot={colorFor(property.id).dot}
             />
           ))}
         </div>
@@ -305,7 +320,7 @@ export function CalendarView({ onWatchSyncGuide }: { onWatchSyncGuide?: () => vo
                   </div>
                   <div className="space-y-1">
                     {dayReservations.map((item) => {
-                      const colors = PROPERTY_COLORS[item.propertyId];
+                      const colors = colorFor(item.propertyId);
                       const isCheckIn = item.checkIn === iso;
                       const isCheckOutEve = item.checkOut === toIso(addDays(day, 1));
                       return (
@@ -345,13 +360,13 @@ export function CalendarView({ onWatchSyncGuide }: { onWatchSyncGuide?: () => vo
             icon={<LogIn className="h-3.5 w-3.5 text-sky-400" />}
             title="Check-ins today"
             empty="No arrivals"
-            items={checkInsToday.map((item) => `${item.guest} · ${propertyName(item.propertyId)} · ${item.checkInTime}`)}
+            items={checkInsToday.map((item) => `${item.guest} · ${propertyName(item.propertyId, properties)} · ${item.checkInTime}`)}
           />
           <OpGroup
             icon={<LogOut className="h-3.5 w-3.5 text-amber-400" />}
             title="Check-outs"
             empty="No departures today"
-            items={checkOutsToday.map((item) => `${item.guest} · ${propertyName(item.propertyId)} · ${item.checkOutTime}`)}
+            items={checkOutsToday.map((item) => `${item.guest} · ${propertyName(item.propertyId, properties)} · ${item.checkOutTime}`)}
           />
           <OpGroup
             icon={<SprayCan className="h-3.5 w-3.5 text-violet-400" />}
@@ -397,7 +412,7 @@ export function CalendarView({ onWatchSyncGuide }: { onWatchSyncGuide?: () => vo
             return (
               <div key={feed.id} className="rounded-xl border border-slate-200 bg-white p-3 space-y-2">
                 <div className="flex items-start justify-between gap-2">
-                  <p className="text-xs font-medium text-slate-800">{propertyName(feed.propertyId)}</p>
+                  <p className="text-xs font-medium text-slate-800">{propertyName(feed.propertyId, properties)}</p>
                   {status === "live" ? (
                     <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700">
                       <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
@@ -463,7 +478,18 @@ export function CalendarView({ onWatchSyncGuide }: { onWatchSyncGuide?: () => vo
         </section>
       </aside>
 
-      {selected ? <ReservationDrawer reservation={selected} onClose={() => setSelected(null)} /> : null}
+      {selected ? (
+        <ReservationDrawer
+          key={selected.id}
+          reservation={selected}
+          listings={properties}
+          onSave={(item) => {
+            void saveReservation(item);
+            setSelected(item);
+          }}
+          onClose={() => setSelected(null)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -545,12 +571,17 @@ function OpGroup({
 
 function ReservationDrawer({
   reservation,
+  listings,
+  onSave,
   onClose,
 }: {
   reservation: Reservation;
+  listings: Property[];
+  onSave: (reservation: Reservation) => void;
   onClose: () => void;
 }) {
-  const property = properties.find((item) => item.id === reservation.propertyId);
+  const property = listings.find((item) => item.id === reservation.propertyId);
+  const [notes, setNotes] = useState(reservation.aiNotes);
 
   return (
     <div
@@ -609,7 +640,19 @@ function ReservationDrawer({
             <Sparkles className="h-3.5 w-3.5 text-emerald-400" />
             AI Concierge notes
           </div>
-          <p className="text-xs text-slate-400 leading-relaxed">{reservation.aiNotes}</p>
+          <textarea
+            value={notes}
+            onChange={(event) => setNotes(event.target.value)}
+            rows={5}
+            className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-300 focus:border-emerald-500 focus:outline-none"
+          />
+          <button
+            type="button"
+            onClick={() => onSave({ ...reservation, aiNotes: notes.trim() })}
+            className="mt-3 w-full rounded-lg border border-emerald-500/30 bg-emerald-500/15 px-3 py-2 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/25"
+          >
+            Save notes to Supabase
+          </button>
         </div>
       </aside>
     </div>

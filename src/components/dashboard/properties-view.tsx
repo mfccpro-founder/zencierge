@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Building2,
   Car,
@@ -12,16 +12,19 @@ import {
   Plus,
   Wifi,
   BookOpen,
+  ExternalLink,
   X,
   User,
 } from "lucide-react";
 import {
-  properties as seedProperties,
   propertyCities,
   type Property,
   type PropertyCity,
   type OccupancyStatus,
 } from "@/lib/dashboard-data";
+import { useListings } from "@/components/dashboard/listings-provider";
+import { createClient } from "@supabase/supabase-js";
+import { SUPABASE_ANON_KEY, SUPABASE_URL } from "@/lib/supabase-config";
 
 type CityFilter = "all" | PropertyCity;
 type OccupancyFilter = "all" | OccupancyStatus;
@@ -102,13 +105,15 @@ function CopyField({
 }
 
 export function PropertiesView() {
-  const [listings, setListings] = useState<Property[]>(seedProperties);
+  const { properties: listings, saveProperty, applyHandbook, loading, error } = useListings();
   const [cityFilter, setCityFilter] = useState<CityFilter>("all");
   const [occupancyFilter, setOccupancyFilter] = useState<OccupancyFilter>("all");
   const [modal, setModal] = useState<ModalMode>({ kind: "closed" });
   const [handbookDraft, setHandbookDraft] = useState("");
   const [createDraft, setCreateDraft] = useState(emptyDraft);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [savingHandbook, setSavingHandbook] = useState(false);
+  const [saveToast, setSaveToast] = useState<string | null>(null);
 
   const filtered = useMemo(() => {
     return listings.filter((property) => {
@@ -131,16 +136,41 @@ export function PropertiesView() {
 
   const closeModal = () => setModal({ kind: "closed" });
 
-  const saveHandbook = () => {
+  useEffect(() => {
+    if (!saveToast) return;
+    const timer = window.setTimeout(() => setSaveToast(null), 2800);
+    return () => window.clearTimeout(timer);
+  }, [saveToast]);
+
+  const handleSaveHandbook = async () => {
     if (modal.kind !== "handbook") return;
-    setListings((current) =>
-      current.map((property) =>
-        property.id === modal.propertyId
-          ? { ...property, handbook: handbookDraft.trim() }
-          : property,
-      ),
-    );
-    closeModal();
+    const selectedPropertyId = modal.propertyId;
+    const currentHandbookText = handbookDraft.trim();
+    setSavingHandbook(true);
+    try {
+      const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+      });
+      const { error: updateError } = await supabase
+        .from("properties")
+        .update({ ai_handbook: currentHandbookText })
+        .eq("id", selectedPropertyId);
+
+      if (updateError) {
+        console.error(updateError);
+        window.alert(updateError.message);
+        return;
+      }
+
+      applyHandbook(selectedPropertyId, currentHandbookText);
+      closeModal();
+      setSaveToast("Handbook saved");
+    } catch (cause) {
+      console.error(cause);
+      window.alert(cause instanceof Error ? cause.message : "Could not save handbook");
+    } finally {
+      setSavingHandbook(false);
+    }
   };
 
   const saveNewProperty = () => {
@@ -165,8 +195,14 @@ export function PropertiesView() {
       id: `prop-${crypto.randomUUID()}`,
     };
 
-    setListings((current) => [...current, next]);
-    closeModal();
+    void (async () => {
+      try {
+        await saveProperty(next);
+        closeModal();
+      } catch (cause) {
+        window.alert(cause instanceof Error ? cause.message : "Could not add property");
+      }
+    })();
   };
 
   const handleCopy = async (id: string, value: string) => {
@@ -189,6 +225,20 @@ export function PropertiesView() {
 
   return (
     <div className="space-y-6">
+      {saveToast ? (
+        <div
+          role="status"
+          className="rounded-xl border border-emerald-500/30 bg-emerald-500/15 px-3 py-2 text-xs font-medium text-emerald-300"
+        >
+          {saveToast}
+        </div>
+      ) : null}
+      <p className="text-[11px] text-slate-500">
+        {loading
+          ? "Loading properties from Supabase…"
+          : "Live from Supabase · Save handbook writes ai_handbook"}
+        {error ? ` · ${error}` : ""}
+      </p>
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="space-y-3">
           <div>
@@ -366,6 +416,15 @@ export function PropertiesView() {
                 >
                   {property.handbook ? "Edit AI Handbook" : "Add AI Handbook"}
                 </button>
+                <a
+                  href={`/guest/${property.id}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-2 w-full inline-flex items-center justify-center gap-1.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 py-2 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/20"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  Ver Portal del Huésped
+                </a>
               </div>
             </article>
           ))}
@@ -430,10 +489,11 @@ export function PropertiesView() {
                   </button>
                   <button
                     type="button"
-                    onClick={saveHandbook}
-                    className="rounded-xl bg-emerald-500 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-emerald-400"
+                    onClick={handleSaveHandbook}
+                    disabled={savingHandbook}
+                    className="rounded-xl bg-emerald-500 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-emerald-400 disabled:opacity-50"
                   >
-                    Save handbook
+                    {savingHandbook ? "Saving…" : "Save handbook"}
                   </button>
                 </div>
               </div>
