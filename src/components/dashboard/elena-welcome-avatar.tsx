@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Mic, VolumeX } from "lucide-react";
+import { Mic, Send, VolumeX } from "lucide-react";
 import type { Property } from "@/lib/dashboard-data";
 import { askAvatarReply } from "@/lib/ask-avatar";
 import { HOST_EMERGENCY_NUMBER } from "@/lib/receptionist-replies";
@@ -14,22 +14,20 @@ type SpeechRec = {
   interimResults: boolean;
   continuous: boolean;
   onresult: ((event: { resultIndex: number; results: SpeechResultList }) => void) | null;
-  onerror: (() => void) | null;
+  onerror: ((event?: { error?: string }) => void) | null;
   onend: (() => void) | null;
   start: () => void;
   stop: () => void;
 };
 
-const PLAYBACK_START_MS = 7000;
-
-function getSpeechRecognitionCtor(): (new () => SpeechRec) | null {
-  if (typeof window === "undefined") return null;
-  const extra = window as unknown as {
+declare global {
+  interface Window {
     SpeechRecognition?: new () => SpeechRec;
     webkitSpeechRecognition?: new () => SpeechRec;
-  };
-  return extra.SpeechRecognition ?? extra.webkitSpeechRecognition ?? null;
+  }
 }
+
+const PLAYBACK_START_MS = 7000;
 
 export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
   const property = properties[0];
@@ -44,10 +42,11 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
   const currentAudioUrlRef = useRef<string | null>(null);
 
-  const [listening, setListening] = useState(false);
+  const [isListening, setIsListening] = useState(false);
   const [thinking, setThinking] = useState(false);
   const [responding, setResponding] = useState(false);
   const [ttsSpeaking, setTtsSpeaking] = useState(false);
+  const [draft, setDraft] = useState("");
   const [guestBubble, setGuestBubble] = useState("");
   const [aiBubble, setAiBubble] = useState("");
   const [status, setStatus] = useState("Elena responde en español desde Zencierge, no desde la base de HeyGen.");
@@ -55,7 +54,7 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
   const speaking = heygen.speaking || ttsSpeaking;
   const phase: ReceptionistPhase = thinking || responding
     ? "thinking"
-    : listening
+    : isListening
       ? "listening"
       : speaking
         ? "speaking"
@@ -129,17 +128,29 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
   const stopListening = () => {
     recRef.current?.stop();
     recRef.current = null;
-    setListening(false);
+    setIsListening(false);
   };
 
   const startListening = () => {
-    stopListening();
-    const Ctor = getSpeechRecognitionCtor();
-    if (!Ctor) {
-      setStatus("Usa Chrome y permite el micrófono para hablar con Elena.");
+    console.log("Botón presionado: iniciando escucha...");
+    wantMicRef.current = true;
+    setIsListening(true);
+
+    const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    if (!SpeechRecognitionCtor) {
+      console.error("SpeechRecognition no soportado en este navegador");
+      setStatus("Este navegador no admite el micrófono. Escribe tu pregunta abajo y pulsa Enviar.");
       return;
     }
-    const recognition = new Ctor();
+
+    try {
+      recRef.current?.stop();
+    } catch {
+      /* already stopped */
+    }
+
+    const recognition = new SpeechRecognitionCtor();
     recRef.current = recognition;
     recognition.lang = "es-US";
     recognition.interimResults = true;
@@ -156,15 +167,41 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
         void handleUtterance(finalText);
       }
     };
-    recognition.onerror = () => setListening(false);
-    recognition.onend = () => setListening(false);
-    setListening(true);
+    recognition.onerror = (event?: { error?: string }) => {
+      console.error("SpeechRecognition error", event?.error ?? event);
+      setIsListening(false);
+    };
+    recognition.onend = () => setIsListening(false);
     try {
       recognition.start();
     } catch (cause) {
       console.error("[avatar] SpeechRecognition start failed", cause);
-      setListening(false);
+      setIsListening(false);
     }
+  };
+
+  const toggleListening = () => {
+    console.log("Botón presionado: iniciando escucha...");
+    if (thinking || responding || ttsSpeaking) {
+      cancelTurn();
+      return;
+    }
+    if (isListening) {
+      wantMicRef.current = false;
+      stopListening();
+      return;
+    }
+    startListening();
+  };
+
+  const submitTypedQuestion = () => {
+    const text = draft.trim();
+    if (!text) return;
+    console.log("Pregunta escrita enviada:", text);
+    setDraft("");
+    wantMicRef.current = false;
+    stopListening();
+    void handleUtterance(text);
   };
 
   const speakBackendSpanish = async (respuestaTexto: string) => {
@@ -255,21 +292,6 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
     setStatus("Turno cancelado. Puedes hablar ahora.");
   };
 
-  const onTalk = async () => {
-    if (thinking || responding || ttsSpeaking) {
-      cancelTurn();
-      return;
-    }
-    if (listening) {
-      stopListening();
-      wantMicRef.current = false;
-      return;
-    }
-    wantMicRef.current = true;
-    setStatus("Cada respuesta llama a /api/tts (voz nova) y luego se reproduce el MP3.");
-    startListening();
-  };
-
   if (!property) return null;
 
   return (
@@ -302,9 +324,9 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
           </div>
           <button
             type="button"
-            onClick={() => void onTalk()}
-            className={`mt-4 w-full flex items-center justify-center gap-2 rounded-2xl py-3 text-sm font-bold ${
-              listening
+            onClick={toggleListening}
+            className={`relative z-10 mt-4 w-full flex items-center justify-center gap-2 rounded-2xl py-3 text-sm font-bold pointer-events-auto ${
+              isListening
                 ? "bg-sky-500 text-slate-950"
                 : thinking || responding || ttsSpeaking
                   ? "bg-amber-400 text-slate-950"
@@ -312,12 +334,34 @@ export function ElenaWelcomeAvatar({ properties }: { properties: Property[] }) {
             }`}
           >
             <Mic className="h-4 w-4" />
-            {listening
+            {isListening
               ? "Escuchando..."
               : thinking || responding || ttsSpeaking
                 ? "Elena está respondiendo... (toca para cancelar)"
-                : "Hablar"}
+                : "Hablar con Elena"}
           </button>
+          <form
+            className="mt-2 w-full flex items-center gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              submitTypedQuestion();
+            }}
+          >
+            <input
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              placeholder="Escribe tu pregunta…"
+              className="flex-1 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600 focus:border-emerald-500 focus:outline-none"
+            />
+            <button
+              type="submit"
+              disabled={!draft.trim()}
+              className="shrink-0 rounded-xl bg-emerald-500 p-2 text-slate-950 disabled:opacity-40"
+              aria-label="Enviar pregunta"
+            >
+              <Send className="h-4 w-4" />
+            </button>
+          </form>
           <button
             type="button"
             onClick={() => {
