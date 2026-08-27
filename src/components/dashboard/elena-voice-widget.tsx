@@ -74,7 +74,14 @@ function pickVoice(
   const nonMale = pool.filter((v) => !isMaleVoice(v));
   const candidates = nonMale.length ? nonMale : pool;
   const female = candidates.filter((v) => isFemaleVoice(v, lang));
-  const ranked = female.length ? female : candidates.filter(isNaturalVoice);
+  const namedFallback = candidates.filter((v) => /zira|sabina|google espa/i.test(v.name));
+  const ranked = female.length
+    ? female
+    : namedFallback.length
+      ? namedFallback.filter(isNaturalVoice).length
+        ? namedFallback.filter(isNaturalVoice)
+        : namedFallback
+      : candidates.filter(isNaturalVoice);
   const finalPool = ranked.length ? ranked : candidates;
 
   if (lang === "es") {
@@ -128,8 +135,10 @@ export default function ElenaVoiceWidget() {
     const voice = pickVoice(lang, voices);
     if (voice) utterance.voice = voice;
     utterance.lang = voice?.lang ?? (lang === "es" ? "es-ES" : "en-US");
-    utterance.pitch = 1.0;
-    utterance.rate = 0.95;
+    // Higher pitch keeps Elena sounding female even on Windows systems
+    // that only expose a deep default voice.
+    utterance.pitch = 1.2;
+    utterance.rate = 1.0;
     langRef.current = lang;
     setMuted(false);
     setStatus("Speaking...");

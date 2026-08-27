@@ -55,6 +55,9 @@ function isMaleVoiceName(name: string) {
   return MALE_VOICE_HINTS.some((hint) => lower.includes(hint));
 }
 
+/** Named high-quality female voices used as a fallback tier. */
+const FEMALE_NAMED_FALLBACK = /zira|sabina|google espa/i;
+
 const inputClass =
   "w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-200 focus:border-emerald-500 focus:outline-none";
 
@@ -288,11 +291,17 @@ export function VoiceConciergeView() {
     const voice =
       pool.find((item) => isFemaleVoiceName(item.name, lang) && !isMaleVoiceName(item.name)) ??
       pool.find(
-        (item) => !isMaleVoiceName(item.name) && /natural|google/i.test(item.name),
+        (item) =>
+          !isMaleVoiceName(item.name) &&
+          (FEMALE_NAMED_FALLBACK.test(item.name) || /natural|google/i.test(item.name)),
       ) ??
       pool.find((item) => !isMaleVoiceName(item.name)) ??
       pool[0];
     if (voice) utterance.voice = voice;
+    // Higher pitch keeps Elena sounding female even on Windows systems that
+    // only expose a deep default voice.
+    utterance.pitch = 1.2;
+    utterance.rate = 1.0;
     utterance.rate = 0.95;
     utterance.pitch = 1;
     utterance.onstart = () => {

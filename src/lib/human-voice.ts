@@ -269,6 +269,8 @@ async function speakStudioAudio(options: {
       ...(options.apiKey ? { apiKey: options.apiKey } : {}),
       text: options.text,
       voiceProfile: options.profile.id,
+      // Explicit female OpenAI voice (nova) — never a male studio voice.
+      voice: options.profile.openaiVoice,
       speed: options.speed,
       stability: options.stability,
     }),
