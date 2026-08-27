@@ -14,11 +14,23 @@ export async function askAvatarReply(options: {
   history?: AvatarChatTurn[];
   signal?: AbortSignal;
 }) {
+  // Hard 10s timeout on the LLM round-trip. On timeout we fall back to the
+  // local rules-based concierge so the call UI never freezes.
+  const TIMEOUT_MS = 10000;
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = window.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, TIMEOUT_MS);
+  const onExternalAbort = () => controller.abort();
+  options.signal?.addEventListener("abort", onExternalAbort);
+
   try {
     const response = await fetch("/api/avatar", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      signal: options.signal,
+      signal: controller.signal,
       body: JSON.stringify({
         question: options.question,
         language: options.language,
@@ -35,7 +47,14 @@ export async function askAvatarReply(options: {
     }
   } catch (cause) {
     if (options.signal?.aborted) throw cause;
-    console.error("[avatar] client request failed, using local reply", cause);
+    if (timedOut) {
+      console.error("[avatar] LLM timed out after 10s, using local rules reply");
+    } else {
+      console.error("[avatar] client request failed, using local reply", cause);
+    }
+  } finally {
+    window.clearTimeout(timer);
+    options.signal?.removeEventListener("abort", onExternalAbort);
   }
 
   if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");

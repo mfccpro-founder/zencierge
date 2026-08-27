@@ -14,7 +14,7 @@ import {
   getVoiceProfile,
   keepAudioChannelAlive,
   resumePersistentAudio,
-  speakHumanVoice,
+  speakWithBrowserTts,
   stopHumanVoice,
   unlockSpeechAudio,
   type LanguageMode,
@@ -37,26 +37,56 @@ const FLORIDA_LINES: Record<FloridaLine, { number: string; area: string }> = {
   "954": { number: "+1 (954) 555-0144", area: "Broward · 954" },
 };
 
-/** Strict female-voice keywords per language for Web Speech API voice picking. */
-const FEMALE_VOICE_HINTS: Record<ReplyLang, string[]> = {
-  es: ["sabina", "helena", "monica", "paulina", "laura", "sofia", "elena", "maria", "female", "mujer"],
-  en: ["zira", "samantha", "victoria", "karen", "jenny", "aria", "female"],
+const AUTO_GREETING =
+  "Hello! Welcome to Zencierge. ¡Hola! Bienvenido a Zencierge. How can I help you today? ¿En qué puedo ayudarte?";
+
+type SpeechResultList = ArrayLike<{ isFinal: boolean } & ArrayLike<{ transcript: string }>>;
+
+type SpeechRec = {
+  lang: string;
+  interimResults: boolean;
+  continuous: boolean;
+  onresult: ((event: { resultIndex: number; results: SpeechResultList }) => void) | null;
+  onerror: ((event: { error?: string }) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
 };
-/** Male voice names are always excluded so Elena never sounds masculine. */
-const MALE_VOICE_HINTS = ["david", "raul", "pablo", "jorge", "male", "guy", "hombre"];
 
-function isFemaleVoiceName(name: string, lang: ReplyLang) {
-  const lower = name.toLowerCase();
-  return FEMALE_VOICE_HINTS[lang].some((hint) => lower.includes(hint));
+function getSpeechRecognitionCtor(): (new () => SpeechRec) | null {
+  if (typeof window === "undefined") return null;
+  const extra = window as unknown as {
+    SpeechRecognition?: new () => SpeechRec;
+    webkitSpeechRecognition?: new () => SpeechRec;
+  };
+  return extra.SpeechRecognition ?? extra.webkitSpeechRecognition ?? null;
 }
 
-function isMaleVoiceName(name: string) {
-  const lower = name.toLowerCase();
-  return MALE_VOICE_HINTS.some((hint) => lower.includes(hint));
+function recognitionLangFor(mode: LanguageMode, session: LanguageMode): string {
+  const active = mode === "auto" ? session : mode;
+  return active === "en" ? "en-US" : "es-US";
 }
 
-/** Named high-quality female voices used as a fallback tier. */
-const FEMALE_NAMED_FALLBACK = /zira|sabina|google espa/i;
+const LANGUAGE_MIRROR_INSTRUCTION =
+  "Answer strictly in the language used by the guest in their last message (if they speak English, reply in English; if Spanish, reply in Spanish).";
+
+function detectGuestLang(text: string): ReplyLang {
+  const t = text.trim().toLowerCase();
+  const enHits =
+    t.match(
+      /\b(i|i'm|im|i'd|you|we|the|a|an|is|are|was|need|want|where|what|what's|how|hello|hi|hey|please|thanks|thank|restaurant|near|nearby|close|recommend|wifi|password|door|code|help|can|could|would|my|me|looking|food|eat|hungry|dinner|lunch|breakfast|pharmacy|store|beach|check-in|checkout|towels|pool|parking|tonight|good)\b/gi,
+    )?.length ?? 0;
+  const esHits =
+    t.match(
+      /\b(el|la|los|las|un|una|unos|unas|y|o|de|del|qué|que|dónde|donde|cómo|como|está|están|hola|gracias|necesito|quiero|cerca|restaurante|comida|cenar|almorzar|desayuno|ayuda|puedo|favor|baño|clave|hay|para|con|por|playa|buenas|buenas|días|noches|tarde)\b/gi,
+    )?.length ?? 0;
+  const hasSpanishMarks = /[áéíóúüñ¿¡]/i.test(text);
+  // Spanish is the base language: English must win with clear keyword evidence.
+  if (enHits > 0 && enHits > esHits && !hasSpanishMarks) return "en";
+  if (esHits > 0 || hasSpanishMarks) return "es";
+  if (enHits > 0) return "en";
+  return "es";
+}
 
 const inputClass =
   "w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-200 focus:border-emerald-500 focus:outline-none";
@@ -105,11 +135,17 @@ export function VoiceConciergeView() {
   const heygen = useHeygenRepeatAvatar();
   const abortRef = useRef<AbortController | null>(null);
   const safetyRef = useRef(0);
+  const audioWatchdogRef = useRef(0);
   const playbackStartedRef = useRef(false);
   const heygenSpeakingRef = useRef(false);
-  // Preloaded voice list: Chrome populates getVoices() asynchronously, so cache
-  // it on mount (with voiceschanged + retries) to never speak with a fallback voice.
-  const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
+  const recRef = useRef<SpeechRec | null>(null);
+  const wantMicRef = useRef(false);
+  const startListeningRef = useRef<() => void>(() => {});
+  const languageRef = useRef<LanguageMode>(language);
+  const sessionLangRef = useRef<LanguageMode>(language);
+  const speakingRef = useRef(false);
+  const respondingRef = useRef(false);
+  const thinkingRef = useRef(false);
 
   const nextId = () => {
     idRef.current += 1;
@@ -119,6 +155,45 @@ export function VoiceConciergeView() {
   useEffect(() => {
     callActiveRef.current = callActive;
   }, [callActive]);
+
+  useEffect(() => {
+    languageRef.current = language;
+    if (language !== "auto") sessionLangRef.current = language;
+  }, [language]);
+
+  useEffect(() => {
+    speakingRef.current = speaking || heygen.speaking;
+  }, [speaking, heygen.speaking]);
+
+  useEffect(() => {
+    respondingRef.current = responding;
+  }, [responding]);
+
+  useEffect(() => {
+    thinkingRef.current = thinking;
+  }, [thinking]);
+
+  // Global safety net: if anything hangs (network, audio element without
+  // onended, TTS failure), always release isResponding/isSpeaking and hand
+  // the mic back so the call button never stays stuck.
+  useEffect(() => {
+    if (!responding) return;
+    const timer = window.setTimeout(() => {
+      console.error("[voice] global safety timer — releasing stuck response state");
+      speakingRef.current = false;
+      respondingRef.current = false;
+      thinkingRef.current = false;
+      setSpeaking(false);
+      setResponding(false);
+      setThinking(false);
+      setPartialAi("");
+      setTapToListen(false);
+      if (wantMicRef.current && callActiveRef.current) {
+        startListeningRef.current();
+      }
+    }, 25000);
+    return () => window.clearTimeout(timer);
+  }, [responding]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -132,23 +207,14 @@ export function VoiceConciergeView() {
   }, []);
 
   useEffect(() => {
-    const synth = window.speechSynthesis;
-    if (!synth) return;
-    const loadVoices = () => {
-      voicesRef.current = synth.getVoices();
-    };
-    loadVoices();
-    synth.addEventListener("voiceschanged", loadVoices);
-    // Chrome sometimes fires getVoices() empty; nudge a couple of times.
-    const retries = [300, 800, 1500].map((delay) => window.setTimeout(loadVoices, delay));
     return () => {
-      synth.removeEventListener("voiceschanged", loadVoices);
-      retries.forEach((id) => window.clearTimeout(id));
-    };
-  }, []);
-
-  useEffect(() => {
-    return () => {
+      wantMicRef.current = false;
+      try {
+        recRef.current?.stop();
+      } catch {
+        /* already stopped */
+      }
+      recRef.current = null;
       stopHumanVoice(audioRef);
     };
   }, []);
@@ -200,6 +266,12 @@ export function VoiceConciergeView() {
   };
 
   const stopListening = () => {
+    try {
+      recRef.current?.stop();
+    } catch {
+      /* already stopped */
+    }
+    recRef.current = null;
     setListening(false);
   };
 
@@ -208,22 +280,23 @@ export function VoiceConciergeView() {
       window.clearTimeout(safetyRef.current);
       safetyRef.current = 0;
     }
+    if (audioWatchdogRef.current) {
+      window.clearTimeout(audioWatchdogRef.current);
+      audioWatchdogRef.current = 0;
+    }
   };
 
-  const armSafety = () => {
-    clearSafety();
-    playbackStartedRef.current = false;
-    safetyRef.current = window.setTimeout(() => {
-      if (playbackStartedRef.current) return;
-      console.error("[voice] 7s safety: playback never started — reset idle");
-      cancelSpeech();
-    }, 7000);
-  };
-
-  const markPlaybackStarted = () => {
-    playbackStartedRef.current = true;
-    clearSafety();
+  const releaseAndListen = () => {
+    speakingRef.current = false;
+    respondingRef.current = false;
+    thinkingRef.current = false;
+    setSpeaking(false);
     setResponding(false);
+    setThinking(false);
+    setTapToListen(false);
+    if (wantMicRef.current && callActiveRef.current) {
+      startListeningRef.current();
+    }
   };
 
   const cancelSpeech = () => {
@@ -232,6 +305,9 @@ export function VoiceConciergeView() {
     abortRef.current = null;
     clearSafety();
     playbackStartedRef.current = false;
+    speakingRef.current = false;
+    respondingRef.current = false;
+    thinkingRef.current = false;
     stopHumanVoice(audioRef);
     void heygen.interrupt();
     setSpeaking(false);
@@ -240,9 +316,13 @@ export function VoiceConciergeView() {
     setTapToListen(false);
     setResponding(false);
     setThinking(false);
+    if (wantMicRef.current && callActiveRef.current) {
+      window.setTimeout(() => startListeningRef.current(), 200);
+    }
   };
 
   const endCall = () => {
+    wantMicRef.current = false;
     stopListening();
     cancelSpeech();
     void heygen.stop();
@@ -282,6 +362,7 @@ export function VoiceConciergeView() {
     audio.onended = () => {
       keepAudioChannelAlive(audio);
       setSpeaking(false);
+      if (wantMicRef.current && callActiveRef.current) startListeningRef.current();
     };
     try {
       await resumePersistentAudio(audio);
@@ -291,139 +372,157 @@ export function VoiceConciergeView() {
     }
   };
 
-  const speakWithBrowserTts = (text: string, mode: LanguageMode) => {
-    // Guaranteed-vocalization fallback: if Studio/HeyGen TTS is unavailable,
-    // Elena still speaks the /api/avatar reply with the browser's own voice.
-    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
-    const synth = window.speechSynthesis;
-    synth.cancel();
-    synth.resume();
-    const lang = detectReplyLang(text, mode);
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = lang === "en" ? "en-US" : "es-ES";
-    const all = voicesRef.current.length ? voicesRef.current : synth.getVoices();
-    const prefix = lang === "en" ? "en" : "es";
-    const langVoices = all.filter((item) => item.lang.toLowerCase().startsWith(prefix));
-    // If the language pool has no usable (non-male) voice — e.g. Windows machines
-    // that only expose "Microsoft Raul" for Spanish — switch to a female English
-    // voice (Google US English / Microsoft Zira) instead of ever assigning Raul.
-    const enFemale = all.filter(
-      (item) =>
-        item.lang.toLowerCase().startsWith("en") &&
-        !isMaleVoiceName(item.name) &&
-        (isFemaleVoiceName(item.name, "en") || FEMALE_NAMED_FALLBACK.test(item.name) || /natural|google/i.test(item.name)),
-    );
-    const pool = langVoices.some((item) => !isMaleVoiceName(item.name))
-      ? langVoices
-      : enFemale.length
-        ? enFemale
-        : all.filter((item) => !isMaleVoiceName(item.name));
-    // Elena must sound female: named female voices first, then any non-male voice.
-    const voice =
-      pool.find((item) => isFemaleVoiceName(item.name, lang) && !isMaleVoiceName(item.name)) ??
-      pool.find(
-        (item) =>
-          !isMaleVoiceName(item.name) &&
-          (FEMALE_NAMED_FALLBACK.test(item.name) || /natural|google/i.test(item.name)),
-      ) ??
-      pool.find((item) => !isMaleVoiceName(item.name)) ??
-      pool[0];
-    if (voice) utterance.voice = voice;
-    // Higher pitch keeps Elena sounding female even on Windows systems that
-    // only expose a deep default voice.
-    utterance.pitch = 1.2;
-    utterance.rate = 1.0;
-    utterance.onstart = () => {
-      if (genRef.current) markPlaybackStarted();
-      setSpeaking(true);
-    };
-    utterance.onend = () => {
-      setSpeaking(false);
-      setResponding(false);
-      clearSafety();
-    };
-    utterance.onerror = () => {
-      setSpeaking(false);
-      setResponding(false);
-      clearSafety();
-    };
-    setSpeaking(true);
-    synth.speak(utterance);
+  const fallbackBrowserTts = (text: string, mode: LanguageMode) => {
+    speakWithBrowserTts({
+      text,
+      lang: detectReplyLang(text, mode === "auto" ? sessionLangRef.current : mode),
+      onStart: () => {
+        speakingRef.current = true;
+        setSpeaking(true);
+      },
+      onEnd: () => {
+        releaseAndListen();
+      },
+    });
   };
 
   const speak = async (text: string, forProfile = profile) => {
-    const gen = genRef.current;
+    respondingRef.current = true;
+    speakingRef.current = true;
     stopListening();
     setResponding(true);
-    armSafety();
+    setSpeaking(true);
+
+    const voice = forProfile.id === "sarah" ? "shimmer" : "nova";
+    let url = "";
+    const audioWatchdogMs = 8000;
+
     try {
-      const heygenOk = await heygen.start().catch((cause) => {
-        console.error("[heygen] session failed; using /api/tts", cause);
-        return false;
-      });
-      if (heygenOk) {
-        const repeated = await heygen.speakRepeat(text);
-        if (repeated && gen === genRef.current) {
-          setEngineLabel("HeyGen · REPEAT · es");
-          return;
-        }
+      // 10s hard timeout on the TTS request; on timeout fall back to the
+      // browser voice instead of freezing the call.
+      const ttsAbort = new AbortController();
+      const ttsTimer = window.setTimeout(() => ttsAbort.abort(), 10000);
+      const ttsRes = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: ttsAbort.signal,
+        body: JSON.stringify({
+          text,
+          voice,
+          voiceProfile: forProfile.id,
+        }),
+      }).finally(() => window.clearTimeout(ttsTimer));
+      if (!ttsRes.ok) {
+        throw new Error(`tts-network-${ttsRes.status}`);
       }
-      if (gen !== genRef.current) return;
-      await speakHumanVoice({
-        text,
-        profile: forProfile,
-        language,
-        speed: 1,
-        stability,
-        elevenKey,
-        openaiKey,
-        audioRef,
-        shouldCancel: () => gen !== genRef.current,
-        onAutoplayBlocked: () => {
-          if (gen === genRef.current) {
-            setResponding(false);
-            clearSafety();
-            setTapToListen(true);
+
+      const blob = new Blob([await ttsRes.arrayBuffer()], { type: "audio/mpeg" });
+      url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.setAttribute("playsinline", "true");
+      audio.volume = 1;
+      audioRef.current = audio;
+
+      await new Promise<void>((resolve) => {
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          if (audioWatchdogRef.current) {
+            window.clearTimeout(audioWatchdogRef.current);
+            audioWatchdogRef.current = 0;
           }
-        },
-        onPlaybackStart: () => {
-          if (gen === genRef.current) {
-            markPlaybackStarted();
-            setSpeaking(true);
-          }
-        },
-        onPlaybackEnd: () => {
-          if (gen !== genRef.current) return;
+          speakingRef.current = false;
+          setSpeaking(false);
+          if (url) URL.revokeObjectURL(url);
+          resolve();
+        };
+
+        audio.onended = () => {
+          speakingRef.current = false;
+          respondingRef.current = false;
+          thinkingRef.current = false;
           setSpeaking(false);
           setResponding(false);
-        },
-        onEngine: (engine) => {
-          setEngineLabel(engine === "elevenlabs" ? "Studio · ElevenLabs" : "Studio · OpenAI HD");
-        },
+          finish();
+          startListeningRef.current();
+        };
+        audio.onerror = () => {
+          speakingRef.current = false;
+          respondingRef.current = false;
+          thinkingRef.current = false;
+          setSpeaking(false);
+          setResponding(false);
+          finish();
+          startListeningRef.current();
+        };
+        const armWatchdog = (ms: number) => {
+          if (audioWatchdogRef.current) window.clearTimeout(audioWatchdogRef.current);
+          audioWatchdogRef.current = window.setTimeout(() => {
+            console.error("[voice] audio ended-event watchdog — unlocking mic");
+            try {
+              audio.pause();
+            } catch {
+              /* ignore */
+            }
+            speakingRef.current = false;
+            respondingRef.current = false;
+            thinkingRef.current = false;
+            setSpeaking(false);
+            setResponding(false);
+            finish();
+            startListeningRef.current();
+          }, ms);
+        };
+        armWatchdog(audioWatchdogMs);
+        audio.onloadedmetadata = () => {
+          const durationMs = Number.isFinite(audio.duration) ? audio.duration * 1000 + 2000 : audioWatchdogMs;
+          armWatchdog(Math.max(audioWatchdogMs, durationMs));
+        };
+
+        void audio.play().catch((cause) => {
+          console.error("[voice] MP3 play() failed", cause);
+          finish();
+          startListeningRef.current();
+        });
       });
     } catch (cause) {
-      console.error("[voice] speak failed; vocalizing with browser speech synthesis", cause);
-      speakWithBrowserTts(text, language);
+      console.error("[voice] speak failed", cause);
+      fallbackBrowserTts(text, languageRef.current === "auto" ? sessionLangRef.current : languageRef.current);
     } finally {
-      if (!playbackStartedRef.current) setResponding(false);
+      respondingRef.current = false;
+      thinkingRef.current = false;
+      speakingRef.current = false;
+      setResponding(false);
+      setThinking(false);
+      setSpeaking(false);
+      if (wantMicRef.current && callActiveRef.current) {
+        startListeningRef.current();
+      }
     }
   };
 
   const streamReply = async (text: string) => {
-    const gen = ++genRef.current;
+    genRef.current += 1;
+    respondingRef.current = true;
+    thinkingRef.current = false;
     stopListening();
     setPartialAi("");
     setLines((current) => [...current, { id: nextId(), speaker: "ai", text }]);
     setResponding(true);
-    armSafety();
     try {
       await speak(text);
     } catch (cause) {
       console.error("[voice] Studio TTS failed", cause);
     } finally {
-      if (gen === genRef.current && !playbackStartedRef.current) {
-        setResponding(false);
-        setSpeaking(false);
+      respondingRef.current = false;
+      thinkingRef.current = false;
+      speakingRef.current = false;
+      setResponding(false);
+      setSpeaking(false);
+      setThinking(false);
+      if (wantMicRef.current && callActiveRef.current) {
+        startListeningRef.current();
       }
     }
   };
@@ -451,9 +550,26 @@ export function VoiceConciergeView() {
     ensureVoiceSession();
     callActiveRef.current = true;
     stopListening();
+    thinkingRef.current = true;
+    respondingRef.current = true;
     setPartialGuest("");
     setDraft("");
     setLines((current) => [...current, { id: nextId(), speaker: "guest", text }]);
+
+    const wasAuto = languageRef.current === "auto";
+    const detected = detectGuestLang(text);
+    if (wasAuto) {
+      sessionLangRef.current = detected;
+      languageRef.current = detected;
+      setLanguage(detected);
+    } else {
+      sessionLangRef.current = languageRef.current;
+    }
+    const conversationLang: LanguageMode = wasAuto
+      ? detected
+      : languageRef.current === "en"
+        ? "en"
+        : "es";
 
     const history = lines
       .filter((line) => line.speaker === "guest" || line.speaker === "ai")
@@ -465,39 +581,127 @@ export function VoiceConciergeView() {
     abortRef.current = abort;
     setThinking(true);
     setResponding(true);
-    armSafety();
     const started = performance.now();
-    void askAvatarReply({
-      question: text,
-      property: selectedProperty,
-      properties,
-      language,
-      hours,
-      emergencyNumber,
-      openaiKey,
-      history,
-      signal: abort.signal,
-    })
-      .then((reply) => {
-        if (!callActiveRef.current || abort.signal.aborted) {
-          setThinking(false);
-          setResponding(false);
-          return;
-        }
+    const question = `${LANGUAGE_MIRROR_INSTRUCTION}\n\nGuest: ${text}`;
+
+    void (async () => {
+      try {
+        const reply = await askAvatarReply({
+          question,
+          property: selectedProperty,
+          properties,
+          language: conversationLang === "en" ? "en" : "es",
+          hours,
+          emergencyNumber,
+          openaiKey,
+          history,
+          signal: abort.signal,
+        });
+        if (!callActiveRef.current || abort.signal.aborted) return;
         setLatencyMs(Math.round(performance.now() - started));
+        thinkingRef.current = false;
         setThinking(false);
-        void streamReply(reply);
-      })
-      .catch((cause) => {
+        await streamReply(reply);
+      } catch (cause) {
         if (abort.signal.aborted) return;
         console.error("[voice] avatar reply failed", cause);
+      } finally {
+        thinkingRef.current = false;
+        respondingRef.current = false;
+        speakingRef.current = false;
         setThinking(false);
         setResponding(false);
-      });
+        setSpeaking(false);
+        if (wantMicRef.current && callActiveRef.current && !abort.signal.aborted) {
+          startListeningRef.current();
+        }
+      }
+    })();
   };
+
+  const startListening = () => {
+    if (!wantMicRef.current || !callActiveRef.current) return;
+    if (speakingRef.current || thinkingRef.current) return;
+    if (recRef.current) return;
+
+    const Ctor = getSpeechRecognitionCtor();
+    if (!Ctor) {
+      setLines((current) => [
+        ...current,
+        {
+          id: nextId(),
+          speaker: "system",
+          text: "Live mic is not available in this browser. Use Chrome and allow the microphone, or type a question.",
+        },
+      ]);
+      return;
+    }
+
+    const recognition = new Ctor();
+    recognition.lang = recognitionLangFor(languageRef.current, sessionLangRef.current);
+    recognition.interimResults = true;
+    recognition.continuous = true;
+    recognition.onresult = (event) => {
+      let interim = "";
+      let finalText = "";
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        const result = event.results[index];
+        const piece = result?.[0]?.transcript ?? "";
+        if (result?.isFinal) finalText += piece;
+        else interim += piece;
+      }
+      // Live transcript: show exactly what the mic is hearing while listening.
+      if (interim || finalText) setPartialGuest(interim || finalText);
+      if (finalText.trim()) {
+        setPartialGuest("");
+        handleGuestUtterance(finalText);
+      }
+    };
+    recognition.onerror = (event) => {
+      const code = event?.error;
+      // 'no-speech' is benign: user stayed silent — do NOT kill the listener,
+      // just ignore and let onend restart the session.
+      if (code === "no-speech" || code === "aborted") {
+        return;
+      }
+      if (code === "not-allowed" || code === "service-not-allowed") {
+        wantMicRef.current = false;
+        setLines((current) => [
+          ...current,
+          {
+            id: nextId(),
+            speaker: "system",
+            text: "Microphone blocked by the browser. Allow mic access and try again, or type a question.",
+          },
+        ]);
+      }
+      setListening(false);
+      setPartialGuest("");
+    };
+    recognition.onend = () => {
+      recRef.current = null;
+      setListening(false);
+      if (!wantMicRef.current || !callActiveRef.current) return;
+      if (speakingRef.current || thinkingRef.current) return;
+      window.setTimeout(() => startListeningRef.current(), 250);
+    };
+    recRef.current = recognition;
+    try {
+      recognition.start();
+      setListening(true);
+    } catch {
+      recRef.current = null;
+      setListening(false);
+      window.setTimeout(() => startListeningRef.current(), 400);
+    }
+  };
+  startListeningRef.current = startListening;
 
   const startCall = () => {
     ensureAudioUnlocked();
+    wantMicRef.current = true;
+    callActiveRef.current = true;
+    sessionLangRef.current = language === "auto" ? "auto" : language;
     const greeting = buildGreeting({
       profile,
       language,
@@ -515,7 +719,24 @@ export function VoiceConciergeView() {
         text: `Connected · ${lineMeta.number} · ${selectedProperty.name} · ${profile.name}`,
       },
     ]);
-    void streamReply(greeting);
+
+    void (async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach((track) => track.stop());
+      } catch (cause) {
+        console.error("[voice] microphone permission denied", cause);
+        setLines((current) => [
+          ...current,
+          {
+            id: nextId(),
+            speaker: "system",
+            text: "Microphone permission is required for live listening. You can still type a question.",
+          },
+        ]);
+      }
+      void streamReply(greeting);
+    })();
   };
 
   const playPreview = async (item: VoiceProfile) => {
@@ -536,7 +757,16 @@ export function VoiceConciergeView() {
 
   const toggleListen = () => {
     ensureAudioUnlocked();
+    if (listening) {
+      wantMicRef.current = false;
+      stopListening();
+      return;
+    }
     if (speaking || responding || heygen.speaking) cancelSpeech();
+    ensureVoiceSession();
+    callActiveRef.current = true;
+    wantMicRef.current = true;
+    startListening();
   };
 
   return (
@@ -901,8 +1131,11 @@ function buildGreeting({
   property: Property;
   lineNumber: string;
 }) {
-  const lang: ReplyLang =
-    language === "en" ? "en" : language === "es" ? "es" : profile.id === "sarah" ? "en" : "es";
+  if (language === "auto") {
+    return AUTO_GREETING;
+  }
+
+  const lang: ReplyLang = language === "en" ? "en" : "es";
   const night = nightNote(hours, lang);
 
   if (profile.id === "mateo") {
