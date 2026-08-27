@@ -62,9 +62,14 @@ function getSpeechRecognitionCtor(): (new () => SpeechRec) | null {
   return extra.SpeechRecognition ?? extra.webkitSpeechRecognition ?? null;
 }
 
-function recognitionLangFor(mode: LanguageMode, session: LanguageMode): string {
-  const active = mode === "auto" ? session : mode;
-  return active === "en" ? "en-US" : "es-US";
+function recognitionLangFor(mode: LanguageMode, _session: LanguageMode): string {
+  if (mode === "en") return "en-US";
+  // Auto (and Spanish) always listen with Spanish as the base: Chrome's
+  // recognizer is not polyglot, so a locked en-US base would mangle Spanish
+  // words and keep Elena "anchored" in English. With es-US the Spanish
+  // transcription stays intact and per-utterance detection flips the reply
+  // language back and forth (English still transcribes acceptably).
+  return "es-US";
 }
 
 const LANGUAGE_MIRROR_INSTRUCTION =
@@ -410,6 +415,12 @@ export function VoiceConciergeView() {
           text,
           voice,
           voiceProfile: forProfile.id,
+          // Explicit language for this reply (es for Spanish replies) so the
+          // TTS engine pronounces it with the right accent, never anchored.
+          language: detectReplyLang(
+            text,
+            languageRef.current === "auto" ? sessionLangRef.current : languageRef.current,
+          ),
         }),
       }).finally(() => window.clearTimeout(ttsTimer));
       if (!ttsRes.ok) {
@@ -591,6 +602,9 @@ export function VoiceConciergeView() {
           property: selectedProperty,
           properties,
           language: conversationLang === "en" ? "en" : "es",
+          // Language of THIS utterance, detected per message — the server uses
+          // it for the override flag so English history never anchors replies.
+          lastUserLang: detected,
           hours,
           emergencyNumber,
           openaiKey,

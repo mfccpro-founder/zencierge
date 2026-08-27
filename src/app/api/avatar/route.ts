@@ -1,10 +1,11 @@
 import type { Property } from "@/lib/dashboard-data";
 import { buildAvatarSystemPrompt, type AvatarChatTurn } from "@/lib/avatar-prompt";
-import type { LanguageMode } from "@/lib/human-voice";
+import type { LanguageMode, ReplyLang } from "@/lib/human-voice";
 
 type AvatarBody = {
   question?: string;
   language?: LanguageMode;
+  lastUserLang?: ReplyLang;
   hours?: "always" | "night";
   emergencyNumber?: string;
   openaiKey?: string;
@@ -39,12 +40,16 @@ export async function POST(request: Request) {
   // language flag (never a rigid language template).
   const guestText = extractGuestText(question);
   const forcedLang = body.language === "es" || body.language === "en" ? body.language : null;
-  const guestLang = forcedLang ?? detectGuestLang(guestText);
-  const langFlag =
+  // Priority: forced mode > client's per-utterance detection > server detection.
+  // This is the language of the LATEST message only, never the session's.
+  const guestLang = forcedLang ?? body.lastUserLang ?? detectGuestLang(guestText);
+  // SYSTEM OVERRIDE as the first directive of the message: breaks the history
+  // inertia that kept Elena replying in English after an English first turn.
+  const langOverride =
     guestLang === "es"
-      ? "[User language: Spanish - Reply strictly in Spanish]"
-      : "[User language: English - Reply strictly in English]";
-  const userContent = `${langFlag}\n\nGuest: ${guestText}`;
+      ? "[SYSTEM OVERRIDE: The user's current message is in SPANISH. You MUST respond 100% in Spanish. Do NOT use English. Never say you do not speak Spanish.]"
+      : "[SYSTEM OVERRIDE: The user's current message is in ENGLISH. You MUST respond 100% in English. Do NOT use Spanish.]";
+  const userContent = `${langOverride}\n\nGuest: ${guestText}`;
 
   const openaiKey = body.openaiKey?.trim() || process.env.OPENAI_API_KEY || process.env.OPENAI_TTS_API_KEY || "";
   const anthropicKey = process.env.ANTHROPIC_API_KEY || "";

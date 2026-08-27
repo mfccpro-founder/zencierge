@@ -1,6 +1,6 @@
 import type { Property } from "@/lib/dashboard-data";
 import type { AvatarChatTurn } from "@/lib/avatar-prompt";
-import type { LanguageMode } from "@/lib/human-voice";
+import type { LanguageMode, ReplyLang } from "@/lib/human-voice";
 import { answerGuestQuestion, type HoursMode } from "@/lib/receptionist-replies";
 
 export async function askAvatarReply(options: {
@@ -8,6 +8,7 @@ export async function askAvatarReply(options: {
   property: Property;
   properties: Property[];
   language: LanguageMode;
+  lastUserLang?: ReplyLang;
   hours?: HoursMode;
   emergencyNumber?: string;
   openaiKey?: string;
@@ -34,6 +35,9 @@ export async function askAvatarReply(options: {
       body: JSON.stringify({
         question: options.question,
         language: options.language,
+        // Language of the latest guest message only — the server turns this
+        // into a SYSTEM OVERRIDE so prior English turns never anchor replies.
+        lastUserLang: options.lastUserLang,
         hours: options.hours,
         emergencyNumber: options.emergencyNumber,
         openaiKey: options.openaiKey || undefined,

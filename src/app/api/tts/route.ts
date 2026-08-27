@@ -31,6 +31,7 @@ export async function POST(req: NextRequest) {
       voice?: string;
       voiceProfile?: string;
       speed?: number;
+      language?: string;
     };
     const text = body.text || "Hola, ¿en qué te puedo ayudar?";
     const requested =
@@ -38,6 +39,9 @@ export async function POST(req: NextRequest) {
     const voice = VOICES.has(requested) ? requested : "nova";
     // Slightly slower than default so Elena (nova) sounds natural, paused and clear.
     const speed = Number.isFinite(body.speed) ? Math.min(Math.max(body.speed as number, 0.5), 1.2) : 0.9;
+    // Reply language for this clip (es/en) — used to log and confirm the
+    // requested pronunciation; nova handles both accents natively.
+    const language = body.language === "en" ? "en" : "es";
 
     const mp3 = await openai.audio.speech.create({
       model: "tts-1",
@@ -53,6 +57,7 @@ export async function POST(req: NextRequest) {
         "Content-Type": "audio/mpeg",
         "Content-Length": String(buffer.length),
         "Cache-Control": "no-store",
+        "X-Reply-Language": language,
       },
     });
   } catch (error: unknown) {
