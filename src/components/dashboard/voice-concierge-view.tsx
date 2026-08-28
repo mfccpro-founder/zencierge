@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Eye, EyeOff, KeyRound, Phone, Play, Sparkles } from "lucide-react";
 import { useListings } from "@/components/dashboard/listings-provider";
 import { AiReceptionistStudio } from "@/components/dashboard/ai-receptionist-studio";
+import { GuestQrCard } from "@/components/dashboard/guest-qr-card";
 import type { ReceptionistPhase } from "@/components/dashboard/receptionist-avatar";
 import type { Property } from "@/lib/dashboard-data";
 import { askAvatarReply } from "@/lib/ask-avatar";
@@ -350,7 +351,7 @@ export function VoiceConciergeView() {
   };
 
   const ensureAudioUnlocked = () => {
-    // Called synchronously from the click handler (Simulate inbound call) so the
+    // Called synchronously from the click handler (Llamada de prueba con Elena) so the
     // browser treats this gesture as the unlock for all later playback.
     unlockSpeechAudio(audioRef.current);
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
@@ -856,6 +857,12 @@ export function VoiceConciergeView() {
           videoReady={heygen.ready}
         />
       </div>
+
+      <GuestQrCard
+        property={selectedProperty}
+        aiPhone={lineMeta.number}
+        emergencyNumber={emergencyNumber}
+      />
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         <div className="space-y-6">

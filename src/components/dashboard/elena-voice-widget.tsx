@@ -239,6 +239,7 @@ export default function ElenaVoiceWidget() {
       {/* Controls row: input + mic + send */}
       <form onSubmit={handleSubmit} className="flex flex-row items-center gap-2 w-full">
         <input
+          id="elena-guest-input"
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}

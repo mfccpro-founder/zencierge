@@ -8,7 +8,7 @@ import { ElenaAvatar } from "@/components/dashboard/elena-avatar";
 import ElenaVoiceWidget from "@/components/dashboard/elena-voice-widget";
 
 const PHASE_LABEL: Record<ReceptionistPhase, string> = {
-  idle: "Ready — press Simulate inbound call",
+  idle: "Ready — press Llamada de prueba con Elena",
   listening: "Listening…",
   thinking: "Thinking…",
   speaking: "Elena is speaking…",
@@ -243,7 +243,7 @@ export function AiReceptionistStudio({
               </>
             ) : (
               <>
-                <Phone className="h-4 w-4" /> Simulate inbound call
+                <Phone className="h-4 w-4" /> Llamada de prueba con Elena
               </>
             )}
           </button>

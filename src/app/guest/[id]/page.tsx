@@ -2,8 +2,8 @@ import { GuestPortal } from "@/components/guest/guest-portal";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Guest Portal · Zencierge",
-  description: "Your stay concierge — Wi-Fi, check-in, and a bilingual AI receptionist.",
+  title: "Your stay · Elena AI Concierge",
+  description: "Wi-Fi, door code, check-in hours, and a 24/7 voice concierge for this listing.",
 };
 
 export default async function GuestStayPage({
