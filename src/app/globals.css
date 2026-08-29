@@ -25,6 +25,24 @@ html,
 body {
   background: var(--background);
   color: var(--foreground);
+  touch-action: manipulation;
+  pointer-events: auto;
+}
+
+button,
+a,
+input,
+textarea,
+[role="button"] {
+  touch-action: manipulation;
+  pointer-events: auto;
+  position: relative;
+  z-index: 1;
+}
+
+/* Hide the Next.js issues badge only — do not blanket pointer-events: none. */
+nextjs-portal {
+  display: none !important;
 }
 
 body {

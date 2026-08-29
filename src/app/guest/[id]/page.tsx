@@ -1,4 +1,5 @@
 import { GuestPortal } from "@/components/guest/guest-portal";
+import { guestStayFallback } from "@/lib/dashboard-data";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -12,5 +13,5 @@ export default async function GuestStayPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  return <GuestPortal propertyId={id} />;
+  return <GuestPortal propertyId={id} initialProperty={guestStayFallback(id)} />;
 }

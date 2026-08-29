@@ -1,648 +1,549 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState, type ReactNode } from "react";
 import {
   Bell,
   CreditCard,
-  Eye,
-  EyeOff,
-  KeyRound,
-  Moon,
-  Phone,
-  Sparkles,
+  Cpu,
+  Plus,
+  Trash2,
   User,
-  Webhook,
+  Users,
 } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createAuthBrowserClient } from "@/lib/supabase-auth-browser";
 import { hostFullName } from "@/lib/host-display-name";
-import { planFromMetadata, ZENCIERGE_PLANS, type ZenciergePlanId } from "@/lib/zencierge-plans";
+import { isDevPreviewUser, readPendingSignup } from "@/lib/pending-signup";
+import { HostBillingSummary } from "@/components/dashboard/host-billing-summary";
 
-type SettingsTab = "account" | "voice" | "alerts" | "billing";
-type VoiceVendor = "openai-realtime" | "elevenlabs";
-type FloridaLine = "305" | "954";
+type HubTab = "profile" | "alerts" | "hardware" | "team" | "billing";
+type TeamRole = "cleaner" | "cohost" | "inspector";
+type LockVendor = "august" | "yale" | "schlage";
+type IcalInterval = "15" | "30" | "60";
+type SensorStatus = "synced" | "idle" | "error";
 
-const LINES: Record<FloridaLine, string> = {
-  "305": "+1 (305) 555-0199",
-  "954": "+1 (954) 555-0144",
+type TeamMember = {
+  id: string;
+  email: string;
+  role: TeamRole;
+  status: "active" | "pending";
 };
 
-const VOICE_USED = 142;
-const VOICE_CAP = 300;
-
-const STORAGE = {
-  twilioSid: "zencierge.twilioSid",
-  twilioToken: "zencierge.twilioToken",
-  line: "zencierge.floridaLine",
-  voiceVendor: "zencierge.voiceVendor",
-  voiceKey: "zencierge.voiceEngineKey",
-  voiceModel: "zencierge.voiceModel",
-  llmKey: "zencierge.openaiTtsKey",
-  sms: "zencierge.alertSms",
-  whatsapp: "zencierge.alertWhatsapp",
-  emergency: "zencierge.hostEmergency",
-  quietOn: "zencierge.quietHoursOn",
-  quietFrom: "zencierge.quietFrom",
-  quietTo: "zencierge.quietTo",
-} as const;
-
-const inputClass =
-  "w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-200 outline-none focus:border-emerald-500";
-
-const TABS: { id: SettingsTab; label: string }[] = [
-  { id: "account", label: "Cuenta" },
-  { id: "voice", label: "Voice & Phone" },
-  { id: "alerts", label: "Notifications & Escalations" },
-  { id: "billing", label: "Plan & Billing" },
+const TABS: { id: HubTab; label: string }[] = [
+  { id: "profile", label: "Profile & Business" },
+  { id: "alerts", label: "Alert Rules & Notifications" },
+  { id: "hardware", label: "Smart Hardware & OTA Integrations" },
+  { id: "team", label: "Team & Cleaners Access" },
+  { id: "billing", label: "Billing & Subscriptions" },
 ];
 
+const ROLE_LABEL: Record<TeamRole, string> = {
+  cleaner: "Cleaner",
+  cohost: "Co-host",
+  inspector: "Inspector",
+};
+
+const ROLE_PERMS: Record<TeamRole, string> = {
+  cleaner: "Housekeeping cards and photo uploads only. No financials or settings.",
+  cohost: "Listings, calendar, NeighborShield, and Dispute Dossier. No billing.",
+  inspector: "Inspection gallery and damage flags. No guest PII export.",
+};
+
+const STORAGE = {
+  brand: "zencierge.hub.brand",
+  email: "zencierge.hub.email",
+  emergency: "zencierge.hostEmergency",
+  timezone: "zencierge.hub.timezone",
+  currency: "zencierge.hub.currency",
+  neighborSms: "zencierge.hub.alertNeighborSms",
+  hkSms: "zencierge.hub.alertHkSms",
+  damage: "zencierge.hub.alertDamage",
+  voiceEscalation: "zencierge.hub.alertVoiceEscalation",
+  lockVendor: "zencierge.hub.lockVendor",
+  autoPin: "zencierge.hub.autoPin",
+  minut: "zencierge.hub.minutSync",
+  ical: "zencierge.hub.icalInterval",
+  team: "zencierge.hub.team",
+} as const;
+
+const DEFAULT_TEAM: TeamMember[] = [
+  { id: "tm-1", email: "marisol@cleanco.example", role: "cleaner", status: "active" },
+  { id: "tm-2", email: "ops@sunshine-turnovers.example", role: "cleaner", status: "pending" },
+];
+
+const field =
+  "mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-900 placeholder:text-slate-500 focus:border-sky-600 focus:outline-none";
+const labelClass = "text-sm font-semibold text-slate-900";
+
 export function SettingsView() {
-  const [tab, setTab] = useState<SettingsTab>("account");
-  const [showSecrets, setShowSecrets] = useState(false);
-  const [twilioSid, setTwilioSid] = useState("");
-  const [twilioToken, setTwilioToken] = useState("");
-  const [line, setLine] = useState<FloridaLine>("305");
-  const [webhookStatus, setWebhookStatus] = useState<"idle" | "testing" | "ok" | "fail">("idle");
-  const [voiceVendor, setVoiceVendor] = useState<VoiceVendor>("openai-realtime");
-  const [voiceKey, setVoiceKey] = useState("");
-  const [voiceModel, setVoiceModel] = useState("gpt-4o-realtime-preview");
-  const [llmKey, setLlmKey] = useState("");
-  const [smsAlerts, setSmsAlerts] = useState(true);
-  const [whatsappAlerts, setWhatsappAlerts] = useState(false);
+  return (
+    <Suspense fallback={<div className="text-sm text-slate-500">Loading settings…</div>}>
+      <SettingsViewInner />
+    </Suspense>
+  );
+}
+
+function SettingsViewInner() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const [tab, setTab] = useState<HubTab>(searchParams.get("tab") === "billing" ? "billing" : "profile");
+  const [toast, setToast] = useState<string | null>(null);
+
+  const [fullName, setFullName] = useState("");
+  const [brand, setBrand] = useState("Zencierge Host OS");
+  const [email, setEmail] = useState("");
   const [emergency, setEmergency] = useState("+1 (954) 275-3544");
-  const [quietOn, setQuietOn] = useState(true);
-  const [quietFrom, setQuietFrom] = useState("22:00");
-  const [quietTo, setQuietTo] = useState("08:00");
-  const [billingNote, setBillingNote] = useState(false);
-  const [currentPlan, setCurrentPlan] = useState<ZenciergePlanId>("starter");
-  const [checkoutBusy, setCheckoutBusy] = useState<ZenciergePlanId | null>(null);
+  const [timezone, setTimezone] = useState("America/New_York");
+  const [currency, setCurrency] = useState("USD");
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
+
+  const [neighborSms, setNeighborSms] = useState(true);
+  const [hkSms, setHkSms] = useState(true);
+  const [damageAlert, setDamageAlert] = useState(true);
+  const [voiceEscalation, setVoiceEscalation] = useState(true);
+
+  const [lockVendor, setLockVendor] = useState<LockVendor>("yale");
+  const [autoPin, setAutoPin] = useState(true);
+  const [minutStatus, setMinutStatus] = useState<SensorStatus>("synced");
+  const [icalInterval, setIcalInterval] = useState<IcalInterval>("15");
+
+  const [team, setTeam] = useState<TeamMember[]>(DEFAULT_TEAM);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState<TeamRole>("cleaner");
 
   useEffect(() => {
-    setTwilioSid(window.localStorage.getItem(STORAGE.twilioSid) ?? "");
-    setTwilioToken(window.localStorage.getItem(STORAGE.twilioToken) ?? "");
-    const storedLine = window.localStorage.getItem(STORAGE.line);
-    if (storedLine === "305" || storedLine === "954") setLine(storedLine);
-    const vendor = window.localStorage.getItem(STORAGE.voiceVendor);
-    if (vendor === "openai-realtime" || vendor === "elevenlabs") setVoiceVendor(vendor);
-    setVoiceKey(window.localStorage.getItem(STORAGE.voiceKey) ?? "");
-    setVoiceModel(window.localStorage.getItem(STORAGE.voiceModel) ?? "gpt-4o-realtime-preview");
-    setLlmKey(window.localStorage.getItem(STORAGE.llmKey) ?? "");
-    setSmsAlerts(window.localStorage.getItem(STORAGE.sms) !== "0");
-    setWhatsappAlerts(window.localStorage.getItem(STORAGE.whatsapp) === "1");
+    if (searchParams.get("tab") === "billing") setTab("billing");
+  }, [searchParams]);
+
+  const selectTab = (id: HubTab) => {
+    setTab(id);
+    router.replace(id === "billing" ? "/dashboard/settings?tab=billing" : "/dashboard/settings", { scroll: false });
+  };
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(null), 3500);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
+  useEffect(() => {
+    setBrand(window.localStorage.getItem(STORAGE.brand) ?? "Zencierge Host OS");
     setEmergency(window.localStorage.getItem(STORAGE.emergency) ?? "+1 (954) 275-3544");
-    setQuietOn(window.localStorage.getItem(STORAGE.quietOn) !== "0");
-    setQuietFrom(window.localStorage.getItem(STORAGE.quietFrom) ?? "22:00");
-    setQuietTo(window.localStorage.getItem(STORAGE.quietTo) ?? "08:00");
+    setTimezone(window.localStorage.getItem(STORAGE.timezone) ?? "America/New_York");
+    setCurrency(window.localStorage.getItem(STORAGE.currency) ?? "USD");
+    setNeighborSms(window.localStorage.getItem(STORAGE.neighborSms) !== "0");
+    setHkSms(window.localStorage.getItem(STORAGE.hkSms) !== "0");
+    setDamageAlert(window.localStorage.getItem(STORAGE.damage) !== "0");
+    setVoiceEscalation(window.localStorage.getItem(STORAGE.voiceEscalation) !== "0");
+    const lock = window.localStorage.getItem(STORAGE.lockVendor);
+    if (lock === "august" || lock === "yale" || lock === "schlage") setLockVendor(lock);
+    setAutoPin(window.localStorage.getItem(STORAGE.autoPin) !== "0");
+    const minut = window.localStorage.getItem(STORAGE.minut);
+    if (minut === "synced" || minut === "idle" || minut === "error") setMinutStatus(minut);
+    const ical = window.localStorage.getItem(STORAGE.ical);
+    if (ical === "15" || ical === "30" || ical === "60") setIcalInterval(ical);
+    try {
+      const raw = window.localStorage.getItem(STORAGE.team);
+      if (raw) {
+        const parsed = JSON.parse(raw) as TeamMember[];
+        if (Array.isArray(parsed) && parsed.length) setTeam(parsed);
+      }
+    } catch {
+      /* keep defaults */
+    }
+
     const supabase = createAuthBrowserClient();
-    void supabase.auth.getUser().then(({ data }: { data: { user: { user_metadata?: Record<string, unknown> } | null } }) => {
-      setCurrentPlan(planFromMetadata(data.user?.user_metadata));
+    void supabase.auth.getUser().then(({ data }: { data: { user: { email?: string; user_metadata?: Record<string, unknown> } | null } }) => {
+      const pending = readPendingSignup();
+      const mock = isDevPreviewUser(data.user);
+      if (pending && (!data.user || mock)) {
+        setFullName(pending.fullName);
+        setEmail(pending.email);
+        return;
+      }
+      setFullName(hostFullName(data.user));
+      const storedEmail = window.localStorage.getItem(STORAGE.email);
+      setEmail(storedEmail || data.user?.email || pending?.email || "");
     });
   }, []);
 
-  const persist = (key: string, value: string) => {
-    window.localStorage.setItem(key, value);
-  };
+  const flashSaved = () => setToast("Settings saved successfully");
 
-  const testWebhook = () => {
-    setWebhookStatus("testing");
-    window.setTimeout(() => {
-      const ok = twilioSid.trim().length > 8 && twilioToken.trim().length > 8;
-      setWebhookStatus(ok ? "ok" : "fail");
-    }, 600);
-  };
-
-  const llmConnected = llmKey.trim().startsWith("sk-") && llmKey.trim().length > 12;
-  const minutesPct = Math.min(100, Math.round((VOICE_USED / VOICE_CAP) * 100));
-
-  const subscribeWithSquare = async (planId: ZenciergePlanId) => {
-    setCheckoutBusy(planId);
-    setBillingNote(false);
+  const saveProfile = async () => {
+    setProfileBusy(true);
+    setProfileError(null);
+    const trimmed = fullName.trim() || "Host";
+    const firstName = trimmed.split(/\s+/)[0] ?? "Host";
     try {
-      const response = await fetch("/api/checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ planId }),
+      const supabase = createAuthBrowserClient();
+      const { error } = await supabase.auth.updateUser({
+        data: { full_name: trimmed, first_name: firstName },
       });
-      const data = (await response.json()) as { url?: string; error?: string };
-      if (response.status === 401) {
-        window.location.href = `/login?next=${encodeURIComponent("/dashboard")}`;
-        return;
-      }
-      if (!response.ok || !data.url) {
-        throw new Error(data.error ?? "Could not start Square checkout");
-      }
-      window.location.href = data.url;
+      if (error) throw error;
+      window.localStorage.setItem(STORAGE.brand, brand.trim() || "Zencierge Host OS");
+      window.localStorage.setItem(STORAGE.email, email.trim());
+      window.localStorage.setItem(STORAGE.emergency, emergency.trim());
+      window.localStorage.setItem(STORAGE.timezone, timezone);
+      window.localStorage.setItem(STORAGE.currency, currency);
+      setFullName(trimmed);
+      flashSaved();
     } catch (cause) {
-      setBillingNote(true);
-      window.alert(cause instanceof Error ? cause.message : "Checkout failed");
+      setProfileError(cause instanceof Error ? cause.message : "Could not save your profile.");
     } finally {
-      setCheckoutBusy(null);
+      setProfileBusy(false);
     }
   };
 
-  const models =
-    voiceVendor === "elevenlabs"
-      ? ["eleven_multilingual_v2", "eleven_turbo_v2_5", "eleven_flash_v2"]
-      : ["gpt-4o-realtime-preview", "gpt-4o-mini-realtime-preview", "tts-1-hd"];
+  const saveAlerts = () => {
+    window.localStorage.setItem(STORAGE.neighborSms, neighborSms ? "1" : "0");
+    window.localStorage.setItem(STORAGE.hkSms, hkSms ? "1" : "0");
+    window.localStorage.setItem(STORAGE.damage, damageAlert ? "1" : "0");
+    window.localStorage.setItem(STORAGE.voiceEscalation, voiceEscalation ? "1" : "0");
+    flashSaved();
+  };
+
+  const saveHardware = () => {
+    window.localStorage.setItem(STORAGE.lockVendor, lockVendor);
+    window.localStorage.setItem(STORAGE.autoPin, autoPin ? "1" : "0");
+    window.localStorage.setItem(STORAGE.minut, minutStatus);
+    window.localStorage.setItem(STORAGE.ical, icalInterval);
+    flashSaved();
+  };
+
+  const saveTeam = (next: TeamMember[]) => {
+    setTeam(next);
+    window.localStorage.setItem(STORAGE.team, JSON.stringify(next));
+  };
+
+  const invite = () => {
+    const value = inviteEmail.trim().toLowerCase();
+    if (!value.includes("@")) return;
+    const member: TeamMember = {
+      id: `tm-${Date.now()}`,
+      email: value,
+      role: inviteRole,
+      status: "pending",
+    };
+    saveTeam([...team, member]);
+    setInviteEmail("");
+    flashSaved();
+  };
 
   return (
-    <div className="space-y-6 max-w-3xl">
-      <div className="flex flex-wrap gap-1 rounded-xl border border-slate-800 bg-slate-900/80 p-1">
+    <div className="mx-auto max-w-4xl space-y-6" data-tour="settings-hub">
+      {toast ? (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-slate-900">
+          {toast}
+        </div>
+      ) : null}
+
+      <div className="flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
         {TABS.map((item) => (
           <button
             key={item.id}
             type="button"
-            onClick={() => setTab(item.id)}
-            className={`flex-1 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
-              tab === item.id
-                ? "bg-emerald-500/15 text-emerald-300"
-                : "text-slate-400 hover:text-slate-200"
+            onClick={() => selectTab(item.id)}
+            className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-sm font-bold ${
+              tab === item.id ? "bg-sky-600 text-white" : "text-slate-900 hover:bg-slate-100"
             }`}
           >
+            {item.id === "billing" ? <CreditCard className="h-3.5 w-3.5" /> : null}
             {item.label}
           </button>
         ))}
       </div>
 
-      {tab === "account" ? <AccountProfileCard /> : null}
-
-      {tab === "voice" ? (
-        <div className="space-y-6">
-          <section className="rounded-2xl border border-slate-800/80 bg-slate-900/60 p-6 space-y-5">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <Phone className="h-4 w-4 text-sky-400" />
-                <h3 className="text-sm font-semibold text-white">Carrier / VoIP</h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowSecrets((value) => !value)}
-                className="text-slate-400 hover:text-white"
-                aria-label={showSecrets ? "Hide secrets" : "Show secrets"}
-              >
-                {showSecrets ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </button>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <SecretField
-                label="Twilio Account SID"
-                value={twilioSid}
-                show={showSecrets}
-                placeholder="ACxxxxxxxx"
-                onChange={(value) => {
-                  setTwilioSid(value);
-                  persist(STORAGE.twilioSid, value);
-                }}
-              />
-              <SecretField
-                label="Auth Token"
-                value={twilioToken}
-                show={showSecrets}
-                placeholder="••••••••"
-                onChange={(value) => {
-                  setTwilioToken(value);
-                  persist(STORAGE.twilioToken, value);
-                }}
-              />
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-400 mb-2">Assigned Florida number</p>
-              <div className="grid grid-cols-2 gap-2">
-                {(Object.keys(LINES) as FloridaLine[]).map((code) => (
-                  <button
-                    key={code}
-                    type="button"
-                    onClick={() => {
-                      setLine(code);
-                      persist(STORAGE.line, code);
-                    }}
-                    className={`rounded-xl border px-3 py-2.5 text-left ${
-                      line === code
-                        ? "border-emerald-500/40 bg-emerald-500/10"
-                        : "border-slate-800 bg-slate-950 hover:border-slate-700"
-                    }`}
-                  >
-                    <span className="block font-mono text-sm font-semibold text-white">
-                      {LINES[code]}
-                    </span>
-                    <span className="text-[10px] text-slate-500">
-                      {code === "305" ? "Miami-Dade · 305" : "Broward · 954"}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                onClick={testWebhook}
-                className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-emerald-400"
-              >
-                <Webhook className="h-3.5 w-3.5" />
-                Test Twilio Webhook
-              </button>
-              {webhookStatus === "testing" ? (
-                <span className="text-xs text-sky-300">POST /voice/inbound · probing…</span>
-              ) : null}
-              {webhookStatus === "ok" ? (
-                <span className="text-xs font-medium text-emerald-400">
-                  200 OK · SIP live on {LINES[line]}
-                </span>
-              ) : null}
-              {webhookStatus === "fail" ? (
-                <span className="text-xs font-medium text-amber-400">
-                  SID and token must be at least 9 characters.
-                </span>
-              ) : null}
-            </div>
-          </section>
-
-          <section className="rounded-2xl border border-slate-800/80 bg-slate-900/60 p-6 space-y-5">
-            <div className="flex items-center gap-2">
-              <Sparkles className="h-4 w-4 text-emerald-400" />
-              <h3 className="text-sm font-semibold text-white">Voice engine</h3>
-            </div>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setVoiceVendor("openai-realtime");
-                  persist(STORAGE.voiceVendor, "openai-realtime");
-                  setVoiceModel("gpt-4o-realtime-preview");
-                  persist(STORAGE.voiceModel, "gpt-4o-realtime-preview");
-                }}
-                className={`rounded-xl border px-4 py-3 text-left text-sm ${
-                  voiceVendor === "openai-realtime"
-                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
-                    : "border-slate-800 bg-slate-950 text-slate-300"
-                }`}
-              >
-                OpenAI Realtime
-                <span className="mt-1 block text-[11px] text-slate-500">Low-latency phone turns</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setVoiceVendor("elevenlabs");
-                  persist(STORAGE.voiceVendor, "elevenlabs");
-                  setVoiceModel("eleven_multilingual_v2");
-                  persist(STORAGE.voiceModel, "eleven_multilingual_v2");
-                }}
-                className={`rounded-xl border px-4 py-3 text-left text-sm ${
-                  voiceVendor === "elevenlabs"
-                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
-                    : "border-slate-800 bg-slate-950 text-slate-300"
-                }`}
-              >
-                ElevenLabs
-                <span className="mt-1 block text-[11px] text-slate-500">Studio multilingual voices</span>
-              </button>
-            </div>
-            <SecretField
-              label={voiceVendor === "elevenlabs" ? "ElevenLabs API Key" : "OpenAI Realtime API Key"}
-              value={voiceKey}
-              show={showSecrets}
-              placeholder={voiceVendor === "elevenlabs" ? "sk_…" : "sk-…"}
-              onChange={(value) => {
-                setVoiceKey(value);
-                persist(STORAGE.voiceKey, value);
-              }}
-            />
-            <label className="block text-xs text-slate-400">
-              Default model
-              <select
-                className={`${inputClass} mt-1.5`}
-                value={voiceModel}
-                onChange={(event) => {
-                  setVoiceModel(event.target.value);
-                  persist(STORAGE.voiceModel, event.target.value);
-                }}
-              >
-                {models.map((model) => (
-                  <option key={model} value={model}>
-                    {model}
-                  </option>
-                ))}
+      {tab === "profile" ? (
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <Header icon={User} title="Profile & Business" subtitle="How you appear in Host OS and on guest-facing notices." />
+          <div className="mt-6 grid gap-5 sm:grid-cols-2">
+            <Field label="Host full name">
+              <input className={field} value={fullName} onChange={(event) => setFullName(event.target.value)} />
+            </Field>
+            <Field label="Company / host brand name">
+              <input className={field} value={brand} onChange={(event) => setBrand(event.target.value)} />
+            </Field>
+            <Field label="Contact email">
+              <input type="email" className={field} value={email} onChange={(event) => setEmail(event.target.value)} />
+            </Field>
+            <Field label="Emergency phone">
+              <input className={field} value={emergency} onChange={(event) => setEmergency(event.target.value)} />
+            </Field>
+            <Field label="Default timezone">
+              <select className={field} value={timezone} onChange={(event) => setTimezone(event.target.value)}>
+                <option value="America/New_York">Eastern Time — US & Canada</option>
+                <option value="America/Chicago">Central Time — US & Canada</option>
+                <option value="America/Denver">Mountain Time — US & Canada</option>
+                <option value="America/Los_Angeles">Pacific Time — US & Canada</option>
               </select>
-            </label>
-          </section>
-
-          <section className="rounded-2xl border border-slate-800/80 bg-slate-900/60 p-6 space-y-4">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <KeyRound className="h-4 w-4 text-amber-300" />
-                <h3 className="text-sm font-semibold text-white">LLM brain</h3>
-              </div>
-              <span
-                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[10px] font-semibold ${
-                  llmConnected
-                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
-                    : "border-slate-700 bg-slate-800 text-slate-400"
-                }`}
-              >
-                <span
-                  className={`h-1.5 w-1.5 rounded-full ${llmConnected ? "bg-emerald-400" : "bg-slate-500"}`}
-                />
-                {llmConnected ? "Connected" : "Not connected"}
-              </span>
-            </div>
-            <p className="text-xs text-slate-500">
-              OpenAI key for the AI Handbook — Wi-Fi, locks, and parking answers on live guest calls.
-            </p>
-            <SecretField
-              label="OpenAI API Key"
-              value={llmKey}
-              show={showSecrets}
-              placeholder="sk-proj-…"
-              onChange={(value) => {
-                setLlmKey(value);
-                persist(STORAGE.llmKey, value);
-              }}
-            />
-          </section>
-        </div>
+            </Field>
+            <Field label="Currency">
+              <select className={field} value={currency} onChange={(event) => setCurrency(event.target.value)}>
+                <option value="USD">USD — US Dollar</option>
+              </select>
+            </Field>
+          </div>
+          {profileError ? <p className="mt-4 text-sm font-semibold text-rose-700">{profileError}</p> : null}
+          <SaveButton
+            label={profileBusy ? "Saving…" : "Save Profile"}
+            disabled={profileBusy}
+            onClick={() => void saveProfile()}
+          />
+        </section>
       ) : null}
 
       {tab === "alerts" ? (
-        <section className="rounded-2xl border border-slate-800/80 bg-slate-900/60 p-6 space-y-5">
-          <div className="flex items-center gap-2">
-            <Bell className="h-4 w-4 text-amber-300" />
-            <h3 className="text-sm font-semibold text-white">Notifications & escalations</h3>
-          </div>
-          <label className="block text-xs text-slate-400">
-            Host emergency number
-            <input
-              className={`${inputClass} mt-1.5 font-mono`}
-              value={emergency}
-              onChange={(event) => {
-                setEmergency(event.target.value);
-                persist(STORAGE.emergency, event.target.value);
-              }}
-              placeholder="+1 (954) 275-3544"
-            />
-            <span className="mt-1.5 block text-[11px] text-slate-500">
-              Used for call forwards and SMS/WhatsApp when a guest reports a water leak or a broken lock.
-            </span>
-          </label>
-          <ToggleRow
-            label="SMS alerts on leak / lockout"
-            checked={smsAlerts}
-            onChange={(value) => {
-              setSmsAlerts(value);
-              persist(STORAGE.sms, value ? "1" : "0");
-            }}
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <Header
+            icon={Bell}
+            title="Alert rules & notifications"
+            subtitle="Instant SMS and call routing for noise, turnovers, damage, and Elena emergencies."
           />
-          <ToggleRow
-            label="WhatsApp for severe incidents"
-            checked={whatsappAlerts}
-            onChange={(value) => {
-              setWhatsappAlerts(value);
-              persist(STORAGE.whatsapp, value ? "1" : "0");
-            }}
-          />
-          <div className="border-t border-slate-800 pt-4 space-y-3">
-            <div className="flex items-center gap-2">
-              <Moon className="h-4 w-4 text-violet-300" />
-              <h4 className="text-sm font-semibold text-white">Quiet hours</h4>
-            </div>
-            <p className="text-xs text-slate-500">
-              Non-urgent guest questions stay on the AI line. Leaks and lockouts still ring{" "}
-              {emergency || "the host"}.
-            </p>
+          <div className="mt-6 space-y-3">
             <ToggleRow
-              label="Enable quiet hours"
-              checked={quietOn}
-              onChange={(value) => {
-                setQuietOn(value);
-                persist(STORAGE.quietOn, value ? "1" : "0");
-              }}
+              title="NeighborShield SMS alerts for noise spikes"
+              description="Text the host when a sensor reports noise above 75 dB during a stay."
+              checked={neighborSms}
+              onChange={setNeighborSms}
             />
-            <div className="grid grid-cols-2 gap-3">
-              <label className="text-xs text-slate-400">
-                From
-                <input
-                  type="time"
-                  value={quietFrom}
-                  onChange={(event) => {
-                    setQuietFrom(event.target.value);
-                    persist(STORAGE.quietFrom, event.target.value);
-                  }}
-                  className={`${inputClass} mt-1.5`}
-                />
-              </label>
-              <label className="text-xs text-slate-400">
-                To
-                <input
-                  type="time"
-                  value={quietTo}
-                  onChange={(event) => {
-                    setQuietTo(event.target.value);
-                    persist(STORAGE.quietTo, event.target.value);
-                  }}
-                  className={`${inputClass} mt-1.5`}
-                />
-              </label>
-            </div>
+            <ToggleRow
+              title="Housekeeping instant SMS when inspection photos are uploaded"
+              description="Notify as soon as pre-clean or turn-ready photos land in the gallery."
+              checked={hkSms}
+              onChange={setHkSms}
+            />
+            <ToggleRow
+              title="Damage flag instant notification"
+              description="Alert when a cleaner or inspector flags damage on a pre-cleaning photo."
+              checked={damageAlert}
+              onChange={setDamageAlert}
+            />
+            <ToggleRow
+              title="Voice Concierge emergency call escalation"
+              description="Ring the emergency phone when Elena detects a leak, lockout, or safety event."
+              checked={voiceEscalation}
+              onChange={setVoiceEscalation}
+            />
           </div>
+          <SaveButton label="Save Changes" onClick={saveAlerts} />
         </section>
       ) : null}
 
-      {tab === "billing" ? (
-        <section className="rounded-2xl border border-slate-800/80 bg-slate-900/60 p-6 space-y-5">
-          <div className="flex items-center gap-2">
-            <CreditCard className="h-4 w-4 text-emerald-400" />
-            <h3 className="text-sm font-semibold text-white">Plan & Billing</h3>
-          </div>
-          <p className="text-xs text-slate-400">
-            Current plan:{" "}
-            <span className="font-semibold text-white">{ZENCIERGE_PLANS[currentPlan].name}</span>
-            {" · "}
-            ${ZENCIERGE_PLANS[currentPlan].monthlyUsd}/mo
-          </p>
-          <div className="grid gap-4 sm:grid-cols-3">
-            {(["starter", "pro", "agency"] as const).map((planId) => {
-              const plan = ZENCIERGE_PLANS[planId];
-              const selected = plan.id === currentPlan;
-              return (
-                <article
-                  key={plan.id}
-                  className={`flex flex-col rounded-xl border p-4 ${
-                    selected
-                      ? "border-emerald-500/40 bg-emerald-500/10"
-                      : "border-slate-800 bg-slate-950/50"
+      {tab === "hardware" ? (
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <Header
+            icon={Cpu}
+            title="Smart hardware & OTA integrations"
+            subtitle="Locks, noise sensors, and calendar sync for Airbnb and Vrbo."
+          />
+          <div className="mt-6 space-y-6">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-sm font-bold text-slate-900">Smart lock status</p>
+              <p className="mt-1 text-sm text-slate-800">August / Yale / Schlage — choose the brand on the door, then enable Auto-PIN provisioning for each reservation.</p>
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                <Field label="Lock brand">
+                  <select className={field} value={lockVendor} onChange={(event) => setLockVendor(event.target.value as LockVendor)}>
+                    <option value="august">August</option>
+                    <option value="yale">Yale</option>
+                    <option value="schlage">Schlage</option>
+                  </select>
+                </Field>
+                <div className="flex items-end">
+                  <span
+                    className={`mb-1 inline-flex rounded-full border px-3 py-1 text-xs font-bold ${
+                      autoPin
+                        ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                        : "border-slate-300 bg-white text-slate-800"
+                    }`}
+                  >
+                    {autoPin ? "Auto-PIN on" : "Auto-PIN off"} · {lockVendor === "august" ? "August" : lockVendor === "yale" ? "Yale" : "Schlage"}
+                  </span>
+                </div>
+              </div>
+              <div className="mt-4">
+                <ToggleRow
+                  title="Auto-PIN provisioning"
+                  description="Issue a unique guest PIN at check-in and revoke it at checkout."
+                  checked={autoPin}
+                  onChange={setAutoPin}
+                />
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-sm font-bold text-slate-900">Minut / NoiseAware sensor webhook</p>
+              <p className="mt-1 text-sm text-slate-800">Sync status for occupancy and noise events used by NeighborShield.</p>
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <span
+                  className={`rounded-full border px-3 py-1 text-xs font-bold ${
+                    minutStatus === "synced"
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                      : minutStatus === "error"
+                        ? "border-rose-200 bg-rose-50 text-rose-800"
+                        : "border-amber-200 bg-amber-50 text-amber-800"
                   }`}
                 >
-                  <p className="text-sm font-semibold text-white">{plan.name}</p>
-                  <p className="mt-2 text-2xl font-bold text-white">
-                    ${plan.monthlyUsd}
-                    <span className="text-sm font-medium text-slate-500">/mo</span>
-                  </p>
-                  <p className="mt-1 text-[11px] text-slate-500">
-                    {plan.id === "starter"
-                      ? "1 Florida listing"
-                      : plan.id === "pro"
-                        ? "Up to 4 listings"
-                        : "Unlimited listings"}
-                  </p>
-                  <button
-                    type="button"
-                    disabled={checkoutBusy !== null}
-                    onClick={() => {
-                      void subscribeWithSquare(plan.id);
-                    }}
-                    className="mt-4 w-full rounded-lg bg-emerald-500 py-2 text-[11px] font-bold text-slate-950 hover:bg-emerald-400 disabled:opacity-50"
-                  >
-                    {checkoutBusy === plan.id ? "Opening Square…" : "Subscribe with Square"}
-                  </button>
-                </article>
-              );
-            })}
-          </div>
-          <div>
-            <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
-              <span>Voice minutes this month</span>
-              <span className="font-mono text-slate-200">
-                {VOICE_USED} / {VOICE_CAP} mins
-              </span>
+                  {minutStatus === "synced" ? "Synced" : minutStatus === "error" ? "Sync error" : "Idle — not connected"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setMinutStatus("synced")}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-900 hover:bg-slate-100"
+                >
+                  Re-sync webhook
+                </button>
+              </div>
             </div>
-            <div className="h-2 overflow-hidden rounded-full bg-slate-800">
-              <div className="h-full rounded-full bg-emerald-400" style={{ width: `${minutesPct}%` }} />
-            </div>
-            <p className="mt-1.5 text-[11px] text-slate-500">
-              {VOICE_CAP - VOICE_USED} minutes remaining · extra billed at $0.12/min
-            </p>
+
+            <Field label="Airbnb / Vrbo iCal auto-refresh interval">
+              <select className={field} value={icalInterval} onChange={(event) => setIcalInterval(event.target.value as IcalInterval)}>
+                <option value="15">Every 15 minutes</option>
+                <option value="30">Every 30 minutes</option>
+                <option value="60">Every 60 minutes</option>
+              </select>
+            </Field>
           </div>
-          {billingNote ? (
-            <p className="text-[11px] text-rose-400">
-              Square checkout failed. Check your session and SQUARE_ACCESS_TOKEN.
-            </p>
-          ) : null}
+          <SaveButton label="Save Changes" onClick={saveHardware} />
         </section>
       ) : null}
+
+      {tab === "team" ? (
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <Header
+            icon={Users}
+            title="Team & cleaners access"
+            subtitle="Invite cleaning crew or co-hosts with role-based permissions."
+          />
+          <div className="mt-6 grid gap-3 sm:grid-cols-[1fr_160px_auto]">
+            <input
+              type="email"
+              className={field + " mt-0"}
+              placeholder="crew@example.com"
+              value={inviteEmail}
+              onChange={(event) => setInviteEmail(event.target.value)}
+            />
+            <select className={field + " mt-0"} value={inviteRole} onChange={(event) => setInviteRole(event.target.value as TeamRole)}>
+              <option value="cleaner">Cleaner</option>
+              <option value="cohost">Co-host</option>
+              <option value="inspector">Inspector</option>
+            </select>
+            <button
+              type="button"
+              onClick={invite}
+              className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-sky-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-sky-700"
+            >
+              <Plus className="h-4 w-4" /> Invite
+            </button>
+          </div>
+          <p className="mt-3 text-xs font-medium text-slate-800">{ROLE_PERMS[inviteRole]}</p>
+
+          <ul className="mt-6 divide-y divide-slate-200 rounded-xl border border-slate-200">
+            {team.map((member) => (
+              <li key={member.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+                <div>
+                  <p className="text-sm font-bold text-slate-900">{member.email}</p>
+                  <p className="text-xs font-medium text-slate-800">
+                    {ROLE_LABEL[member.role]} · {member.status === "active" ? "Active" : "Invite pending"}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    saveTeam(team.filter((row) => row.id !== member.id));
+                    flashSaved();
+                  }}
+                  className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-900 hover:bg-slate-50"
+                >
+                  <Trash2 className="h-3.5 w-3.5" /> Remove
+                </button>
+              </li>
+            ))}
+          </ul>
+          <SaveButton
+            label="Save Changes"
+            onClick={() => {
+              saveTeam(team);
+              flashSaved();
+            }}
+          />
+        </section>
+      ) : null}
+
+      {tab === "billing" ? <HostBillingSummary /> : null}
     </div>
   );
 }
 
-function AccountProfileCard() {
-  const [fullName, setFullName] = useState("Javier");
-  const [busy, setBusy] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const supabase = createAuthBrowserClient();
-    void supabase.auth.getUser().then(({ data }: { data: { user: { user_metadata?: Record<string, unknown> } | null } }) => {
-      setFullName(hostFullName(data.user));
-    });
-  }, []);
-
-  const save = async () => {
-    setBusy(true);
-    setError(null);
-    setSaved(false);
-    const trimmed = fullName.trim() || "Javier";
-    const firstName = trimmed.split(/\s+/)[0] ?? "Javier";
-    try {
-      const supabase = createAuthBrowserClient();
-      const { error: cause } = await supabase.auth.updateUser({
-        data: {
-          full_name: trimmed,
-          first_name: firstName,
-        },
-      });
-      if (cause) throw cause;
-      setFullName(trimmed);
-      setSaved(true);
-      window.setTimeout(() => setSaved(false), 2000);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "No se pudo guardar el nombre.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
+function Header({
+  icon: Icon,
+  title,
+  subtitle,
+}: {
+  icon: typeof User;
+  title: string;
+  subtitle: string;
+}) {
   return (
-    <section className="rounded-2xl border border-slate-800/80 bg-slate-900/60 p-6 space-y-4">
+    <div className="border-b border-slate-200 pb-4">
       <div className="flex items-center gap-2">
-        <User className="h-4 w-4 text-emerald-400" />
-        <h3 className="text-sm font-semibold text-white">Perfil de anfitrión</h3>
+        <Icon className="h-5 w-5 text-sky-700" />
+        <h2 className="text-lg font-bold text-slate-900">{title}</h2>
       </div>
-      <p className="text-xs text-slate-500">
-        Este nombre aparece en el saludo del dashboard. No se toma del correo.
-      </p>
-      <label className="block text-xs text-slate-400">
-        Nombre Completo
-        <input
-          type="text"
-          value={fullName}
-          onChange={(event) => setFullName(event.target.value)}
-          placeholder="Javier"
-          className={`${inputClass} mt-1.5`}
-        />
-      </label>
-      {error ? <p className="text-xs text-rose-400">{error}</p> : null}
-      <button
-        type="button"
-        disabled={busy}
-        onClick={() => void save()}
-        className="rounded-xl bg-emerald-500 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-emerald-400 disabled:opacity-60"
-      >
-        {busy ? "Guardando…" : saved ? "Guardado" : "Guardar nombre"}
-      </button>
-    </section>
+      <p className="mt-1 text-sm font-medium text-slate-800">{subtitle}</p>
+    </div>
   );
 }
 
-function SecretField({
-  label,
-  value,
-  show,
-  placeholder,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  show: boolean;
-  placeholder: string;
-  onChange: (value: string) => void;
-}) {
+function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <label className="block text-xs text-slate-400">
-      {label}
-      <input
-        className={`${inputClass} mt-1.5 font-mono text-xs`}
-        type={show ? "text" : "password"}
-        autoComplete="off"
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        placeholder={placeholder}
-      />
+    <label className="block">
+      <span className={labelClass}>{label}</span>
+      {children}
     </label>
   );
 }
 
+function SaveButton({ label, onClick, disabled }: { label: string; onClick: () => void; disabled?: boolean }) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className="mt-6 rounded-xl bg-sky-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-sky-700 disabled:opacity-60"
+    >
+      {label}
+    </button>
+  );
+}
+
 function ToggleRow({
-  label,
+  title,
+  description,
   checked,
   onChange,
 }: {
-  label: string;
+  title: string;
+  description: string;
   checked: boolean;
   onChange: (value: boolean) => void;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 text-sm text-slate-300">
-      {label}
+    <div className="flex items-start justify-between gap-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+      <div>
+        <p className="text-sm font-bold text-slate-900">{title}</p>
+        <p className="mt-1 text-xs font-medium text-slate-800">{description}</p>
+      </div>
       <button
         type="button"
         role="switch"
         aria-checked={checked}
+        aria-label={title}
         onClick={() => onChange(!checked)}
-        className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
-          checked ? "bg-emerald-500" : "bg-slate-700"
-        }`}
+        className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${checked ? "bg-sky-600" : "bg-slate-300"}`}
       >
         <span
-          className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
+          className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow-sm transition-transform ${
             checked ? "left-5" : "left-0.5"
           }`}
         />

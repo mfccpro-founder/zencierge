@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic"; // ← prevent CDN/caching of personalized TTS
 
 const VOICES = new Set(["nova", "shimmer", "coral", "sage"]);
 
@@ -38,7 +39,7 @@ export async function POST(req: NextRequest) {
       body.voice ?? (body.voiceProfile === "sarah" ? "shimmer" : "nova");
     const voice = VOICES.has(requested) ? requested : "nova";
     // Slightly slower than default so Elena (nova) sounds natural, paused and clear.
-    const speed = Number.isFinite(body.speed) ? Math.min(Math.max(body.speed as number, 0.5), 1.2) : 0.9;
+    const speed = Number.isFinite(body.speed) ? Math.min(Math.max(body.speed as number, 0.5), 1.2) : 1;
     // Reply language for this clip (es/en) — used to log and confirm the
     // requested pronunciation; nova handles both accents natively.
     const language = body.language === "en" ? "en" : "es";

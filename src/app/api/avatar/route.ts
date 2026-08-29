@@ -1,6 +1,6 @@
 import type { Property } from "@/lib/dashboard-data";
 import { buildAvatarSystemPrompt, type AvatarChatTurn } from "@/lib/avatar-prompt";
-import type { LanguageMode, ReplyLang } from "@/lib/human-voice";
+import { detectUtteranceLang, type LanguageMode, type ReplyLang } from "@/lib/human-voice";
 
 type AvatarBody = {
   question?: string;
@@ -42,13 +42,11 @@ export async function POST(request: Request) {
   const forcedLang = body.language === "es" || body.language === "en" ? body.language : null;
   // Priority: forced mode > client's per-utterance detection > server detection.
   // This is the language of the LATEST message only, never the session's.
-  const guestLang = forcedLang ?? body.lastUserLang ?? detectGuestLang(guestText);
-  // SYSTEM OVERRIDE as the first directive of the message: breaks the history
-  // inertia that kept Elena replying in English after an English first turn.
+  const guestLang = forcedLang ?? body.lastUserLang ?? detectUtteranceLang(guestText);
   const langOverride =
     guestLang === "es"
-      ? "[SYSTEM OVERRIDE: The user's current message is in SPANISH. You MUST respond 100% in Spanish. Do NOT use English. Never say you do not speak Spanish.]"
-      : "[SYSTEM OVERRIDE: The user's current message is in ENGLISH. You MUST respond 100% in English. Do NOT use Spanish.]";
+      ? "[SYSTEM OVERRIDE] Detect the language of the user's incoming message. This message is SPANISH. You MUST respond entirely in fluent Spanish. Never respond in English to a Spanish question."
+      : "[SYSTEM OVERRIDE] The user's current message is ENGLISH. Respond entirely in English.";
   const userContent = `${langOverride}\n\nGuest: ${guestText}`;
 
   const openaiKey = body.openaiKey?.trim() || process.env.OPENAI_API_KEY || process.env.OPENAI_TTS_API_KEY || "";
@@ -84,23 +82,6 @@ function extractGuestText(question: string) {
   return question.trim();
 }
 
-/** Spanish is the base language: English needs clear keyword evidence. */
-function detectGuestLang(text: string): "es" | "en" {
-  const t = text.toLowerCase();
-  const hasSpanishMarks = /[áéíóúüñ¿¡]/.test(text);
-  const esHits =
-    t.match(
-      /\b(el|la|los|las|un|una|unos|unas|y|o|de|del|qué|que|dónde|donde|cómo|como|está|están|hola|gracias|necesito|quiero|cerca|restaurante|comida|cenar|almorzar|desayuno|ayuda|puedo|favor|baño|clave|hay|para|con|por|playa|buenas|días|noches|tarde|cuál|tengo|soy|estoy|buscando)\b/g,
-    )?.length ?? 0;
-  const enHits =
-    t.match(
-      /\b(i|i'm|im|you|we|the|a|an|is|are|was|need|want|where|what|how|hello|hi|hey|please|thanks|thank|restaurant|near|nearby|close|recommend|wifi|password|door|code|help|can|could|would|my|me|looking|food|eat|hungry|dinner|lunch|breakfast|pharmacy|store|beach|check-in|checkout|towels|pool|parking|tonight|good)\b/g,
-    )?.length ?? 0;
-  if (hasSpanishMarks || esHits > 0) return "es";
-  if (enHits > 0) return "en";
-  return "es";
-}
-
 function chatTurns(history: AvatarChatTurn[]) {
   return history.slice(-8).flatMap((turn) => {
     const content = turn.text.trim();
@@ -124,7 +105,7 @@ async function fetchOpenAiReply(
     body: JSON.stringify({
       model: "gpt-4o-mini",
       temperature: 0.45,
-      max_tokens: 280,
+      max_tokens: 90,
       messages: [
         { role: "system", content: system },
         ...chatTurns(history),
@@ -159,7 +140,7 @@ async function fetchClaudeReply(
     },
     body: JSON.stringify({
       model: "claude-3-5-haiku-latest",
-      max_tokens: 280,
+      max_tokens: 90,
       temperature: 0.45,
       system,
       messages: [

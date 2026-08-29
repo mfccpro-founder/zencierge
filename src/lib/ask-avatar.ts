@@ -15,9 +15,8 @@ export async function askAvatarReply(options: {
   history?: AvatarChatTurn[];
   signal?: AbortSignal;
 }) {
-  // Hard 10s timeout on the LLM round-trip. On timeout we fall back to the
-  // local rules-based concierge so the call UI never freezes.
-  const TIMEOUT_MS = 10000;
+  // Hard 5s timeout so the guest sees a local rules reply instead of waiting on TTS+LLM.
+  const TIMEOUT_MS = 5000;
   const controller = new AbortController();
   let timedOut = false;
   const timer = window.setTimeout(() => {
@@ -67,7 +66,7 @@ export async function askAvatarReply(options: {
     question: options.question,
     properties: options.properties,
     fallback: options.property,
-    language: options.language,
+    language: options.lastUserLang ?? options.language,
     hours: options.hours,
     emergencyNumber: options.emergencyNumber,
   });

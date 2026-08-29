@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { Suspense, useMemo, useState, type ReactNode } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   Banknote,
   CalendarDays,
@@ -29,12 +30,21 @@ import {
 } from "@/lib/financials";
 
 const RANGE_OPTIONS: { id: FinanceRangeId; label: string }[] = [
-  { id: "this_month", label: "Este mes" },
-  { id: "last_quarter", label: "Último trimestre" },
-  { id: "ytd", label: "Año en curso" },
+  { id: "this_month", label: "This Month" },
+  { id: "last_quarter", label: "Last Quarter" },
+  { id: "ytd", label: "Year to Date" },
 ];
 
 export function FinancesView() {
+  return (
+    <Suspense fallback={<div className="text-sm text-slate-500">Loading financials…</div>}>
+      <FinancesViewInner />
+    </Suspense>
+  );
+}
+
+function FinancesViewInner() {
+  const searchParams = useSearchParams();
   const { properties } = useListings();
   const [propertyId, setPropertyId] = useState<string | "all">("all");
   const [rangeId, setRangeId] = useState<FinanceRangeId>("this_month");
@@ -45,6 +55,10 @@ export function FinancesView() {
   const [quoteRate, setQuoteRate] = useState(18);
   const [quoteCleans, setQuoteCleans] = useState(4);
   const [quoteCleanFee, setQuoteCleanFee] = useState(165);
+  const checkoutNote =
+    searchParams.get("checkout") === "success"
+      ? `Square checkout complete${searchParams.get("sandbox") === "1" ? " (sandbox mock)" : ""}: ${searchParams.get("plan") ?? "plan"} · ${searchParams.get("billing") === "annual" ? "annual" : "monthly"}.`
+      : null;
 
   const propertyName = (id: string) =>
     properties.find((property) => property.id === id)?.name ?? id;
@@ -82,26 +96,31 @@ export function FinancesView() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = "zencierge-reporte-financiero.csv";
+    link.download = "zencierge-financial-report.csv";
     link.click();
     URL.revokeObjectURL(url);
   };
 
   return (
     <div className="space-y-6">
+      {checkoutNote ? (
+        <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm font-semibold text-emerald-200">
+          {checkoutNote}
+        </div>
+      ) : null}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="text-xs text-slate-500">Revenue Command Center · South Florida portfolio</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <label className="text-[11px] text-slate-500">
-            Propiedad
+          <label className="text-[11px] text-slate-400">
+            Property
             <select
               value={propertyId}
               onChange={(event) => setPropertyId(event.target.value)}
-              className="ml-2 rounded-full border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-200"
+              className="ml-2 rounded-full border border-white/10 bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-200"
             >
-              <option value="all">Todas las propiedades</option>
+              <option value="all">All Properties</option>
               {properties.map((property) => (
                 <option key={property.id} value={property.id}>
                   {property.name}
@@ -117,7 +136,7 @@ export function FinancesView() {
               className={`rounded-full border px-3 py-1.5 text-xs font-medium ${
                 rangeId === option.id
                   ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-300"
-                  : "border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200"
+                  : "border-white/10 bg-slate-900 text-slate-400 hover:text-slate-200"
               }`}
             >
               {option.label}
@@ -128,47 +147,47 @@ export function FinancesView() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         <Kpi
-          label="Ingresos Netos Totales"
+          label="Total Net Revenue"
           value={usd(kpis.net)}
-          hint={`${range.label} · vs mes anterior`}
+          hint={`${range.label} · vs prior month`}
           delta={deltaPct(kpis.net, prevKpis.net)}
           icon={<Banknote className="h-4 w-4 text-emerald-400" />}
         />
         <Kpi
           label="ADR"
           value={usd(kpis.adr)}
-          hint="Tarifa promedio diaria"
+          hint="Average daily rate"
           delta={deltaPct(kpis.adr, prevKpis.adr)}
           icon={<CalendarDays className="h-4 w-4 text-sky-400" />}
         />
         <Kpi
-          label="Tasa de Ocupación"
+          label="Occupancy Rate"
           value={`${Math.round(kpis.occupancy * 100)}%`}
-          hint={`${kpis.nights} noches ocupadas`}
+          hint={`${kpis.nights} occupied nights`}
           delta={deltaPct(kpis.occupancy, prevKpis.occupancy)}
           icon={<Percent className="h-4 w-4 text-violet-400" />}
         />
         <Kpi
-          label="Próximos Pagos Pendientes"
+          label="Upcoming Payouts"
           value={usd(kpis.pending)}
-          hint="Payouts en camino"
+          hint="Payouts in transit"
           delta={deltaPct(kpis.pending, prevKpis.pending)}
           icon={<Wallet className="h-4 w-4 text-amber-400" />}
         />
       </div>
 
-      <section className="rounded-2xl border border-slate-800/80 bg-slate-900/50 p-5">
-        <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+      <section className="rounded-2xl border border-white/10 bg-slate-900/80 p-5">
+        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h3 className="text-sm font-semibold text-white">Ingresos brutos vs ganancia neta</h3>
-            <p className="text-[11px] text-slate-500 mt-0.5">Últimos 6 meses · pasa el cursor sobre un mes</p>
+            <h3 className="text-sm font-semibold text-white">Gross Revenue vs Net Profit</h3>
+            <p className="mt-0.5 text-[11px] text-slate-500">Last 6 months · hover a month for detail</p>
           </div>
           <div className="flex items-center gap-3 text-[11px] text-slate-400">
             <span className="inline-flex items-center gap-1.5">
-              <span className="h-2 w-2 rounded-sm bg-sky-400" /> Bruto
+              <span className="h-2 w-2 rounded-sm bg-sky-400" /> Gross
             </span>
             <span className="inline-flex items-center gap-1.5">
-              <span className="h-2 w-2 rounded-sm bg-emerald-400" /> Neto
+              <span className="h-2 w-2 rounded-sm bg-emerald-400" /> Net
             </span>
           </div>
         </div>
@@ -223,12 +242,12 @@ export function FinancesView() {
         </div>
       </section>
 
-      <section className="rounded-2xl border border-slate-800/80 bg-slate-900/50 overflow-hidden">
-        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b border-slate-800">
+      <section className="overflow-hidden rounded-2xl border border-white/10 bg-slate-900/80">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-5 py-4">
           <div>
-            <h3 className="text-sm font-semibold text-white">Desglose de payouts</h3>
-            <p className="text-[11px] text-slate-500 mt-0.5">
-              {range.label} · {rows.length} transacciones
+            <h3 className="text-sm font-semibold text-white">Payout breakdown</h3>
+            <p className="mt-0.5 text-[11px] text-slate-500">
+              {range.label} · {rows.length} transactions
             </p>
           </div>
           <button
@@ -237,30 +256,30 @@ export function FinancesView() {
             className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-3 py-2 text-[11px] font-bold text-slate-950 hover:bg-emerald-400"
           >
             <Download className="h-3.5 w-3.5" />
-            Exportar a CSV / Reporte Financiero
+            Export CSV / Financial Report
           </button>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
-            <thead className="text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-800">
+            <thead className="border-b border-white/10 text-[10px] uppercase tracking-wider text-slate-500">
               <tr>
-                <th className="px-4 py-3 font-semibold">Fecha</th>
-                <th className="px-4 py-3 font-semibold">Propiedad</th>
-                <th className="px-4 py-3 font-semibold">Huésped</th>
-                <th className="px-4 py-3 font-semibold">Canal</th>
-                <th className="px-4 py-3 font-semibold">Bruto</th>
-                <th className="px-4 py-3 font-semibold">Limpieza</th>
-                <th className="px-4 py-3 font-semibold">Comisión</th>
-                <th className="px-4 py-3 font-semibold">Impuestos</th>
-                <th className="px-4 py-3 font-semibold">Neto</th>
-                <th className="px-4 py-3 font-semibold">Estado</th>
+                <th className="px-4 py-3 font-semibold">Date</th>
+                <th className="px-4 py-3 font-semibold">Property</th>
+                <th className="px-4 py-3 font-semibold">Guest</th>
+                <th className="px-4 py-3 font-semibold">Channel</th>
+                <th className="px-4 py-3 font-semibold">Gross</th>
+                <th className="px-4 py-3 font-semibold">Cleaning</th>
+                <th className="px-4 py-3 font-semibold">Commission</th>
+                <th className="px-4 py-3 font-semibold">Taxes</th>
+                <th className="px-4 py-3 font-semibold">Net</th>
+                <th className="px-4 py-3 font-semibold">Status</th>
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 ? (
                 <tr>
                   <td colSpan={10} className="px-4 py-8 text-center text-slate-500">
-                    No hay transacciones en este rango.
+                    No transactions in this range.
                   </td>
                 </tr>
               ) : (
@@ -271,7 +290,7 @@ export function FinancesView() {
         </div>
       </section>
 
-      <section className="rounded-2xl border border-slate-800/80 bg-slate-900/50 p-5 space-y-4">
+      <section className="space-y-4 rounded-2xl border border-white/10 bg-slate-900/80 p-5">
         <div className="flex items-center gap-2">
           <Calculator className="h-4 w-4 text-emerald-400" />
           <h3 className="text-sm font-semibold text-white">Co-hosting commission calculator</h3>
@@ -307,7 +326,7 @@ function LedgerRow({
   const paid = row.status === "completed";
   const pending = row.status === "payout_pending";
   return (
-    <tr className="border-b border-slate-800/70 last:border-0">
+    <tr className="border-b border-white/10 last:border-0">
       <td className="px-4 py-3 text-slate-300 whitespace-nowrap">
         {row.check_in}
         <span className="block text-[10px] text-slate-500">{row.check_out}</span>
@@ -364,7 +383,7 @@ function Kpi({
 }) {
   const up = delta >= 0;
   return (
-    <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800/80">
+    <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-5">
       <div className="flex items-center justify-between">
         <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">{label}</span>
         {icon}
@@ -373,7 +392,7 @@ function Kpi({
       <div className={`mt-2 flex items-center gap-1 text-xs font-medium ${up ? "text-emerald-400" : "text-rose-400"}`}>
         {up ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
         {up ? "+" : ""}
-        {delta.toFixed(1)}% vs mes anterior
+        {delta.toFixed(1)}% vs prior month
       </div>
       <div className="text-[11px] text-slate-500 mt-1">{hint}</div>
     </div>
@@ -394,7 +413,7 @@ function NumberField({
   return (
     <label className="text-[11px] text-slate-400">
       {label}
-      <span className="mt-1 flex items-center rounded-xl border border-slate-800 bg-slate-950">
+      <span className="mt-1 flex items-center rounded-xl border border-white/10 bg-slate-950">
         {prefix ? <span className="pl-3 text-slate-500 text-sm">{prefix}</span> : null}
         <input
           type="number"
@@ -418,7 +437,7 @@ function QuoteStat({
   accent?: boolean;
 }) {
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-3">
+    <div className="rounded-xl border border-white/10 bg-slate-950/60 px-3 py-3">
       <p className="text-[10px] uppercase tracking-wider text-slate-500">{label}</p>
       <p className={`mt-1 text-lg font-bold ${accent ? "text-emerald-400" : "text-white"}`}>{value}</p>
     </div>

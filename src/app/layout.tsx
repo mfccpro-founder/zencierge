@@ -13,21 +13,21 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Zencierge · 24/7 AI Voice Receptionist for Hosts Across the US",
+  title: "Zencierge · Autonomous Host OS for Airbnb & Vrbo",
   description:
-    "Bilingual AI receptionist, Airbnb & Vrbo calendar sync, and co-host payouts for Superhosts nationwide.",
+    "AI voice reception, turnover photo inspection, and AirCover dispute proof. Flat pricing from $49/month. 14-day free trial.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
-      lang="es"
+      lang="en"
       className={`dark ${geistSans.variable} ${geistMono.variable} h-full antialiased`}
-      suppressHydrationWarning
+      suppressHydrationWarning={true}
     >
       <body
         className="min-h-full flex flex-col bg-background text-foreground"
-        suppressHydrationWarning
+        suppressHydrationWarning={true}
       >
         {/* No third-party analytics SDKs are loaded in this app. */}
         {children}

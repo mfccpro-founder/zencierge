@@ -1,15 +1,13 @@
 "use client";
 
-import { useState } from "react";
-import Image from "next/image";
 import { Sparkles } from "lucide-react";
+import { useState } from "react";
 
 const AVATAR_SRC = "/images/elena-avatar.jpg";
 
 /**
- * Circular Elena photo avatar with an emerald ring + glow.
- * Renders /images/elena-avatar.jpg (face framed with object-cover object-top)
- * and gracefully falls back to the Sparkles mark while the image is unavailable.
+ * Circular Elena photo. Uses a plain img so Safari/iOS does not decode a giant
+ * next/image srcset (which can freeze the guest portal on first paint).
  */
 export function ElenaAvatar({
   size = 44,
@@ -28,14 +26,13 @@ export function ElenaAvatar({
       style={{ width: size, height: size }}
     >
       {ok ? (
-        <Image
+        <img
           src={AVATAR_SRC}
           alt="Elena · AI Concierge"
-          fill
-          sizes={`${size}px`}
-          className="scale-[1.65] origin-top rounded-full object-cover object-top"
+          width={size}
+          height={size}
+          className="h-full w-full scale-[1.65] origin-top rounded-full object-cover object-top"
           onError={() => setOk(false)}
-          priority={size >= 80}
         />
       ) : (
         <div className="flex h-full w-full items-center justify-center">

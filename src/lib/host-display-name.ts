@@ -1,4 +1,4 @@
-const FALLBACK_HOST_NAME = "Javier";
+const FALLBACK_HOST_NAME = "Host";
 
 function metaString(meta: Record<string, unknown>, key: string) {
   const value = meta[key];

@@ -172,6 +172,23 @@ export function answerGuestQuestion({
     return `At ${name}, check-in is ${property.checkIn}. And check-out, ${property.checkOut}.${night}`;
   }
 
+  if (intent === "trash") {
+    const trash = property.trash.trim();
+    if (trash) {
+      if (lang === "es") return `Sobre la basura en ${name}: ${trash}.${night}`;
+      return `For trash at ${name}: ${trash}.${night}`;
+    }
+    const snippet = relevantHandbookSnippet(question, property.handbook);
+    if (snippet) {
+      if (lang === "es") return `Sobre la basura en ${name}. ${snippet}${night}`;
+      return `About trash at ${name}. ${snippet}${night}`;
+    }
+    if (lang === "es") {
+      return `No tengo el día de recogida en el handbook de ${name}. Pregunto al anfitrión y te confirmo.${night}`;
+    }
+    return `I don't have the pickup day in the ${name} handbook. I'll check with the host and confirm.${night}`;
+  }
+
   if (intent === "rules") {
     const snippet =
       relevantHandbookSnippet(question, property.handbook) ||

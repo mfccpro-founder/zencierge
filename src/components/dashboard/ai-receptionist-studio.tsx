@@ -8,7 +8,7 @@ import { ElenaAvatar } from "@/components/dashboard/elena-avatar";
 import ElenaVoiceWidget from "@/components/dashboard/elena-voice-widget";
 
 const PHASE_LABEL: Record<ReceptionistPhase, string> = {
-  idle: "Ready — press Llamada de prueba con Elena",
+  idle: "Ready — press Test Call with Elena",
   listening: "Listening…",
   thinking: "Thinking…",
   speaking: "Elena is speaking…",
@@ -21,10 +21,10 @@ export type ReceptionistLine = {
 };
 
 const QUICK_PROMPTS = [
-  "¿Cuál es la clave del Wi-Fi?",
-  "¿Hay una farmacia cerca?",
-  "¿Dónde puedo comprar comida?",
-  "Hay una fuga de agua en el baño",
+  "What is the Wi-Fi password?",
+  "Is there a nearby pharmacy?",
+  "Where can I buy food / groceries?",
+  "There is a water leak in the bathroom",
 ];
 
 export function AiReceptionistStudio({
@@ -95,8 +95,8 @@ export function AiReceptionistStudio({
           </p>
           <h3 className="text-lg font-semibold text-white mt-1">Live avatar session</h3>
           <p className="text-xs text-slate-400 mt-1 max-w-xl">
-            El cerebro es /api/avatar en español (propiedad en Miami / Miramar). HeyGen solo vocaliza con
-            task_type repeat y voz femenina. Sin knowledge base ni conversación autónoma.
+            The backend is /api/avatar in English/Spanish (Miami / Miramar property). HeyGen vocalizes
+            with repeat task type and female voice.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -130,12 +130,12 @@ export function AiReceptionistStudio({
             </div>
             <p className="text-xs font-semibold text-white">
               {phase === "speaking"
-                ? "Elena está hablando…"
+                ? "Elena is speaking…"
                 : phase === "listening"
-                  ? "Escuchando…"
+                  ? "Listening…"
                   : phase === "thinking"
-                    ? "Pensando…"
-                    : "Elena · lista"}
+                    ? "Thinking…"
+                    : "Elena · Ready"}
             </p>
             <div className="flex items-end justify-center gap-1 h-6">
               {[0, 1, 2, 3, 4].map((bar) => (
@@ -159,7 +159,7 @@ export function AiReceptionistStudio({
               ))}
             </div>
           </div>
-          <ElenaVoiceWidget />
+          <ElenaVoiceWidget property={selectedProperty} />
           <p className="mt-3 text-[11px] text-slate-500 text-center">{connectionLabel}</p>
           <button
             type="button"
@@ -168,7 +168,7 @@ export function AiReceptionistStudio({
             className="mt-2 w-full flex items-center justify-center gap-2 rounded-xl border border-slate-700 py-2 text-[11px] font-semibold text-slate-300 hover:bg-slate-800 disabled:opacity-40"
           >
             <VolumeX className="h-3.5 w-3.5" />
-            Silenciar / detener voz
+            Mute / Stop voice
           </button>
         </div>
 
@@ -198,7 +198,7 @@ export function AiReceptionistStudio({
               {(
                 [
                   ["auto", "Auto"],
-                  ["es", "Español"],
+                  ["es", "Spanish"],
                   ["en", "English"],
                 ] as const
               ).map(([value, label]) => (
@@ -243,7 +243,7 @@ export function AiReceptionistStudio({
               </>
             ) : (
               <>
-                <Phone className="h-4 w-4" /> Llamada de prueba con Elena
+                <Phone className="h-4 w-4" /> Test Call with Elena
               </>
             )}
           </button>

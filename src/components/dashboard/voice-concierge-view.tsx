@@ -11,11 +11,13 @@ import { askAvatarReply } from "@/lib/ask-avatar";
 import { useHeygenRepeatAvatar } from "@/components/dashboard/use-heygen-repeat";
 import {
   VOICE_PROFILES,
-  detectReplyLang,
+  detectUtteranceLang,
+  getSpeechRecognitionCtor,
   getVoiceProfile,
   keepAudioChannelAlive,
   resumePersistentAudio,
   speakWithBrowserTts,
+  speechRecognitionLang,
   stopHumanVoice,
   unlockSpeechAudio,
   type LanguageMode,
@@ -54,44 +56,15 @@ type SpeechRec = {
   stop: () => void;
 };
 
-function getSpeechRecognitionCtor(): (new () => SpeechRec) | null {
-  if (typeof window === "undefined") return null;
-  const extra = window as unknown as {
-    SpeechRecognition?: new () => SpeechRec;
-    webkitSpeechRecognition?: new () => SpeechRec;
-  };
-  return extra.SpeechRecognition ?? extra.webkitSpeechRecognition ?? null;
-}
-
 function recognitionLangFor(mode: LanguageMode, _session: LanguageMode): string {
-  if (mode === "en") return "en-US";
-  // Auto (and Spanish) always listen with Spanish as the base: Chrome's
-  // recognizer is not polyglot, so a locked en-US base would mangle Spanish
-  // words and keep Elena "anchored" in English. With es-US the Spanish
-  // transcription stays intact and per-utterance detection flips the reply
-  // language back and forth (English still transcribes acceptably).
-  return "es-US";
+  return speechRecognitionLang(mode);
 }
 
 const LANGUAGE_MIRROR_INSTRUCTION =
   "Answer strictly in the language used by the guest in their last message (if they speak English, reply in English; if Spanish, reply in Spanish).";
 
 function detectGuestLang(text: string): ReplyLang {
-  const t = text.trim().toLowerCase();
-  const enHits =
-    t.match(
-      /\b(i|i'm|im|i'd|you|we|the|a|an|is|are|was|need|want|where|what|what's|how|hello|hi|hey|please|thanks|thank|restaurant|near|nearby|close|recommend|wifi|password|door|code|help|can|could|would|my|me|looking|food|eat|hungry|dinner|lunch|breakfast|pharmacy|store|beach|check-in|checkout|towels|pool|parking|tonight|good)\b/gi,
-    )?.length ?? 0;
-  const esHits =
-    t.match(
-      /\b(el|la|los|las|un|una|unos|unas|y|o|de|del|qué|que|dónde|donde|cómo|como|está|están|hola|gracias|necesito|quiero|cerca|restaurante|comida|cenar|almorzar|desayuno|ayuda|puedo|favor|baño|clave|hay|para|con|por|playa|buenas|buenas|días|noches|tarde)\b/gi,
-    )?.length ?? 0;
-  const hasSpanishMarks = /[áéíóúüñ¿¡]/i.test(text);
-  // Spanish is the base language: English must win with clear keyword evidence.
-  if (enHits > 0 && enHits > esHits && !hasSpanishMarks) return "en";
-  if (esHits > 0 || hasSpanishMarks) return "es";
-  if (enHits > 0) return "en";
-  return "es";
+  return detectUtteranceLang(text);
 }
 
 const inputClass =
@@ -168,6 +141,10 @@ export function VoiceConciergeView() {
   useEffect(() => {
     languageRef.current = language;
     if (language !== "auto") sessionLangRef.current = language;
+    if (!wantMicRef.current || !callActiveRef.current) return;
+    if (speakingRef.current || thinkingRef.current) return;
+    stopListening();
+    window.setTimeout(() => startListeningRef.current(), 80);
   }, [language]);
 
   useEffect(() => {
@@ -351,7 +328,7 @@ export function VoiceConciergeView() {
   };
 
   const ensureAudioUnlocked = () => {
-    // Called synchronously from the click handler (Llamada de prueba con Elena) so the
+    // Called synchronously from the click handler (Test Call with Elena) so the
     // browser treats this gesture as the unlock for all later playback.
     unlockSpeechAudio(audioRef.current);
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
@@ -376,139 +353,65 @@ export function VoiceConciergeView() {
     try {
       await resumePersistentAudio(audio);
     } catch (cause) {
-      console.error("[voice] Tocar para escuchar failed", cause);
+      console.error("[voice] Tap to listen failed", cause);
       setSpeaking(false);
     }
   };
 
-  // Base language for TTS replies: in Auto it is the language of the latest
-  // guest utterance; in manual modes it is the fixed selection.
-  const replyBaseLang = (): ReplyLang => {
-    const mode = languageRef.current;
-    if (mode === "auto") return currentTurnLangRef.current;
-    return mode === "en" ? "en" : "es";
-  };
-
-  const fallbackBrowserTts = (text: string) => {
-    speakWithBrowserTts({
-      text,
-      lang: detectReplyLang(text, replyBaseLang()),
-      onStart: () => {
-        speakingRef.current = true;
-        setSpeaking(true);
-      },
-      onEnd: () => {
-        releaseAndListen();
-      },
+  const fallbackBrowserTts = (text: string) =>
+    new Promise<void>((resolve) => {
+      const started = speakWithBrowserTts({
+        text,
+        lang: detectUtteranceLang(text),
+        onStart: () => {
+          speakingRef.current = true;
+          setSpeaking(true);
+        },
+        onEnd: () => {
+          speakingRef.current = false;
+          setSpeaking(false);
+          resolve();
+        },
+      });
+      if (!started) resolve();
     });
-  };
 
-  const speak = async (text: string, forProfile = profile) => {
+  const speak = async (text: string) => {
     respondingRef.current = true;
     speakingRef.current = true;
     stopListening();
     setResponding(true);
     setSpeaking(true);
 
-    const voice = forProfile.id === "sarah" ? "shimmer" : "nova";
-    let url = "";
-    const audioWatchdogMs = 8000;
-
     try {
-      // 10s hard timeout on the TTS request; on timeout fall back to the
-      // browser voice instead of freezing the call.
-      const ttsAbort = new AbortController();
-      const ttsTimer = window.setTimeout(() => ttsAbort.abort(), 10000);
-      const ttsRes = await fetch("/api/tts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal: ttsAbort.signal,
-        body: JSON.stringify({
-          text,
-          voice,
-          voiceProfile: forProfile.id,
-          // Explicit language for this reply (es for Spanish replies) so the
-          // TTS engine pronounces it with the right accent, never anchored.
-          language: detectReplyLang(text, replyBaseLang()),
-        }),
-      }).finally(() => window.clearTimeout(ttsTimer));
-      if (!ttsRes.ok) {
-        throw new Error(`tts-network-${ttsRes.status}`);
+      if (heygen.ready) {
+        const ok = await heygen.speakRepeat(text);
+        if (ok) {
+          await new Promise<void>((resolve) => {
+            const startedAt = Date.now();
+            const tick = () => {
+              if (!heygenSpeakingRef.current && Date.now() - startedAt > 400) {
+                resolve();
+                return;
+              }
+              if (Date.now() - startedAt > 20000) {
+                resolve();
+                return;
+              }
+              window.setTimeout(tick, 200);
+            };
+            window.setTimeout(tick, 350);
+          });
+          return;
+        }
       }
-
-      const blob = new Blob([await ttsRes.arrayBuffer()], { type: "audio/mpeg" });
-      url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
-      audio.setAttribute("playsinline", "true");
-      audio.volume = 1;
-      audioRef.current = audio;
-
-      await new Promise<void>((resolve) => {
-        let settled = false;
-        const finish = () => {
-          if (settled) return;
-          settled = true;
-          if (audioWatchdogRef.current) {
-            window.clearTimeout(audioWatchdogRef.current);
-            audioWatchdogRef.current = 0;
-          }
-          speakingRef.current = false;
-          setSpeaking(false);
-          if (url) URL.revokeObjectURL(url);
-          resolve();
-        };
-
-        audio.onended = () => {
-          speakingRef.current = false;
-          respondingRef.current = false;
-          thinkingRef.current = false;
-          setSpeaking(false);
-          setResponding(false);
-          finish();
-          startListeningRef.current();
-        };
-        audio.onerror = () => {
-          speakingRef.current = false;
-          respondingRef.current = false;
-          thinkingRef.current = false;
-          setSpeaking(false);
-          setResponding(false);
-          finish();
-          startListeningRef.current();
-        };
-        const armWatchdog = (ms: number) => {
-          if (audioWatchdogRef.current) window.clearTimeout(audioWatchdogRef.current);
-          audioWatchdogRef.current = window.setTimeout(() => {
-            console.error("[voice] audio ended-event watchdog — unlocking mic");
-            try {
-              audio.pause();
-            } catch {
-              /* ignore */
-            }
-            speakingRef.current = false;
-            respondingRef.current = false;
-            thinkingRef.current = false;
-            setSpeaking(false);
-            setResponding(false);
-            finish();
-            startListeningRef.current();
-          }, ms);
-        };
-        armWatchdog(audioWatchdogMs);
-        audio.onloadedmetadata = () => {
-          const durationMs = Number.isFinite(audio.duration) ? audio.duration * 1000 + 2000 : audioWatchdogMs;
-          armWatchdog(Math.max(audioWatchdogMs, durationMs));
-        };
-
-        void audio.play().catch((cause) => {
-          console.error("[voice] MP3 play() failed", cause);
-          finish();
-          startListeningRef.current();
-        });
-      });
+      await fallbackBrowserTts(text);
     } catch (cause) {
       console.error("[voice] speak failed", cause);
-      fallbackBrowserTts(text);
+      setLines((current) => [
+        ...current,
+        { id: nextId(), speaker: "system", text: "Voice playback unavailable — reply is in the transcript." },
+      ]);
     } finally {
       respondingRef.current = false;
       thinkingRef.current = false;
@@ -622,6 +525,14 @@ export function VoiceConciergeView() {
       } catch (cause) {
         if (abort.signal.aborted) return;
         console.error("[voice] avatar reply failed", cause);
+        setLines((current) => [
+          ...current,
+          {
+            id: nextId(),
+            speaker: "system",
+            text: "Elena could not reply just now. Try again or type your question.",
+          },
+        ]);
       } finally {
         thinkingRef.current = false;
         respondingRef.current = false;
@@ -765,7 +676,7 @@ export function VoiceConciergeView() {
     const sample =
       language === "en" ? item.preview.en : language === "es" ? item.preview.es : item.preview.es;
     const gen = genRef.current;
-    await speak(sample, item);
+    await speak(sample);
     if (gen === genRef.current) {
       setSpeaking(false);
       setPreviewing(null);
@@ -808,7 +719,7 @@ export function VoiceConciergeView() {
             }}
             className="mb-3 w-full text-center text-xs font-medium text-emerald-300 hover:underline"
           >
-            Elena está respondiendo... (toca para cancelar)
+            Elena is responding... (tap to cancel)
           </button>
         ) : null}
         {tapToListen ? (
@@ -818,7 +729,7 @@ export function VoiceConciergeView() {
             className="mb-3 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-white py-3 text-sm font-bold text-slate-950 hover:bg-slate-100"
           >
             <Play className="h-4 w-4" />
-            Tocar para escuchar
+            Tap to listen
           </button>
         ) : null}
         <AiReceptionistStudio
@@ -835,10 +746,10 @@ export function VoiceConciergeView() {
           streamReady={streamReady || heygen.ready}
           connectionLabel={
             heygen.ready
-              ? "HeyGen REPEAT · es · voz femenina"
+              ? "HeyGen REPEAT · EN/ES · female voice"
               : streamReady
                 ? "Audio stream ready · /api/tts nova"
-                : "Standby · no media session"
+                : "Standby · No media session"
           }
           lines={lines}
           partialAi={partialAi}
@@ -923,9 +834,9 @@ export function VoiceConciergeView() {
                 onChange={(event) => setLanguage(event.target.value as LanguageMode)}
                 className={inputClass}
               >
-                <option value="auto">Bilingüe Inglés/Español automático</option>
-                <option value="en">Solo Inglés</option>
-                <option value="es">Solo Español</option>
+                <option value="auto">Auto bilingual English/Spanish</option>
+                <option value="en">English only</option>
+                <option value="es">Spanish only</option>
               </select>
             </div>
 
@@ -1087,7 +998,7 @@ export function VoiceConciergeView() {
                       : "bg-slate-950/50 border-slate-800 text-slate-300 hover:border-slate-700"
                   }`}
                 >
-                  Nocturno (10 PM–8 AM)
+                  Overnight (10 PM–8 AM)
                 </button>
               </div>
             </div>

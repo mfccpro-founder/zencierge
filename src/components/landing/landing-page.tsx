@@ -1,364 +1,240 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
 import Link from "next/link";
-import type { ZenciergePlanId } from "@/lib/zencierge-plans";
 import {
-  Banknote,
-  CalendarDays,
-  Check,
-  Headphones,
-  Loader2,
-  Phone,
+  ArrowRight,
+  Camera,
+  CheckCircle2,
+  PhoneCall,
   ShieldCheck,
+  Sparkles,
+  TrendingUp,
+  XCircle,
 } from "lucide-react";
-
-const plans = [
-  {
-    id: "starter",
-    name: "Starter",
-    monthly: 29,
-    blurb: "One US listing, bilingual voice line, iCal sync.",
-    popular: false,
-    features: [
-      "1 property · Dedicated Local US Phone Line (Any Area Code)",
-      "AI handbook (Wi-Fi, locks, parking)",
-      "Airbnb + Vrbo Quick Connect",
-      "Guest call transcripts",
-    ],
-  },
-  {
-    id: "pro",
-    name: "Pro Superhost",
-    monthly: 79,
-    popular: true,
-    blurb: "Up to 4 units, owner statements, overnight coverage.",
-    features: [
-      "Up to 4 US listings · Dedicated local lines",
-      "24/7 routing + host emergency transfer",
-      "Monthly owner payouts & 18% co-host math",
-      "Live Voice Tester + Neural / HD TTS",
-    ],
-  },
-  {
-    id: "agency",
-    name: "Co-Host Agency",
-    monthly: 199,
-    blurb: "Portfolio ops for co-hosts running multiple owners.",
-    popular: false,
-    features: [
-      "Unlimited listings nationwide",
-      "Multi-owner statements & export",
-      "Priority SIP lines · team inbox",
-      "White-label guest greeting",
-    ],
-  },
-] as const;
-
-const testimonials = [
-  {
-    quote:
-      "Guests used to text me at 1 a.m. for the Collins Wi-Fi. Elena on the 305 line handles it before I unlock my phone.",
-    name: "Camila Reyes",
-    role: "Superhost · Miami Beach Loft",
-  },
-  {
-    quote:
-      "Quick Connect blocked a Vrbo overlap the same afternoon we went live. Brickell garage codes now go out on every inbound call.",
-    name: "Andre Walsh",
-    role: "Co-host · Brickell Modern Suite",
-  },
-];
+import { ZenciergeLogo } from "@/components/brand/zencierge-logo";
+import { PricingCards } from "@/components/pricing/pricing-cards";
 
 export function LandingPage() {
-  const [annual, setAnnual] = useState(false);
-  const [isRedirecting, setIsRedirecting] = useState<ZenciergePlanId | null>(null);
-
-  const subscribeWithSquare = async (planId: ZenciergePlanId) => {
-    if (isRedirecting) return;
-    setIsRedirecting(planId);
-    try {
-      const response = await fetch("/api/checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          planId,
-          billing: annual ? "annual" : "monthly",
-        }),
-      });
-      const data = (await response.json()) as { url?: string; error?: string };
-      const checkoutUrl = data.url?.trim() ?? "";
-      if (
-        !response.ok ||
-        !/^https?:\/\//i.test(checkoutUrl) ||
-        checkoutUrl.includes("/dashboard")
-      ) {
-        throw new Error(data.error ?? "Could not start Square checkout");
-      }
-      window.location.href = checkoutUrl;
-    } catch (cause) {
-      setIsRedirecting(null);
-      window.alert(cause instanceof Error ? cause.message : "Checkout failed");
-    }
-  };
-
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
-      <header className="border-b border-slate-800/80">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-          <Link href="/" className="flex items-center gap-2">
-            <span className="flex h-8 w-8 items-center justify-center rounded-xl border border-emerald-500/30 bg-emerald-500/20 text-sm font-bold text-emerald-400">
-              Z
+    <div className="min-h-screen bg-slate-950 font-sans text-slate-100 selection:bg-sky-500 selection:text-slate-950">
+      <nav className="sticky top-0 z-50 border-b border-slate-800/80 bg-slate-950/70 backdrop-blur-md">
+        <div className="mx-auto flex h-20 max-w-7xl items-center justify-between px-6">
+          <Link href="/" className="flex items-center gap-3">
+            <ZenciergeLogo className="h-12 w-auto" priority />
+          </Link>
+
+          <div className="hidden items-center gap-8 text-sm font-semibold text-slate-300 md:flex">
+            <a href="#features" className="transition-colors hover:text-white">
+              Why Zencierge
+            </a>
+            <a href="#comparison" className="transition-colors hover:text-white">
+              Vs Traditional PMS
+            </a>
+            <a href="#pricing" className="transition-colors hover:text-white">
+              Pricing & Free Trial
+            </a>
+          </div>
+
+          <div className="flex items-center gap-4">
+            <Link
+              href="/login"
+              className="rounded-lg px-4 py-2 text-xs font-bold text-slate-300 transition-colors hover:text-white"
+            >
+              Host Login
+            </Link>
+            <a
+              href="#pricing"
+              className="rounded-lg bg-sky-400 px-5 py-2.5 text-xs font-extrabold text-slate-950 shadow-lg shadow-sky-400/20 transition-all hover:-translate-y-0.5 hover:bg-sky-300"
+            >
+              Start Free Trial
+            </a>
+          </div>
+        </div>
+      </nav>
+
+      <section className="relative overflow-hidden border-b border-slate-800 px-6 pb-20 pt-24">
+        <div className="pointer-events-none absolute left-1/2 top-1/2 h-[600px] w-[600px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-sky-500/10 blur-[140px]" />
+
+        <div className="relative z-10 mx-auto max-w-5xl text-center">
+          <div className="mb-8 inline-flex items-center gap-2 rounded-full border border-slate-800 bg-slate-900 px-3.5 py-1.5 text-xs font-bold text-sky-400">
+            <Sparkles className="h-3.5 w-3.5 text-emerald-400" />
+            Beyond Traditional PMS • The Autonomous Short-Term Rental OS
+          </div>
+
+          <h1 className="mb-6 text-4xl font-black leading-[1.1] tracking-tight text-white md:text-6xl lg:text-7xl">
+            Replace your co-host. <br />
+            <span className="bg-gradient-to-r from-sky-400 via-teal-300 to-emerald-400 bg-clip-text text-transparent">
+              Put your STR on Autopilot.
             </span>
-            <span className="text-sm font-semibold tracking-tight">Zencierge</span>
-          </Link>
-          <nav className="hidden items-center gap-6 text-sm text-slate-400 sm:flex">
-            <a href="#product" className="hover:text-white">
-              Product
-            </a>
-            <a href="#pricing" className="hover:text-white">
-              Pricing
-            </a>
-            <Link href="/login" className="hover:text-white">
-              Dashboard
-            </Link>
-          </nav>
-          <Link
-            href="/login"
-            className="rounded-xl bg-emerald-500 px-3.5 py-2 text-xs font-bold text-slate-950 hover:bg-emerald-400"
-          >
-            Iniciar sesión
-          </Link>
-        </div>
-      </header>
+          </h1>
 
-      <section className="mx-auto max-w-6xl px-6 pb-20 pt-16 text-center">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-400">
-          Host OS · Nationwide
-        </p>
-        <h1 className="mx-auto mt-4 max-w-4xl text-4xl font-extrabold tracking-tight text-white sm:text-5xl sm:leading-tight">
-          24/7 AI Voice Receptionist for Airbnb &amp; Vrbo Hosts Across the US
-        </h1>
-        <p className="mx-auto mt-5 max-w-2xl text-base leading-relaxed text-slate-400">
-          A bilingual concierge answers on your dedicated local US line (any area code), reads the
-          unit handbook, and keeps Airbnb and Vrbo blocked so you never double-book a night.
-        </p>
-        <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
-          <Badge>Zero Double-Bookings</Badge>
-          <Badge>Dedicated Local US Numbers</Badge>
-          <Badge>Bilingual EN/ES</Badge>
-        </div>
-        <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-          <a
-            href="#pricing"
-            className="rounded-xl bg-emerald-500 px-5 py-3 text-sm font-bold text-slate-950 shadow-lg shadow-emerald-500/20 hover:bg-emerald-400"
-          >
-            Start Free Trial
-          </a>
-          <Link
-            href="/login"
-            className="rounded-xl border border-slate-700 bg-slate-900 px-5 py-3 text-sm font-semibold text-slate-200 hover:bg-slate-800"
-          >
-            Iniciar sesión
-          </Link>
-        </div>
-      </section>
-
-      <section id="product" className="mx-auto max-w-6xl px-6 pb-20">
-        <div className="grid gap-4 md:grid-cols-3">
-          <ValueCard
-            icon={<Headphones className="h-5 w-5 text-emerald-400" />}
-            title="Voice Concierge"
-            body="Resolves Wi-Fi, parking, and lock codes in seconds — in English or Spanish — then escalates leaks and lockouts to you."
-          />
-          <ValueCard
-            icon={<CalendarDays className="h-5 w-5 text-sky-400" />}
-            title="Smart Calendar Sync"
-            body="One-click Quick Connect for Airbnb and Vrbo iCal. Auto-detect, test the feed, stay live with zero overlapping nights."
-          />
-          <ValueCard
-            icon={<Banknote className="h-5 w-5 text-amber-400" />}
-            title="Co-Host Financials"
-            body="Automatic owner statements: 18% admin fee, cleaning, net payouts, and export for listings in any US state."
-          />
-        </div>
-      </section>
-
-      <section id="pricing" className="mx-auto max-w-6xl px-6 pb-20">
-        <div className="mb-8 flex flex-col items-center gap-4 text-center">
-          <h2 className="text-2xl font-bold text-white">Simple pricing for hosts nationwide</h2>
-          <div className="flex items-center gap-3 rounded-full border border-slate-800 bg-slate-900 p-1">
-            <button
-              type="button"
-              onClick={() => setAnnual(false)}
-              className={`rounded-full px-4 py-1.5 text-xs font-semibold ${
-                !annual ? "bg-emerald-500 text-slate-950" : "text-slate-400"
-              }`}
-            >
-              Monthly
-            </button>
-            <button
-              type="button"
-              onClick={() => setAnnual(true)}
-              className={`rounded-full px-4 py-1.5 text-xs font-semibold ${
-                annual ? "bg-emerald-500 text-slate-950" : "text-slate-400"
-              }`}
-            >
-              Annual
-              <span className="ml-1 text-[10px] font-medium opacity-80">2 months free</span>
-            </button>
-          </div>
-        </div>
-        <div className="grid gap-4 lg:grid-cols-3">
-          {plans.map((plan) => {
-            const price = annual ? Math.round((plan.monthly * 10) / 12) : plan.monthly;
-            return (
-              <article
-                key={plan.id}
-                className={`flex flex-col rounded-2xl border p-6 ${
-                  plan.popular
-                    ? "border-emerald-500/40 bg-emerald-500/10 shadow-lg shadow-emerald-500/10"
-                    : "border-slate-800 bg-slate-900/50"
-                }`}
-              >
-                {plan.popular ? (
-                  <span className="mb-3 w-fit rounded-full bg-emerald-500 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-950">
-                    Most Popular
-                  </span>
-                ) : (
-                  <span className="mb-3 h-5" />
-                )}
-                <h3 className="text-lg font-semibold text-white">{plan.name}</h3>
-                <p className="mt-1 text-xs text-slate-400">{plan.blurb}</p>
-                <p className="mt-4 text-3xl font-extrabold text-white">
-                  ${price}
-                  <span className="text-sm font-medium text-slate-500">/mo</span>
-                </p>
-                {annual ? (
-                  <p className="text-[11px] text-slate-500">Billed ${plan.monthly * 10}/year</p>
-                ) : (
-                  <p className="text-[11px] text-slate-500">Billed monthly</p>
-                )}
-                <ul className="mt-5 flex-1 space-y-2">
-                  {plan.features.map((feature) => (
-                    <li key={feature} className="flex items-start gap-2 text-xs text-slate-300">
-                      <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-400" />
-                      {feature}
-                    </li>
-                  ))}
-                </ul>
-                <button
-                  type="button"
-                  disabled={isRedirecting !== null}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    void subscribeWithSquare(plan.id);
-                  }}
-                  className={`mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl py-2.5 text-center text-xs font-bold disabled:cursor-wait disabled:opacity-70 ${
-                    plan.popular
-                      ? "bg-emerald-500 text-slate-950 hover:bg-emerald-400"
-                      : "border border-slate-700 text-slate-200 hover:bg-slate-800"
-                  }`}
-                >
-                  {isRedirecting === plan.id ? (
-                    <>
-                      <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
-                      Cargando Square...
-                    </>
-                  ) : (
-                    "Subscribe with Square"
-                  )}
-                </button>
-              </article>
-            );
-          })}
-        </div>
-      </section>
-
-      <section className="mx-auto max-w-6xl px-6 pb-20">
-        <h2 className="mb-6 text-center text-2xl font-bold text-white">Hosts already on the line</h2>
-        <div className="grid gap-4 md:grid-cols-2">
-          {testimonials.map((item) => (
-            <blockquote
-              key={item.name}
-              className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6"
-            >
-              <p className="text-sm leading-relaxed text-slate-300">&ldquo;{item.quote}&rdquo;</p>
-              <footer className="mt-4">
-                <p className="text-sm font-semibold text-white">{item.name}</p>
-                <p className="text-xs text-slate-500">{item.role}</p>
-              </footer>
-            </blockquote>
-          ))}
-        </div>
-      </section>
-
-      <section className="mx-auto max-w-6xl px-6 pb-20">
-        <div className="rounded-3xl border border-emerald-500/20 bg-gradient-to-br from-emerald-500/10 to-slate-900 px-8 py-12 text-center">
-          <div className="mx-auto mb-4 flex h-10 w-10 items-center justify-center rounded-full border border-emerald-500/30 bg-emerald-500/15">
-            <Phone className="h-4 w-4 text-emerald-400" />
-          </div>
-          <h2 className="text-2xl font-bold text-white">Put a nationwide receptionist on every listing</h2>
-          <p className="mx-auto mt-3 max-w-xl text-sm text-slate-400">
-            Open the live Host Command Center — your US listings, a dedicated local line, and the
-            calendar already synced.
+          <p className="mx-auto mb-10 max-w-3xl text-base leading-relaxed text-slate-400 md:text-xl">
+            Zencierge is the only platform that answers 2 AM guest phone calls bilingually, audits turnovers using
+            computer vision, and safeguards your AirCover claims with immutable photo proofs. Traditional PMS tools
+            are just synchronized calendars; Zencierge is your autonomous co-host.
           </p>
-          <Link
-            href="/login"
-            className="mt-6 inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-5 py-3 text-sm font-bold text-slate-950 hover:bg-emerald-400"
-          >
-            <ShieldCheck className="h-4 w-4" />
-            Enter the dashboard
-          </Link>
+
+          <div className="flex flex-col items-center justify-center gap-4 sm:flex-row">
+            <a
+              href="#pricing"
+              className="flex w-full transform items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-sky-400 to-emerald-400 px-8 py-4 text-sm font-black text-slate-950 shadow-xl shadow-sky-500/25 transition-all hover:-translate-y-0.5 hover:from-sky-300 hover:to-emerald-300 sm:w-auto"
+            >
+              Choose Your Premium Plan <ArrowRight className="h-4 w-4" />
+            </a>
+            <a
+              href="#features"
+              className="w-full rounded-xl border border-slate-800 bg-slate-900 px-8 py-4 text-sm font-bold text-slate-200 transition-colors hover:bg-slate-800 sm:w-auto"
+            >
+              See Unique Features
+            </a>
+          </div>
+
+          <div className="mt-12 flex flex-wrap items-center justify-center gap-8 text-xs font-medium text-slate-500">
+            <span className="flex items-center gap-1.5">
+              <CheckCircle2 className="h-4 w-4 text-emerald-400" /> No Commission Fees (Ever)
+            </span>
+            <span className="flex items-center gap-1.5">
+              <CheckCircle2 className="h-4 w-4 text-emerald-400" /> 14-Day Free Trial
+            </span>
+            <span className="flex items-center gap-1.5">
+              <CheckCircle2 className="h-4 w-4 text-emerald-400" /> Cancel Anytime in 1-Click
+            </span>
+          </div>
         </div>
       </section>
 
-      <footer className="border-t border-slate-800/80">
-        <div className="mx-auto flex max-w-6xl flex-col gap-6 px-6 py-8 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-xs text-slate-500">Zencierge · AI host OS for US short-term rentals</p>
-          <nav className="flex flex-wrap gap-4 text-xs text-slate-400">
-            <a href="#product" className="hover:text-white">
-              Product
-            </a>
-            <a href="#pricing" className="hover:text-white">
-              Pricing
-            </a>
-            <Link href="/login" className="hover:text-white">
-              Dashboard
-            </Link>
-            <Link href="/signup" className="hover:text-white">
-              Crear cuenta
-            </Link>
-          </nav>
+      <section id="features" className="mx-auto max-w-7xl px-6 py-20">
+        <div className="mx-auto mb-16 max-w-3xl text-center">
+          <h2 className="mb-3 text-xs font-extrabold uppercase tracking-widest text-sky-400">
+            Why Zencierge Is Different
+          </h2>
+          <p className="text-3xl font-black text-white md:text-4xl">Features no other company offers.</p>
         </div>
+
+        <div className="grid grid-cols-1 gap-8 md:grid-cols-3">
+          <div className="relative overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/60 p-8 transition-all hover:border-sky-500/50">
+            <div className="mb-6 flex h-12 w-12 items-center justify-center rounded-xl border border-sky-500/20 bg-sky-500/10 text-sky-400">
+              <PhoneCall className="h-6 w-6" />
+            </div>
+            <h3 className="mb-3 text-xl font-bold text-white">24/7 AI Voice Phone Reception</h3>
+            <p className="mb-4 text-sm leading-relaxed text-slate-400">
+              Stop answering 2 AM check-in calls. Zencierge provisions a dedicated local phone number that answers
+              calls in English &amp; Spanish, verifies door codes, and troubleshoots Wi-Fi instantly.
+            </p>
+            <div className="inline-block rounded-lg bg-sky-500/10 px-3 py-1.5 text-xs font-bold text-sky-400">
+              Zero-latency bilingual support
+            </div>
+          </div>
+
+          <div className="relative overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/60 p-8 transition-all hover:border-emerald-500/50">
+            <div className="mb-6 flex h-12 w-12 items-center justify-center rounded-xl border border-emerald-500/20 bg-emerald-500/10 text-emerald-400">
+              <Camera className="h-6 w-6" />
+            </div>
+            <h3 className="mb-3 text-xl font-bold text-white">AirCover Defense &amp; Vision AI</h3>
+            <p className="mb-4 text-sm leading-relaxed text-slate-400">
+              Cleaners upload photos through a friction-free mobile link. Our Computer Vision AI audits cleanliness,
+              detects missing amenities, and timestamps proofs to win Airbnb damage disputes in 1 click.
+            </p>
+            <div className="inline-block rounded-lg bg-emerald-500/10 px-3 py-1.5 text-xs font-bold text-emerald-400">
+              Certified PDF evidence binder
+            </div>
+          </div>
+
+          <div className="relative overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/60 p-8 transition-all hover:border-indigo-500/50">
+            <div className="mb-6 flex h-12 w-12 items-center justify-center rounded-xl border border-indigo-500/20 bg-indigo-500/10 text-indigo-400">
+              <TrendingUp className="h-6 w-6" />
+            </div>
+            <h3 className="mb-3 text-xl font-bold text-white">True-Net Financial Clarity</h3>
+            <p className="mb-4 text-sm leading-relaxed text-slate-400">
+              Traditional PMS mislead you with gross revenue. Zencierge deducts utility bills, cleaning contractor
+              payouts, supplies, and platform commission in real-time so you know your true take-home profit.
+            </p>
+            <div className="inline-block rounded-lg bg-indigo-500/10 px-3 py-1.5 text-xs font-bold text-indigo-400">
+              Real Net Operating Income per listing
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="comparison" className="mx-auto max-w-5xl px-6 py-20">
+        <div className="mx-auto mb-14 max-w-2xl text-center">
+          <h2 className="mb-3 text-xs font-extrabold uppercase tracking-widest text-emerald-400">Head to Head</h2>
+          <p className="text-3xl font-black text-white">The only truly autonomous solution</p>
+        </div>
+
+        <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl">
+          <table className="w-full text-left text-xs md:text-sm">
+            <thead className="border-b border-slate-800 bg-slate-950/80 font-bold uppercase tracking-wider text-slate-400">
+              <tr>
+                <th className="p-5">Capability</th>
+                <th className="p-5 text-slate-500">Legacy PMS (Guesty, Hostaway)</th>
+                <th className="bg-sky-500/10 p-5 font-black text-sky-400">Zencierge OS</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800 font-medium">
+              <CompareRow capability="Guest Phone Support" legacy="Chatbot / SMS only" ours="Dedicated 24/7 AI Voice Line" />
+              <CompareRow
+                capability="Turnover Quality Control"
+                legacy="Basic text checklists"
+                ours="Computer Vision photo auditing"
+              />
+              <CompareRow
+                capability="Damage & Dispute Vault"
+                legacy="Manual proof gathering"
+                ours="1-Click certified PDF binder engine"
+              />
+              <CompareRow
+                capability="Pricing Model"
+                legacy="% of revenue or high per-unit fees"
+                ours="Predictable Flat Tiers (from $49)"
+              />
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="pricing" className="relative mx-auto max-w-7xl border-t border-slate-800 px-6 py-24">
+        <div className="pointer-events-none absolute left-1/2 top-0 h-[400px] w-[400px] -translate-x-1/2 rounded-full bg-emerald-500/5 blur-[100px]" />
+
+        <div className="relative z-10 mx-auto mb-16 max-w-3xl text-center">
+          <h2 className="mb-3 flex items-center justify-center gap-2 text-xs font-extrabold uppercase tracking-widest text-emerald-400">
+            <ShieldCheck className="h-4 w-4" />
+            Pricing &amp; Free Trial
+          </h2>
+          <p className="text-4xl font-black text-white md:text-5xl">Start 14 days free. No credit card required.</p>
+          <p className="mx-auto mt-4 max-w-xl text-sm text-slate-400">
+            Full Host Command Center access from day one. Pick a plan, create your account, and cancel anytime.
+          </p>
+        </div>
+
+        <div className="relative z-10 mx-auto w-full max-w-6xl px-4">
+          <PricingCards tone="dark" cta="trial" />
+        </div>
+      </section>
+
+      <footer className="border-t border-slate-800/80 px-6 py-12 text-center text-xs text-slate-500">
+        <p>© 2026 Zencierge.net • All rights reserved. Built for autonomous hospitality. No co-host required.</p>
       </footer>
     </div>
   );
 }
 
-function Badge({ children }: { children: string }) {
-  return (
-    <span className="rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-[11px] font-medium text-slate-300">
-      {children}
-    </span>
-  );
-}
+export default LandingPage;
 
-function ValueCard({
-  icon,
-  title,
-  body,
-}: {
-  icon: ReactNode;
-  title: string;
-  body: string;
-}) {
+function CompareRow({ capability, legacy, ours }: { capability: string; legacy: string; ours: string }) {
   return (
-    <article className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6 text-left">
-      <div className="mb-3">{icon}</div>
-      <h3 className="text-base font-semibold text-white">{title}</h3>
-      <p className="mt-2 text-sm leading-relaxed text-slate-400">{body}</p>
-    </article>
+    <tr>
+      <td className="p-5 font-bold text-white">{capability}</td>
+      <td className="p-5 text-slate-400">
+        <span className="inline-flex items-center gap-2">
+          <XCircle className="h-4 w-4 shrink-0 text-rose-500" /> {legacy}
+        </span>
+      </td>
+      <td className="bg-sky-500/5 p-5 font-bold text-emerald-400">
+        <span className="inline-flex items-center gap-2">
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" /> {ours}
+        </span>
+      </td>
+    </tr>
   );
 }

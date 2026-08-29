@@ -473,12 +473,12 @@ export function rangeFor(id: FinanceRangeId, asOf = calendarToday): { start: str
   const year = asOf.slice(0, 4);
   if (id === "this_month") {
     const start = startOfMonth(asOf);
-    return { start, endExclusive: startOfNextMonth(asOf), label: "Este mes" };
+    return { start, endExclusive: startOfNextMonth(asOf), label: "This Month" };
   }
   if (id === "last_quarter") {
-    return { start: `${year}-04-01`, endExclusive: `${year}-07-01`, label: "Último trimestre" };
+    return { start: `${year}-04-01`, endExclusive: `${year}-07-01`, label: "Last Quarter" };
   }
-  return { start: `${year}-01-01`, endExclusive: formatIsoDay(parseIsoDay(asOf) + MS_DAY), label: "Año en curso" };
+  return { start: `${year}-01-01`, endExclusive: formatIsoDay(parseIsoDay(asOf) + MS_DAY), label: "Year to Date" };
 }
 
 export function previousMonthWindow(asOf = calendarToday) {
@@ -534,7 +534,7 @@ export type MonthPoint = {
   net: number;
 };
 
-const MONTH_LABELS = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 export function monthlySeries(
   rows: StayTransaction[],
@@ -565,9 +565,9 @@ export function deltaPct(current: number, previous: number) {
 }
 
 export function statusLabel(status: FinancialStatus) {
-  if (status === "completed") return "Pagado";
-  if (status === "payout_pending") return "En Tránsito";
-  return "Confirmado";
+  if (status === "completed") return "Paid";
+  if (status === "payout_pending") return "In Transit";
+  return "Confirmed";
 }
 
 export function usd(value: number) {

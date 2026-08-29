@@ -1,8 +1,5 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useId, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import { Camera, Clock, Search, X } from "lucide-react";
 import { queueHousekeepingPhotoForDispute } from "@/lib/dispute-photo-transfer";
 
@@ -313,13 +310,6 @@ export function HousekeepingPanel() {
         <p className="mt-1 text-sm font-medium text-slate-800">
           {filtered.length} of {PROPERTIES.length} listings
         </p>
-        <Link
-          href="/housekeeping/upload"
-          className="mt-3 inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-500"
-        >
-          <Camera className="h-3.5 w-3.5" />
-          Staff camera upload
-        </Link>
         <label className="relative mt-3 block">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-600" />
           <input

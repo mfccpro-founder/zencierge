@@ -1,4 +1,5 @@
 import {
+  guestStayFallback,
   properties as seedProperties,
   reservations as seedReservations,
   propertyCities,
@@ -9,9 +10,34 @@ import {
   type Reservation,
 } from "@/lib/dashboard-data";
 import { supabase } from "@/lib/supabase";
+import { hasSupabaseEnv } from "@/lib/supabase-config";
+
+export { guestStayFallback };
 
 const miamiBeachLoft =
   seedProperties.find((property) => property.id === "prop-1") ?? seedProperties[0];
+
+const LISTING_FETCH_MS = 4000;
+
+function abortAfter(ms: number) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  return { signal: controller.signal, cancel: () => clearTimeout(timer) };
+}
+
+async function raceTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("listing-timeout")), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 export type PropertyRow = {
   id: string;
@@ -29,6 +55,7 @@ export type PropertyRow = {
   check_in: string;
   check_out: string;
   current_guest: string | null;
+  trash?: string;
   handbook?: string;
   ai_handbook?: string;
 };
@@ -76,8 +103,18 @@ function asStayStatus(value: string): Reservation["status"] {
   return "upcoming";
 }
 
-export function propertyFromRow(row: PropertyRow): Property {
+function fillHouseRulesFromSeed(mapped: Property): Property {
+  const seed = seedProperties.find((property) => property.id === mapped.id);
+  if (!seed) return mapped;
   return {
+    ...mapped,
+    trash: mapped.trash.trim() || seed.trash,
+    handbook: mapped.handbook.trim() || seed.handbook,
+  };
+}
+
+export function propertyFromRow(row: PropertyRow): Property {
+  return fillHouseRulesFromSeed({
     id: row.id,
     name: row.name ?? "",
     city: asCity(row.city ?? ""),
@@ -93,8 +130,9 @@ export function propertyFromRow(row: PropertyRow): Property {
     checkIn: row.check_in ?? "",
     checkOut: row.check_out ?? "",
     currentGuest: row.current_guest,
+    trash: row.trash ?? "",
     handbook: row.ai_handbook ?? row.handbook ?? "",
-  };
+  });
 }
 
 export function propertyToRow(property: Property): PropertyRow {
@@ -114,8 +152,21 @@ export function propertyToRow(property: Property): PropertyRow {
     check_in: property.checkIn,
     check_out: property.checkOut,
     current_guest: property.currentGuest,
+    trash: property.trash,
     ai_handbook: property.handbook,
   };
+}
+
+/** True when Supabase rejected a write because the column is not in the schema yet. */
+function isMissingColumnError(message: string) {
+  return /column|schema cache/i.test(message);
+}
+
+/** Row without the house-rules columns, for projects that have not run supabase/schema.sql yet. */
+function rowWithoutTrash(row: PropertyRow): PropertyRow {
+  const { trash: _trash, ...rest } = row;
+  void _trash;
+  return rest as PropertyRow;
 }
 
 export function reservationFromRow(row: ReservationRow): Reservation {
@@ -163,6 +214,9 @@ async function ensureMiamiBeachLoft() {
   const full = await supabase.from("properties").upsert(row).select("*");
   if (!full.error && full.data?.length) return full.data as PropertyRow[];
 
+  const withoutTrash = await supabase.from("properties").upsert(rowWithoutTrash(row)).select("*");
+  if (!withoutTrash.error && withoutTrash.data?.length) return withoutTrash.data as PropertyRow[];
+
   const minimal = await supabase
     .from("properties")
     .upsert({
@@ -181,6 +235,12 @@ export async function fetchListings(): Promise<{
   properties: Property[];
   reservations: Reservation[];
 }> {
+  if (!hasSupabaseEnv()) {
+    console.error(
+      "[listings] Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY in .env.local — using seed listings.",
+    );
+    return { properties: seedProperties, reservations: seedReservations };
+  }
   try {
     let propertyRows: PropertyRow[] = [];
 
@@ -234,20 +294,56 @@ export async function updateAiHandbook(propertyId: string, aiHandbook: string) {
 }
 
 export async function fetchPropertyById(id: string): Promise<Property | null> {
-  const { data, error } = await supabase.from("properties").select("*").eq("id", id).maybeSingle();
-  if (!error && data) return propertyFromRow(data as PropertyRow);
-  return seedProperties.find((property) => property.id === id) ?? null;
+  const seed = seedProperties.find((property) => property.id === id) ?? null;
+  if (!hasSupabaseEnv()) return seed;
+
+  const { signal, cancel } = abortAfter(LISTING_FETCH_MS);
+  try {
+    const query = supabase
+      .from("properties")
+      .select("*")
+      .eq("id", id)
+      .abortSignal(signal)
+      .maybeSingle();
+    const { data, error } = await raceTimeout(Promise.resolve(query), LISTING_FETCH_MS);
+    if (!error && data) return propertyFromRow(data as PropertyRow);
+  } catch (cause) {
+    console.error("[listings] fetchPropertyById timed out or failed; using seed", cause);
+  } finally {
+    cancel();
+  }
+  return seed;
+}
+
+/** Guest portal: seed immediately if Supabase is slow, missing, or unknown id. */
+export async function fetchGuestStay(id: string): Promise<Property> {
+  try {
+    const row = await fetchPropertyById(id);
+    if (row) return row;
+  } catch (cause) {
+    console.error("[listings] fetchGuestStay failed; using Miami Beach Loft seed", cause);
+  }
+  return guestStayFallback(id);
 }
 
 export async function fetchReservationById(id: string): Promise<Reservation | null> {
-  const { data, error } = await supabase.from("reservations").select("*").eq("id", id).maybeSingle();
-  if (!error && data) return reservationFromRow(data as ReservationRow);
+  if (hasSupabaseEnv()) {
+    const { data, error } = await supabase.from("reservations").select("*").eq("id", id).maybeSingle();
+    if (!error && data) return reservationFromRow(data as ReservationRow);
+  }
   return seedReservations.find((reservation) => reservation.id === id) ?? null;
 }
 
 export async function upsertProperty(property: Property) {
-  const { error } = await supabase.from("properties").upsert(propertyToRow(property));
-  if (error) throw new Error(error.message);
+  const row = propertyToRow(property);
+  const { error } = await supabase.from("properties").upsert(row);
+  if (!error) return;
+
+  // `trash` was added later — retry without it so hosts who have not run
+  // supabase/schema.sql yet can still save a property.
+  if (!isMissingColumnError(error.message)) throw new Error(error.message);
+  const retry = await supabase.from("properties").upsert(rowWithoutTrash(row));
+  if (retry.error) throw new Error(retry.error.message);
 }
 
 export async function upsertReservation(reservation: Reservation) {

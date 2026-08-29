@@ -51,8 +51,8 @@ const CHAPTERS: Chapter[] = [
       es: "Prueba el simulador de voz",
     },
     caption: {
-      en: "Go to Voice Concierge, pick the listing, and tap Hablar con el Avatar. Ask for Wi-Fi or the grocery store — I answer from that unit's handbook.",
-      es: "Ve a Voice Concierge, elige el listing y pulsa Hablar con el Avatar. Pregunta el Wi-Fi o el súper: respondo con el handbook de esa unidad.",
+      en: "Go to Voice Concierge, pick the listing, and tap Test Call with Elena. Ask for Wi-Fi or the grocery store — I answer from that unit's handbook.",
+      es: "Ve a Voice Concierge, elige el listing y pulsa Test Call with Elena. Pregunta el Wi-Fi o el súper: respondo con el handbook de esa unidad.",
     },
   },
   {
@@ -62,7 +62,7 @@ const CHAPTERS: Chapter[] = [
       es: "Comparte el Portal del Huésped",
     },
     caption: {
-      en: "In Properties, tap Ver Portal del Huésped. It opens /guest/ plus the listing id — a public page with no host sidebar. Send that link to your Airbnb guests.",
+      en: "In Properties, tap View Guest Portal. It opens /guest/ plus the listing id — a public page with no host sidebar. Send that link to your Airbnb guests.",
       es: "En Properties, pulsa Ver Portal del Huésped. Abre /guest/ más el id del listing: una página pública, sin menú de host. Envía ese enlace a tus huéspedes de Airbnb.",
     },
   },
@@ -222,7 +222,7 @@ export const AiAvatarGuide = forwardRef<AiAvatarGuideHandle, AiAvatarGuideProps>
           <div className="flex items-start justify-between gap-3 px-4 pt-4 pb-3 border-b border-slate-800">
             <div>
               <p className="text-[10px] uppercase tracking-wider text-violet-300 font-semibold">
-                🎓 Video Guía / Tutorial
+                🎓 Video Guide / Tutorial
               </p>
               <h3 id="ai-guide-title" className="text-sm font-semibold text-white mt-0.5">
                 {labels.title}

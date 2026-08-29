@@ -6,5 +6,9 @@ export const metadata: Metadata = {
 };
 
 export default function GuestLayout({ children }: { children: ReactNode }) {
-  return <div className="min-h-dvh bg-[#07080c]">{children}</div>;
+  return (
+    <div className="min-h-dvh bg-[#07080c]" suppressHydrationWarning>
+      {children}
+    </div>
+  );
 }

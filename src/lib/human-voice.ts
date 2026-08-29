@@ -2,6 +2,138 @@ export type VoiceProfileId = "elena" | "mateo" | "sarah";
 export type LanguageMode = "auto" | "en" | "es";
 export type ReplyLang = "en" | "es";
 
+type SpeechResultList = ArrayLike<{ isFinal: boolean } & ArrayLike<{ transcript: string }>>;
+
+export type BrowserSpeechRecognition = {
+  lang: string;
+  interimResults: boolean;
+  continuous: boolean;
+  onresult: ((event: { resultIndex: number; results: SpeechResultList }) => void) | null;
+  onerror: ((event: { error?: string }) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+  abort?: () => void;
+};
+
+export function getSpeechRecognitionCtor(): (new () => BrowserSpeechRecognition) | null {
+  if (typeof window === "undefined") return null;
+  const extra = window as unknown as {
+    SpeechRecognition?: new () => BrowserSpeechRecognition;
+    webkitSpeechRecognition?: new () => BrowserSpeechRecognition;
+  };
+  return extra.SpeechRecognition ?? extra.webkitSpeechRecognition ?? null;
+}
+
+export type BrowserListenSession = {
+  stop: () => void;
+  cancel: () => void;
+};
+
+export function startBrowserSpeechListen(options: {
+  lang: string;
+  onFinal: (text: string) => void;
+  onInterim?: (text: string) => void;
+  onError?: (message: string) => void;
+  onEnd?: () => void;
+}): BrowserListenSession | null {
+  const Ctor = getSpeechRecognitionCtor();
+  if (!Ctor) {
+    options.onError?.("Live speech is not available in this browser. Use Chrome or Edge, or type a question.");
+    return null;
+  }
+
+  let closed = false;
+  const recognition = new Ctor();
+  recognition.lang = options.lang;
+  recognition.interimResults = true;
+  recognition.continuous = true;
+  recognition.onresult = (event) => {
+    if (closed) return;
+    let interim = "";
+    let finalText = "";
+    for (let index = event.resultIndex; index < event.results.length; index += 1) {
+      const result = event.results[index];
+      const piece = result?.[0]?.transcript ?? "";
+      if (result?.isFinal) finalText += piece;
+      else interim += piece;
+    }
+    if (interim || finalText) options.onInterim?.(interim || finalText);
+    const flushed = finalText.trim();
+    if (flushed) options.onFinal(flushed);
+  };
+  recognition.onerror = (event) => {
+    const code = event?.error;
+    if (code === "no-speech" || code === "aborted") return;
+    if (code === "not-allowed" || code === "service-not-allowed") {
+      options.onError?.("Microphone blocked. Allow mic access, or type a question.");
+      return;
+    }
+    if (code === "network") {
+      options.onError?.("Speech service unavailable. Check your connection, or type a question.");
+      return;
+    }
+    options.onError?.("Could not transcribe speech. Try again, or type a question.");
+  };
+  recognition.onend = () => {
+    if (!closed) options.onEnd?.();
+  };
+  try {
+    recognition.start();
+  } catch (cause) {
+    options.onError?.(cause instanceof Error ? cause.message : "Could not start listening.");
+    return null;
+  }
+
+  const halt = (abort: boolean) => {
+    closed = true;
+    try {
+      if (abort && recognition.abort) recognition.abort();
+      else recognition.stop();
+    } catch {
+      /* ignore */
+    }
+  };
+
+  return {
+    stop: () => halt(false),
+    cancel: () => halt(true),
+  };
+}
+
+export function speechLangForHint(hint: "es" | "en" | "auto"): string {
+  return hint === "en" ? "en-US" : "es-US";
+}
+
+/** Auto and Spanish session modes listen in es-US so Spanish transcribes cleanly. */
+export function speechRecognitionLang(mode: LanguageMode): string {
+  if (mode === "en") return "en-US";
+  return "es-US";
+}
+
+const ES_WORD =
+  /\b(el|la|los|las|un|una|unos|unas|y|o|de|del|al|qué|que|cuál|cual|dónde|donde|cómo|como|está|están|estan|hola|buenas|buenos|días|dias|tardes|noches|gracias|por|para|con|sin|mi|tu|su|me|te|se|soy|estoy|tengo|tiene|hay|necesito|quiero|puedo|ayuda|favor|baño|bano|clave|puerta|cerca|wifi|código|codigo|elena|sí|si|no|claro|dime|cuéntame|cuentame|restaurante|comida|playa|parking|estacionamiento)\b/gi;
+const EN_WORD =
+  /\b(the|and|or|a|an|is|are|was|i|i'm|im|you|we|what|where's|where|how|hello|hi|hey|please|thanks|thank|need|want|can|could|would|my|me|wifi|password|door|code|help|near|nearby)\b/gi;
+
+/** Detect language of a guest or Elena utterance. Spanish markers always win. */
+export function detectUtteranceLang(text: string): ReplyLang {
+  const raw = text.trim();
+  if (!raw) return "es";
+  if (/[áéíóúüñ¿¡]/i.test(raw)) return "es";
+  const lower = raw.toLowerCase();
+  if (/^(hola|buenas|buenos días|buenos dias|buenas tardes|buenas noches|gracias|por favor)\b/i.test(lower)) {
+    return "es";
+  }
+  const esHits = lower.match(ES_WORD)?.length ?? 0;
+  const enHits = lower.match(EN_WORD)?.length ?? 0;
+  if (esHits > enHits) return "es";
+  if (enHits > esHits) return "en";
+  if (esHits > 0) return "es";
+  if (enHits > 0) return "en";
+  return "es";
+}
+
 /** OpenAI TTS voices: Elena/Mateo = nova, Sarah = shimmer. Never alloy/onyx. */
 export type OpenAiTtsVoice = "nova" | "shimmer";
 export const FEMALE_OPENAI_VOICE = "nova" as const;
@@ -40,8 +172,8 @@ export const VOICE_PROFILES: VoiceProfile[] = [
   {
     id: "elena",
     name: "Elena",
-    title: "Cálida & Bilingüe (Miami Hostess)",
-    hint: "Proyección firme, clara y con aire",
+    title: "Warm & Bilingual (Miami Hostess)",
+    hint: "Firm, clear projection with air",
     openaiVoice: FEMALE_OPENAI_VOICE,
     elevenLabsVoiceId: FEMALE_ELEVENLABS_VOICE_ID,
     gender: "female",
@@ -55,8 +187,8 @@ export const VOICE_PROFILES: VoiceProfile[] = [
   {
     id: "mateo",
     name: "Mateo",
-    title: "Concierge de Lujo",
-    hint: "Voz femenina de estudio (nova)",
+    title: "Luxury Concierge",
+    hint: "Studio female voice (nova)",
     openaiVoice: FEMALE_OPENAI_VOICE,
     elevenLabsVoiceId: FEMALE_ELEVENLABS_VOICE_ID,
     gender: "female",
@@ -71,7 +203,7 @@ export const VOICE_PROFILES: VoiceProfile[] = [
     id: "sarah",
     name: "Sarah",
     title: "Friendly American Host",
-    hint: "Inglés nativo fluido y enérgico",
+    hint: "Fluent, energetic native English",
     openaiVoice: "shimmer",
     elevenLabsVoiceId: FEMALE_ELEVENLABS_VOICE_ID,
     gender: "female",
@@ -95,7 +227,8 @@ export class AutoplayBlockedError extends Error {
   }
 }
 
-function isAutoplayError(cause: unknown) {
+export function isAutoplayBlocked(cause: unknown) {
+  if (cause instanceof AutoplayBlockedError) return true;
   const name = cause instanceof DOMException ? cause.name : cause instanceof Error ? cause.name : "";
   const message = cause instanceof Error ? cause.message : String(cause);
   return name === "NotAllowedError" || /not allowed|user didn't interact|autoplay/i.test(message);
@@ -156,18 +289,36 @@ export function paceForSpeech(text: string) {
   return paced;
 }
 
+/**
+ * Strips everything tts-1 would read literally or garble: markdown,
+ * code fences, emojis/symbols, URLs. Keeps natural prose for the engine.
+ */
+export function sanitizeForTts(input: string): string {
+  let t = input;
+  t = t.replace(/```[\s\S]*?```/g, ". ");
+  t = t.replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1"); // [text](url) → text
+  t = t.replace(/https?:\/\/\S+/g, " enlace ");
+  t = t.replace(/(\*\*|__)(.*?)\1/g, "$2"); // **bold** / __bold__
+  t = t.replace(/(\*|_)([^*_\n]+)\1/g, "$2"); // *italic* / _italic_
+  t = t.replace(/~~(.*?)~~/g, "$1");
+  t = t.replace(/`+/g, "");
+  t = t.replace(/^#{1,6}\s*/gm, ""); // headings
+  t = t.replace(/^[\s]*[-*+•]\s+/gm, ""); // list bullets
+  t = t.replace(/^[\s]*>\s?/gm, ""); // blockquotes
+  // Emojis, pictographs, arrows, dingbats, variation selectors, ZWJ.
+  t = t.replace(
+    /[\u{1F000}-\u{1FAFF}\u{1F1E6}-\u{1F1FF}\u{2190}-\u{21FF}\u{2300}-\u{23FF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE00}-\u{FE0F}\u{200D}]/gu,
+    " ",
+  );
+  t = t.replace(/\(\s*\)/g, "");
+  t = t.replace(/\s{2,}/g, " ");
+  return t.trim();
+}
+
 export function detectReplyLang(question: string, mode: LanguageMode): ReplyLang {
   if (mode === "en") return "en";
   if (mode === "es") return "es";
-  if (
-    /[áéíóúüñ¿¡]/i.test(question) ||
-    /\b(cuál|cual|dónde|donde|cómo|como|está|estan|están|hola|gracias|clave|huésped|huesped|baño|puerta|estaciono|estacionamiento|ayuda|puedo|necesito|cerca|súper|mercado|anfitrión)\b/i.test(
-      question,
-    )
-  ) {
-    return "es";
-  }
-  return "en";
+  return detectUtteranceLang(question);
 }
 
 export async function speakHumanVoice(options: {
@@ -197,7 +348,7 @@ export async function speakHumanVoice(options: {
   for (const item of providers) {
     try {
       await speakStudioAudio({
-        text: paceForSpeech(options.text),
+        text: paceForSpeech(sanitizeForTts(options.text)),
         profile: options.profile,
         speed: options.speed,
         stability: options.stability,
@@ -242,7 +393,7 @@ export function stopHumanVoice(audioRef: { current: HTMLAudioElement | null }) {
  */
 export function speakWithBrowserTts(options: {
   text: string;
-  lang: ReplyLang;
+  lang?: ReplyLang;
   onStart?: () => void;
   onEnd?: () => void;
 }): boolean {
@@ -250,31 +401,37 @@ export function speakWithBrowserTts(options: {
   const synth = window.speechSynthesis;
   synth.cancel();
 
-  const utterance = new SpeechSynthesisUtterance(options.text);
-  utterance.lang = options.lang === "en" ? "en-US" : "es-ES";
+  const spokenLang = detectUtteranceLang(options.text);
+  const lang: ReplyLang = spokenLang === "es" ? "es" : (options.lang ?? spokenLang);
+  const utterance = new SpeechSynthesisUtterance(sanitizeForTts(options.text));
+  utterance.lang = lang === "es" ? "es-US" : "en-US";
+
+  const esPrefixes = ["es-us", "es-mx", "es-419", "es-es", "es"];
+  const enPrefixes = ["en-us", "en-gb", "en"];
+  const prefixes = lang === "es" ? esPrefixes : enPrefixes;
   const voices = synth.getVoices();
-  const prefix = options.lang === "en" ? "en" : "es";
-  const female =
-    voices.find(
-      (item) =>
-        item.lang.toLowerCase().startsWith(prefix) && isExplicitFemaleBrowserVoiceName(item.name),
-    ) ?? voices.find((item) => isExplicitFemaleBrowserVoiceName(item.name));
+  const langCode = (item: SpeechSynthesisVoice) => item.lang.toLowerCase().replace("_", "-");
+  const findByPrefix = (predicate: (item: SpeechSynthesisVoice) => boolean) => {
+    for (const prefix of prefixes) {
+      const hit = voices.find((item) => langCode(item).startsWith(prefix) && predicate(item));
+      if (hit) return hit;
+    }
+    return undefined;
+  };
 
-  if (!female || isMaleBrowserVoiceName(female.name)) {
-    synth.cancel();
-    options.onEnd?.();
-    return false;
+  const female = findByPrefix((item) => isExplicitFemaleBrowserVoiceName(item.name));
+  const anyMatch = findByPrefix(() => true);
+  const chosen = female && !isMaleBrowserVoiceName(female.name) ? female : anyMatch;
+
+  if (chosen) {
+    utterance.voice = chosen;
+    if (lang === "es") utterance.lang = chosen.lang.startsWith("es") ? chosen.lang : "es-US";
+    else utterance.lang = chosen.lang.startsWith("en") ? chosen.lang : "en-US";
+  } else if (lang === "es") {
+    utterance.lang = "es-US";
   }
 
-  utterance.voice = female;
-  const chosen = utterance.voice?.name ?? "";
-  if (!chosen || isMaleBrowserVoiceName(chosen) || !isExplicitFemaleBrowserVoiceName(chosen)) {
-    synth.cancel();
-    options.onEnd?.();
-    return false;
-  }
-
-  utterance.pitch = 1.2;
+  utterance.pitch = 1.15;
   utterance.rate = 1;
   utterance.onstart = () => options.onStart?.();
   utterance.onend = () => options.onEnd?.();
@@ -284,51 +441,227 @@ export function speakWithBrowserTts(options: {
 }
 
 export function isFatalTtsNetworkError(cause: unknown) {
-  if (cause instanceof AutoplayBlockedError) return false;
   const message = cause instanceof Error ? cause.message : String(cause);
   return /failed to fetch|network|tts-network|Studio TTS unavailable|Load failed/i.test(message);
 }
 
 let unlockedAudio: HTMLAudioElement | null = null;
 
-/** Call from the first user tap so later MP3 playback is allowed. */
-export function unlockSpeechAudio(persistent?: HTMLAudioElement | null) {
-  if (typeof window === "undefined") return;
-  const audio = persistent ?? unlockedAudio ?? (unlockedAudio = new Audio());
-  audio.preload = "auto";
-  audio.setAttribute("playsinline", "true");
-  if (persistent) unlockedAudio = persistent;
-
-  try {
-    const AudioContextCtor =
-      window.AudioContext ||
-      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (AudioContextCtor) {
-      const ctx = new AudioContextCtor();
-      void ctx.resume().catch((cause) => {
-        console.error("[voice] AudioContext resume failed", cause);
-      });
-      const oscillator = ctx.createOscillator();
-      const gain = ctx.createGain();
-      gain.gain.value = 0;
-      oscillator.connect(gain);
-      gain.connect(ctx.destination);
-      oscillator.start();
-      oscillator.stop(ctx.currentTime + 0.04);
-    }
-  } catch (cause) {
-    console.error("[voice] AudioContext unlock failed", cause);
-  }
-
-  keepAudioChannelAlive(audio);
+/** The element unlocked by the first user tap, if any. */
+export function getUnlockedAudio() {
+  return unlockedAudio;
 }
 
-/** Fetch OpenAI MP3 from /api/tts and play it with HTMLAudioElement — never speechSynthesis. */
-export async function playOpenAiTtsMpeg(text: string, voice: OpenAiTtsVoice): Promise<HTMLAudioElement> {
+/**
+ * Call SYNCHRONOUSLY from the first user tap so later MP3 playback is allowed.
+ * Returns the unlocked element so callers can play generated audio through it.
+ */
+export function isMobileWebKit() {
+  if (typeof navigator === "undefined") return false;
+  return (
+    window.matchMedia("(pointer: coarse)").matches ||
+    /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
+  );
+}
+
+const RECORDER_TYPES = ["audio/mp4", "audio/aac", "audio/webm;codecs=opus", "audio/webm", "audio/mpeg"];
+
+export function pickRecorderMime(): string {
+  if (typeof MediaRecorder === "undefined") return "";
+  return RECORDER_TYPES.find((type) => MediaRecorder.isTypeSupported(type)) ?? "";
+}
+
+export function whisperFileMeta(mimeOrType: string): { name: string; type: string } {
+  const t = mimeOrType.toLowerCase();
+  if (t.includes("mp4")) return { name: "audio.mp4", type: "audio/mp4" };
+  if (t.includes("m4a") || t.includes("aac") || t.includes("mp4a")) return { name: "audio.m4a", type: "audio/mp4" };
+  if (t.includes("mpeg") || t.includes("mp3")) return { name: "audio.mp3", type: "audio/mpeg" };
+  if (t.includes("wav")) return { name: "audio.wav", type: "audio/wav" };
+  if (t.includes("ogg")) return { name: "audio.ogg", type: "audio/ogg" };
+  return { name: "audio.webm", type: "audio/webm" };
+}
+
+export type PushToTalkSession = {
+  stop: () => void;
+  cancel: () => void;
+};
+
+const STOP_TIMEOUT_MS = 3000;
+
+export function assertCanRecordAudio() {
+  if (typeof window === "undefined") {
+    throw new Error("MIC_UNAVAILABLE");
+  }
+  if (!window.isSecureContext) {
+    throw new Error("MIC_INSECURE");
+  }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error("MIC_INSECURE");
+  }
+  if (typeof MediaRecorder === "undefined") {
+    throw new Error("MIC_UNSUPPORTED");
+  }
+}
+
+export function micErrorMessage(cause: unknown) {
+  const code = cause instanceof Error ? cause.message : String(cause);
+  if (code === "MIC_INSECURE" || /secure|https|getUserMedia/i.test(code)) {
+    return "Open this page over HTTPS (Cloudflare tunnel) to use the microphone. Safari cannot record over HTTP.";
+  }
+  if (code === "MIC_UNSUPPORTED") {
+    return "This browser cannot record audio.";
+  }
+  if (code === "MIC_UNAVAILABLE") {
+    return "The microphone is not available right now.";
+  }
+  return "Could not start the microphone. Check permission in Settings → Safari.";
+}
+
+/** Builds the recorder after getUserMedia already ran in the user-gesture callback. */
+export function startPushToTalkFromStream(
+  stream: MediaStream,
+  options: { onStop: (blob: Blob) => void },
+): PushToTalkSession {
+  const mime = pickRecorderMime();
+  const audioChunks: BlobPart[] = [];
+  const recorder = mime
+    ? new MediaRecorder(stream, { mimeType: mime, audioBitsPerSecond: 32000 })
+    : new MediaRecorder(stream);
+  recorder.ondataavailable = (event) => {
+    if (event.data && event.data.size > 0) audioChunks.push(event.data);
+  };
+  // Timeslice so Safari has chunks before stop(); a single start() often yields an empty onstop blob.
+  try {
+    recorder.start(250);
+  } catch {
+    recorder.start();
+  }
+
+  const stopTracks = () => {
+    try {
+      recorder.stream.getTracks().forEach((track) => track.stop());
+    } catch {
+      /* ignore */
+    }
+    stream.getTracks().forEach((track) => track.stop());
+  };
+
+  let delivered = false;
+  const deliverFromOnStop = () => {
+    if (delivered) return;
+    delivered = true;
+    const audioBlob = new Blob(audioChunks, {
+      type: recorder.mimeType || mime || "audio/mp4",
+    });
+    stopTracks();
+    options.onStop(audioBlob);
+  };
+
+  recorder.onerror = () => deliverFromOnStop();
+  recorder.onstop = () => deliverFromOnStop();
+
+  const stop = () => {
+    if (recorder.state === "inactive") {
+      deliverFromOnStop();
+      return;
+    }
+    window.setTimeout(() => {
+      if (!delivered) deliverFromOnStop();
+    }, STOP_TIMEOUT_MS);
+    try {
+      recorder.requestData();
+    } catch {
+      /* Safari */
+    }
+    try {
+      recorder.stop();
+    } catch {
+      deliverFromOnStop();
+    }
+  };
+
+  const cancel = () => {
+    delivered = true;
+    try {
+      if (recorder.state !== "inactive") recorder.stop();
+    } catch {
+      /* ignore */
+    }
+    stopTracks();
+  };
+
+  return { stop, cancel };
+}
+
+/** One-shot MediaRecorder clip. Never uses webkitSpeechRecognition. */
+export async function startPushToTalk(options: {
+  onStop: (blob: Blob) => void;
+}): Promise<PushToTalkSession> {
+  assertCanRecordAudio();
+  const media = navigator.mediaDevices;
+  if (!media?.getUserMedia) throw new Error("MIC_INSECURE");
+  const stream = await media.getUserMedia({ audio: true });
+  return startPushToTalkFromStream(stream, options);
+}
+
+export async function transcribePushToTalkBlob(_blob: Blob, _language?: "es" | "en"): Promise<string> {
+  console.warn("[elena] Whisper /api/transcribe is unused; use startBrowserSpeechListen.");
+  return "";
+}
+
+export function unlockSpeechAudio(persistent?: HTMLAudioElement | null) {
+  if (typeof window === "undefined") return null;
+  try {
+    const audio = persistent ?? unlockedAudio ?? (unlockedAudio = new Audio());
+    audio.preload = "auto";
+    audio.setAttribute("playsinline", "true");
+    audio.setAttribute("webkit-playsinline", "true");
+    if (persistent) unlockedAudio = persistent;
+    try {
+      const Ctx = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (Ctx) {
+        const ctx = new Ctx();
+        void ctx.resume().catch(() => {});
+      }
+    } catch {
+      /* ignore */
+    }
+    if (!audio.src) assignAudioSrc(audio, SILENT_WAV);
+    audio.muted = false;
+    audio.volume = 0;
+    void audio.play().catch(() => {});
+    audio.pause();
+    audio.volume = 1;
+    audio.currentTime = 0;
+    return audio;
+  } catch (cause) {
+    console.error("[voice] HTMLAudio unlock failed", cause);
+    return persistent ?? unlockedAudio;
+  }
+}
+
+/**
+ * Fetch OpenAI MP3 from /api/tts and play it with HTMLAudioElement — never speechSynthesis.
+ *
+ * iOS/Safari only allows playback on an element that was already unlocked inside a
+ * real user gesture. Because this runs after `await`, a freshly constructed
+ * `new Audio()` is always blocked there, so callers should pass the persistent
+ * element they unlocked on first tap via `target`.
+ */
+export async function loadOpenAiTtsMpeg(
+  text: string,
+  voice: OpenAiTtsVoice,
+  target?: HTMLAudioElement | null,
+  lang?: ReplyLang,
+): Promise<HTMLAudioElement> {
   const ttsRes = await fetch("/api/tts", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, voice }),
+    body: JSON.stringify({
+      text: paceForSpeech(sanitizeForTts(text)),
+      voice,
+      ...(lang ? { language: lang } : {}),
+    }),
   }).catch((cause) => {
     console.error("[voice] /api/tts network error", cause);
     throw new Error("tts-network");
@@ -347,18 +680,34 @@ export async function playOpenAiTtsMpeg(text: string, voice: OpenAiTtsVoice): Pr
   }
 
   const url = URL.createObjectURL(blob);
-  const audio = new Audio(url);
+  const audio = target ?? unlockedAudio ?? new Audio();
   audio.setAttribute("playsinline", "true");
+  audio.setAttribute("webkit-playsinline", "true");
   audio.preload = "auto";
+  audio.loop = false;
+  audio.muted = false;
   audio.volume = 1;
+  audio.playbackRate = 1;
+  assignAudioSrc(audio, url);
+  return audio;
+}
+
+export async function playOpenAiTtsMpeg(
+  text: string,
+  voice: OpenAiTtsVoice,
+  target?: HTMLAudioElement | null,
+  lang?: ReplyLang,
+): Promise<HTMLAudioElement> {
+  const audio = await loadOpenAiTtsMpeg(text, voice, target, lang);
   try {
     await audio.play();
   } catch (cause) {
-    URL.revokeObjectURL(url);
-    if (isAutoplayError(cause)) throw new AutoplayBlockedError();
+    if (isAutoplayBlocked(cause)) {
+      console.error("[voice] audio.play NotAllowedError", cause);
+      throw new AutoplayBlockedError();
+    }
     throw cause instanceof Error ? cause : new Error("Audio playback failed");
   }
-  audio.onended = () => URL.revokeObjectURL(url);
   return audio;
 }
 
@@ -418,7 +767,7 @@ async function speakStudioAudio(options: {
   } catch (cause) {
     URL.revokeObjectURL(url);
     options.onPlaybackEnd?.();
-    if (isAutoplayError(cause)) throw new AutoplayBlockedError();
+    if (isAutoplayBlocked(cause)) throw new AutoplayBlockedError();
     throw cause instanceof Error ? cause : new Error("Audio playback failed");
   }
 

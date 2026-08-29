@@ -1,5 +1,5 @@
 import type { Property } from "@/lib/dashboard-data";
-import type { LanguageMode, ReplyLang } from "@/lib/human-voice";
+import { detectReplyLang, type LanguageMode, type ReplyLang } from "@/lib/human-voice";
 
 export type GuestIntent =
   | "emergency"
@@ -12,6 +12,7 @@ export type GuestIntent =
   | "parking"
   | "door"
   | "checkin"
+  | "trash"
   | "rules"
   | "open";
 
@@ -133,7 +134,21 @@ const CHECKIN_HINTS = [
   "late checkout",
 ];
 
-const RULES_HINTS = ["reglas", "regla de la casa", "silencio", "quiet hours", "fiesta", "ruido", "basura", "house rules"];
+/** Also used by the Elena system prompt to pull trash rules out of the handbook. */
+export const TRASH_HINTS = [
+  "basura",
+  "trash",
+  "garbage",
+  "recicl",
+  "recycle",
+  "recycling",
+  "compactor",
+  "chute",
+  "pickup",
+  "recoleccion",
+];
+
+const RULES_HINTS = ["reglas", "regla de la casa", "silencio", "quiet hours", "fiesta", "ruido", "house rules"];
 
 const EMERGENCY_HINTS = ["fuga", "inundacion", "leak", "flood", "lockout", "cerradura rota", "water leak"];
 
@@ -158,6 +173,7 @@ export function detectGuestIntent(raw: string): GuestIntent {
     if (q.includes("supermercado") || q.includes("tienda")) return "grocery";
     return "checkin";
   }
+  if (TRASH_HINTS.some((hint) => q.includes(hint))) return "trash";
   if (RULES_HINTS.some((hint) => q.includes(hint))) return "rules";
   if (/^(hola|hello|hi|hey|buenas|buenos dias|good morning|good evening)(\s.*)?$/.test(q) && q.split(" ").length <= 4) {
     return "greeting";
@@ -241,14 +257,5 @@ export function relevantHandbookSnippet(question: string, handbook: string) {
 }
 
 export function replyLangFor(question: string, mode: LanguageMode): ReplyLang {
-  if (mode === "en") return "en";
-  if (mode === "es") return "es";
-  const q = normalizeGuestText(question);
-  if (
-    /[¿¡]/.test(question) ||
-    /\b(cual|donde|estaciono|clave|puerta|gracias|bano|fuga|hola|ayuda|supermercado|tienda|comida)\b/.test(q)
-  ) {
-    return "es";
-  }
-  return "en";
+  return detectReplyLang(question, mode);
 }

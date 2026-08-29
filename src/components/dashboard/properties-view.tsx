@@ -15,7 +15,9 @@ import {
   ExternalLink,
   X,
   User,
+  Sparkles,
 } from "lucide-react";
+import Link from "next/link";
 import {
   propertyCities,
   type Property,
@@ -23,6 +25,7 @@ import {
   type OccupancyStatus,
 } from "@/lib/dashboard-data";
 import { useListings } from "@/components/dashboard/listings-provider";
+import { useSubscriptionTier } from "@/hooks/use-subscription-tier";
 import { getSupabase } from "@/lib/supabase";
 
 type CityFilter = "all" | PropertyCity;
@@ -48,6 +51,7 @@ const emptyDraft: Omit<Property, "id"> = {
   checkIn: "3:00 PM",
   checkOut: "11:00 AM",
   currentGuest: null,
+  trash: "",
   handbook: "",
 };
 
@@ -105,6 +109,7 @@ function CopyField({
 
 export function PropertiesView() {
   const { properties: listings, saveProperty, applyHandbook, loading, error } = useListings();
+  const { canAddProperty, planName, maxProperties, isActive } = useSubscriptionTier();
   const [cityFilter, setCityFilter] = useState<CityFilter>("all");
   const [occupancyFilter, setOccupancyFilter] = useState<OccupancyFilter>("all");
   const [modal, setModal] = useState<ModalMode>({ kind: "closed" });
@@ -129,6 +134,14 @@ export function PropertiesView() {
   };
 
   const openCreate = () => {
+    if (!canAddProperty) {
+      window.alert(
+        isActive
+          ? `${planName} allows ${Number.isFinite(maxProperties) ? maxProperties : "unlimited"} listings. Change your plan in Settings → Billing & Subscriptions.`
+          : "Start a 14-day free trial from the public pricing page, or manage billing in Settings → Billing & Subscriptions.",
+      );
+      return;
+    }
     setCreateDraft(emptyDraft);
     setModal({ kind: "create" });
   };
@@ -184,6 +197,7 @@ export function PropertiesView() {
       wifiPassword: createDraft.wifiPassword.trim(),
       parking: createDraft.parking.trim(),
       gateCode: createDraft.gateCode.trim() || "—",
+      trash: createDraft.trash.trim(),
       handbook: createDraft.handbook.trim(),
       currentGuest:
         createDraft.status === "Occupied"
@@ -236,6 +250,24 @@ export function PropertiesView() {
           : "Live from Supabase · Save handbook writes ai_handbook"}
         {error ? ` · ${error}` : ""}
       </p>
+      <div className="flex flex-wrap items-start justify-between gap-3 rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-3">
+        <div className="flex items-start gap-2">
+          <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-indigo-800" />
+          <div>
+            <p className="text-sm font-semibold text-slate-900">Elena AI · listing knowledge</p>
+            <p className="mt-0.5 text-xs text-slate-700">
+              Door codes, Wi-Fi, parking, and the AI handbook on each listing are the prompts Elena reads on guest calls.
+              Open the voice studio for line, language, and avatar settings.
+            </p>
+          </div>
+        </div>
+        <Link
+          href="/dashboard/voice-agent"
+          className="shrink-0 rounded-lg border border-indigo-300 bg-white px-3 py-1.5 text-xs font-bold text-indigo-900 hover:bg-indigo-100"
+        >
+          Elena voice settings
+        </Link>
+      </div>
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="space-y-3">
           <div>
@@ -285,7 +317,7 @@ export function PropertiesView() {
         <button
           type="button"
           onClick={openCreate}
-          className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-bold text-slate-950 shadow-lg shadow-emerald-500/20 transition-colors hover:bg-emerald-400"
+          className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-bold text-slate-950 shadow-lg shadow-emerald-500/20 transition-colors hover:bg-emerald-400 disabled:opacity-50"
         >
           <Plus className="h-4 w-4" />
           Add New Property
@@ -645,6 +677,14 @@ export function PropertiesView() {
                     }
                   />
                 </div>
+                <Field
+                  label="Trash / recycling"
+                  value={createDraft.trash}
+                  onChange={(value) =>
+                    setCreateDraft((draft) => ({ ...draft, trash: value }))
+                  }
+                  placeholder="Pickup days, bins, chute — Elena reads this to guests"
+                />
                 <div>
                   <label className="mb-1.5 block text-xs font-medium text-slate-400">
                     AI Handbook
