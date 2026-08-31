@@ -5,29 +5,19 @@ import {
   Bell,
   CreditCard,
   Cpu,
-  Plus,
-  Trash2,
   User,
-  Users,
 } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createAuthBrowserClient } from "@/lib/supabase-auth-browser";
-import { hostFullName } from "@/lib/host-display-name";
+import { hostFullName, writeStoredHostProfileName } from "@/lib/host-display-name";
 import { isDevPreviewUser, readPendingSignup } from "@/lib/pending-signup";
+import { TeamCleanersAccessPanel } from "@/components/dashboard/team-cleaners-access";
 import { HostBillingSummary } from "@/components/dashboard/host-billing-summary";
 
 type HubTab = "profile" | "alerts" | "hardware" | "team" | "billing";
-type TeamRole = "cleaner" | "cohost" | "inspector";
 type LockVendor = "august" | "yale" | "schlage";
 type IcalInterval = "15" | "30" | "60";
 type SensorStatus = "synced" | "idle" | "error";
-
-type TeamMember = {
-  id: string;
-  email: string;
-  role: TeamRole;
-  status: "active" | "pending";
-};
 
 const TABS: { id: HubTab; label: string }[] = [
   { id: "profile", label: "Profile & Business" },
@@ -37,20 +27,9 @@ const TABS: { id: HubTab; label: string }[] = [
   { id: "billing", label: "Billing & Subscriptions" },
 ];
 
-const ROLE_LABEL: Record<TeamRole, string> = {
-  cleaner: "Cleaner",
-  cohost: "Co-host",
-  inspector: "Inspector",
-};
-
-const ROLE_PERMS: Record<TeamRole, string> = {
-  cleaner: "Housekeeping cards and photo uploads only. No financials or settings.",
-  cohost: "Listings, calendar, NeighborShield, and Dispute Dossier. No billing.",
-  inspector: "Inspection gallery and damage flags. No guest PII export.",
-};
-
 const STORAGE = {
   brand: "zencierge.hub.brand",
+  fullName: "zencierge.hub.fullName",
   email: "zencierge.hub.email",
   emergency: "zencierge.hostEmergency",
   timezone: "zencierge.hub.timezone",
@@ -63,17 +42,16 @@ const STORAGE = {
   autoPin: "zencierge.hub.autoPin",
   minut: "zencierge.hub.minutSync",
   ical: "zencierge.hub.icalInterval",
-  team: "zencierge.hub.team",
 } as const;
-
-const DEFAULT_TEAM: TeamMember[] = [
-  { id: "tm-1", email: "marisol@cleanco.example", role: "cleaner", status: "active" },
-  { id: "tm-2", email: "ops@sunshine-turnovers.example", role: "cleaner", status: "pending" },
-];
 
 const field =
   "mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-900 placeholder:text-slate-500 focus:border-sky-600 focus:outline-none";
 const labelClass = "text-sm font-semibold text-slate-900";
+
+function hubTabFromQuery(value: string | null): HubTab {
+  if (value === "alerts" || value === "hardware" || value === "team" || value === "billing") return value;
+  return "profile";
+}
 
 export function SettingsView() {
   return (
@@ -86,7 +64,7 @@ export function SettingsView() {
 function SettingsViewInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const [tab, setTab] = useState<HubTab>(searchParams.get("tab") === "billing" ? "billing" : "profile");
+  const [tab, setTab] = useState<HubTab>(hubTabFromQuery(searchParams.get("tab")));
   const [toast, setToast] = useState<string | null>(null);
 
   const [fullName, setFullName] = useState("");
@@ -108,17 +86,13 @@ function SettingsViewInner() {
   const [minutStatus, setMinutStatus] = useState<SensorStatus>("synced");
   const [icalInterval, setIcalInterval] = useState<IcalInterval>("15");
 
-  const [team, setTeam] = useState<TeamMember[]>(DEFAULT_TEAM);
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState<TeamRole>("cleaner");
-
   useEffect(() => {
-    if (searchParams.get("tab") === "billing") setTab("billing");
+    setTab(hubTabFromQuery(searchParams.get("tab")));
   }, [searchParams]);
 
   const selectTab = (id: HubTab) => {
     setTab(id);
-    router.replace(id === "billing" ? "/dashboard/settings?tab=billing" : "/dashboard/settings", { scroll: false });
+    router.replace(id === "profile" ? "/dashboard/settings" : `/dashboard/settings?tab=${id}`, { scroll: false });
   };
 
   useEffect(() => {
@@ -143,52 +117,69 @@ function SettingsViewInner() {
     if (minut === "synced" || minut === "idle" || minut === "error") setMinutStatus(minut);
     const ical = window.localStorage.getItem(STORAGE.ical);
     if (ical === "15" || ical === "30" || ical === "60") setIcalInterval(ical);
-    try {
-      const raw = window.localStorage.getItem(STORAGE.team);
-      if (raw) {
-        const parsed = JSON.parse(raw) as TeamMember[];
-        if (Array.isArray(parsed) && parsed.length) setTeam(parsed);
-      }
-    } catch {
-      /* keep defaults */
-    }
 
     const supabase = createAuthBrowserClient();
     void supabase.auth.getUser().then(({ data }: { data: { user: { email?: string; user_metadata?: Record<string, unknown> } | null } }) => {
       const pending = readPendingSignup();
       const mock = isDevPreviewUser(data.user);
       if (pending && (!data.user || mock)) {
-        setFullName(pending.fullName);
+        setFullName(window.localStorage.getItem(STORAGE.fullName) || pending.fullName);
         setEmail(pending.email);
         return;
       }
-      setFullName(hostFullName(data.user));
+      const storedName = window.localStorage.getItem(STORAGE.fullName)?.trim();
+      setFullName(storedName || hostFullName(data.user) || "Javier E Murphy");
       const storedEmail = window.localStorage.getItem(STORAGE.email);
       setEmail(storedEmail || data.user?.email || pending?.email || "");
     });
   }, []);
 
-  const flashSaved = () => setToast("Settings saved successfully");
+  const flashSaved = (message = "Settings saved successfully") => setToast(message);
+
+  const saveProfileLocally = (name: string) => {
+    window.localStorage.setItem(STORAGE.brand, brand.trim() || "Zencierge Host OS");
+    window.localStorage.setItem(STORAGE.email, email.trim());
+    window.localStorage.setItem(STORAGE.emergency, emergency.trim());
+    window.localStorage.setItem(STORAGE.timezone, timezone);
+    window.localStorage.setItem(STORAGE.currency, currency);
+    writeStoredHostProfileName(name);
+    setFullName(name);
+  };
 
   const saveProfile = async () => {
     setProfileBusy(true);
     setProfileError(null);
     const trimmed = fullName.trim() || "Host";
     const firstName = trimmed.split(/\s+/)[0] ?? "Host";
+    saveProfileLocally(trimmed);
     try {
       const supabase = createAuthBrowserClient();
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) {
+        flashSaved("Profile saved locally");
+        return;
+      }
       const { error } = await supabase.auth.updateUser({
         data: { full_name: trimmed, first_name: firstName },
       });
       if (error) throw error;
-      window.localStorage.setItem(STORAGE.brand, brand.trim() || "Zencierge Host OS");
-      window.localStorage.setItem(STORAGE.email, email.trim());
-      window.localStorage.setItem(STORAGE.emergency, emergency.trim());
-      window.localStorage.setItem(STORAGE.timezone, timezone);
-      window.localStorage.setItem(STORAGE.currency, currency);
-      setFullName(trimmed);
+      if (data.session.user.id) {
+        try {
+          await supabase.from("host_profiles").upsert(
+            { user_id: data.session.user.id, full_name: trimmed },
+            { onConflict: "user_id" },
+          );
+        } catch {
+          /* table may not exist yet — localStorage and auth metadata still update the banner */
+        }
+      }
       flashSaved();
     } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "";
+      if (/auth session missing|session/i.test(message)) {
+        flashSaved("Profile saved locally");
+        return;
+      }
       setProfileError(cause instanceof Error ? cause.message : "Could not save your profile.");
     } finally {
       setProfileBusy(false);
@@ -208,25 +199,6 @@ function SettingsViewInner() {
     window.localStorage.setItem(STORAGE.autoPin, autoPin ? "1" : "0");
     window.localStorage.setItem(STORAGE.minut, minutStatus);
     window.localStorage.setItem(STORAGE.ical, icalInterval);
-    flashSaved();
-  };
-
-  const saveTeam = (next: TeamMember[]) => {
-    setTeam(next);
-    window.localStorage.setItem(STORAGE.team, JSON.stringify(next));
-  };
-
-  const invite = () => {
-    const value = inviteEmail.trim().toLowerCase();
-    if (!value.includes("@")) return;
-    const member: TeamMember = {
-      id: `tm-${Date.now()}`,
-      email: value,
-      role: inviteRole,
-      status: "pending",
-    };
-    saveTeam([...team, member]);
-    setInviteEmail("");
     flashSaved();
   };
 
@@ -408,67 +380,7 @@ function SettingsViewInner() {
         </section>
       ) : null}
 
-      {tab === "team" ? (
-        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <Header
-            icon={Users}
-            title="Team & cleaners access"
-            subtitle="Invite cleaning crew or co-hosts with role-based permissions."
-          />
-          <div className="mt-6 grid gap-3 sm:grid-cols-[1fr_160px_auto]">
-            <input
-              type="email"
-              className={field + " mt-0"}
-              placeholder="crew@example.com"
-              value={inviteEmail}
-              onChange={(event) => setInviteEmail(event.target.value)}
-            />
-            <select className={field + " mt-0"} value={inviteRole} onChange={(event) => setInviteRole(event.target.value as TeamRole)}>
-              <option value="cleaner">Cleaner</option>
-              <option value="cohost">Co-host</option>
-              <option value="inspector">Inspector</option>
-            </select>
-            <button
-              type="button"
-              onClick={invite}
-              className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-sky-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-sky-700"
-            >
-              <Plus className="h-4 w-4" /> Invite
-            </button>
-          </div>
-          <p className="mt-3 text-xs font-medium text-slate-800">{ROLE_PERMS[inviteRole]}</p>
-
-          <ul className="mt-6 divide-y divide-slate-200 rounded-xl border border-slate-200">
-            {team.map((member) => (
-              <li key={member.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-                <div>
-                  <p className="text-sm font-bold text-slate-900">{member.email}</p>
-                  <p className="text-xs font-medium text-slate-800">
-                    {ROLE_LABEL[member.role]} · {member.status === "active" ? "Active" : "Invite pending"}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    saveTeam(team.filter((row) => row.id !== member.id));
-                    flashSaved();
-                  }}
-                  className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-900 hover:bg-slate-50"
-                >
-                  <Trash2 className="h-3.5 w-3.5" /> Remove
-                </button>
-              </li>
-            ))}
-          </ul>
-          <SaveButton
-            label="Save Changes"
-            onClick={() => {
-              saveTeam(team);
-              flashSaved();
-            }}
-          />
-        </section>
-      ) : null}
+      {tab === "team" ? <TeamCleanersAccessPanel /> : null}
 
       {tab === "billing" ? <HostBillingSummary /> : null}
     </div>

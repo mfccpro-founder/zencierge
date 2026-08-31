@@ -7,6 +7,8 @@ import {
   parseHousekeepingPhotoCategory,
   type HousekeepingPhotoCategory,
 } from "@/lib/housekeeping-photos";
+import { HousekeepingPhotoReportForm } from "@/components/housekeeping/housekeeping-photo-report-form";
+import { TurnoverSupplyForm } from "@/components/housekeeping/turnover-supply-form";
 
 type PropertyOption = { id: string; name: string; city: string };
 type ReservationOption = {
@@ -117,12 +119,18 @@ export function HousekeepingUploadPortal() {
     "mt-1.5 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-base text-slate-900 outline-none focus:border-emerald-500";
 
   return (
-    <form onSubmit={(event) => void submit(event)} className="mx-auto w-full max-w-lg space-y-5 px-4 py-6 pb-10">
+    <div className="mx-auto w-full max-w-lg space-y-8 px-4 py-6 pb-10">
+    <div className="rounded-3xl border border-emerald-200 bg-white p-4 shadow-sm">
+      <HousekeepingPhotoReportForm />
+    </div>
+
+    <form onSubmit={(event) => void submit(event)} className="space-y-5">
       <header className="space-y-1">
-        <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-emerald-700">Cleaning staff</p>
-        <h1 className="text-2xl font-black tracking-tight text-slate-950">Photo upload</h1>
+        <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Reservation inspection</p>
+        <h1 className="text-2xl font-black tracking-tight text-slate-950">Stay photos</h1>
         <p className="text-sm leading-relaxed text-slate-600">
-          Capture check-in, check-out, or damage photos. They save to this reservation&apos;s housekeeping folder.
+          Optional: attach check-in, check-out, or damage photos to a specific reservation. After the clean, log leftover
+          supplies so the host shopping list stays current.
         </p>
       </header>
 
@@ -265,5 +273,14 @@ export function HousekeepingUploadPortal() {
         {busy ? "Uploading…" : "Upload photos"}
       </button>
     </form>
+
+    <div className="rounded-3xl border border-orange-200 bg-orange-50/60 p-4">
+      <TurnoverSupplyForm
+        propertyId={propertyId}
+        reservationId={reservationId}
+        staffName={staffName}
+      />
+    </div>
+    </div>
   );
 }

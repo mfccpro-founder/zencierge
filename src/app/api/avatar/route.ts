@@ -1,6 +1,7 @@
 import type { Property } from "@/lib/dashboard-data";
 import { buildAvatarSystemPrompt, type AvatarChatTurn } from "@/lib/avatar-prompt";
 import { detectUtteranceLang, type LanguageMode, type ReplyLang } from "@/lib/human-voice";
+import { loadInboundProperty } from "@/lib/supabase-listings";
 
 type AvatarBody = {
   question?: string;
@@ -11,6 +12,11 @@ type AvatarBody = {
   openaiKey?: string;
   history?: AvatarChatTurn[];
   property?: Property;
+  propertyId?: string;
+  to?: string;
+  To?: string;
+  called?: string;
+  Called?: string;
 };
 
 export async function POST(request: Request) {
@@ -22,7 +28,12 @@ export async function POST(request: Request) {
   }
 
   const question = body.question?.trim() ?? "";
-  const property = body.property;
+  const property = await loadInboundProperty({
+    property: body.property,
+    propertyId: body.propertyId ?? body.property?.id,
+    to: body.to ?? body.To,
+    calledNumber: body.called ?? body.Called,
+  });
   if (!question || !property?.name || !property.city) {
     return Response.json({ error: "question and property are required" }, { status: 400 });
   }

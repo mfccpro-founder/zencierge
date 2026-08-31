@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import type { Property } from "@/lib/dashboard-data";
 import ElenaVoiceWidget from "@/components/dashboard/elena-voice-widget";
 import { ElenaIdleShell } from "@/components/guest/elena-idle-shell";
+import { GuestSafeBoundary } from "@/components/guest/guest-safe-boundary";
 
 /**
  * Isolates browser-only Elena logic. Server and the first client paint share
@@ -17,8 +18,14 @@ export function ElenaGuestIsland({ property }: { property: Property }) {
   }, []);
 
   return (
-    <div id="elena-ai" className="mt-8 relative z-20 touch-manipulation" suppressHydrationWarning>
-      {mounted ? <ElenaVoiceWidget property={property} /> : <ElenaIdleShell />}
+    <div id="elena-ai" className="relative z-20 mt-8 w-full min-w-0 max-w-full overflow-x-hidden touch-manipulation" suppressHydrationWarning>
+      {mounted ? (
+        <GuestSafeBoundary>
+          <ElenaVoiceWidget property={property} />
+        </GuestSafeBoundary>
+      ) : (
+        <ElenaIdleShell />
+      )}
     </div>
   );
 }

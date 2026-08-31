@@ -40,9 +40,11 @@ export function NeighborShieldPanel() {
     setLoading(true);
     try {
       const res = await fetch("/api/admin/neighbor-shield");
-      const data = (await res.json()) as { alerts?: AlertRow[]; error?: string };
+      const data = (await res.json()) as { alerts?: AlertRow[]; error?: string; simulated?: boolean };
       setAlerts(data.alerts ?? []);
-      if (data.error) setFeedback({ ok: false, text: data.error });
+      if (data.error && !/invalid api key|unauthorized/i.test(data.error)) {
+        setFeedback({ ok: false, text: data.error });
+      }
     } catch {
       setFeedback({ ok: false, text: "Failed to load alerts." });
     } finally {
@@ -75,23 +77,31 @@ export function NeighborShieldPanel() {
         guestNotice?: string;
         guestPhone?: string | null;
         alert?: AlertRow;
+        simulated?: boolean;
+        smsSimulated?: boolean;
       };
-      if (!res.ok || data.error) throw new Error(data.error ?? "Alert failed.");
+      if ((!res.ok || data.error) && !data.alert) {
+        throw new Error(data.error ?? "Alert failed.");
+      }
       if (data.alert) {
         setAlerts((prev) => [data.alert!, ...prev.filter((row) => row.id !== data.alert!.id)]);
       }
       const notice = data.guestNoticeQueued
-        ? ` Guest notice queued${data.guestPhone ? ` for ${data.guestPhone}` : ""}.`
+        ? data.smsSimulated
+          ? ` Guest notice simulated${data.guestPhone ? ` for ${data.guestPhone}` : ""} (Twilio demo mode).`
+          : ` Guest notice queued${data.guestPhone ? ` for ${data.guestPhone}` : ""}.`
         : "";
       setFeedback({
         ok: true,
         text: notifyGuest
           ? `Community ${alertType} alert logged.${notice}`
           : alertType === "test"
-            ? "Test alert stored. Check the host WhatsApp/SMS inbox."
+            ? data.smsSimulated || data.simulated
+              ? "Test alert stored in demo mode. Twilio/SMS is not live."
+              : "Test alert stored. Check the host WhatsApp/SMS inbox."
             : `Community ${alertType} alert logged.`,
       });
-      if (data.alert && !String(data.alert.id).startsWith("demo")) {
+      if (data.alert && !String(data.alert.id).startsWith("demo") && !data.simulated) {
         await load();
       }
     } catch (cause) {

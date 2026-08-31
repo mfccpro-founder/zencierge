@@ -3,22 +3,22 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Check, Copy, ExternalLink } from "lucide-react";
+import { absoluteAppPathAsync } from "@/lib/public-app-url";
 
 const STAFF_PATH = "/housekeeping/upload";
-
-function staffUploadUrl() {
-  if (typeof window === "undefined") return STAFF_PATH;
-  const envBase = (process.env.NEXT_PUBLIC_APP_URL || "").replace(/\/$/, "");
-  const base = envBase || window.location.origin;
-  return `${base}${STAFF_PATH}`;
-}
 
 export function HousekeepingStaffLinkCard() {
   const [url, setUrl] = useState(STAFF_PATH);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    setUrl(staffUploadUrl());
+    let cancelled = false;
+    void absoluteAppPathAsync(STAFF_PATH).then((next) => {
+      if (!cancelled) setUrl(next);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const copy = async () => {
@@ -36,8 +36,8 @@ export function HousekeepingStaffLinkCard() {
       <p className="text-[11px] font-bold uppercase tracking-wider text-emerald-800">Cleaning staff</p>
       <h2 className="mt-1 text-base font-bold text-slate-900">Public photo upload link</h2>
       <p className="mt-1 text-sm text-slate-700">
-        Share this URL with housekeepers. They can open it on a phone, pick a reservation, and upload check-in, check-out,
-        or damage photos.
+        Share this URL with housekeepers. They can send a photo report (Cleaned & Ready, Maintenance Issue, or Damage
+        Found) from their phone camera, and optionally log leftover supplies.
       </p>
       <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
         <code className="min-w-0 flex-1 truncate rounded-xl border border-emerald-200 bg-white px-3 py-2.5 text-xs font-medium text-slate-800 sm:text-sm">

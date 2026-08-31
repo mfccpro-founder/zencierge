@@ -4,6 +4,7 @@ import { applySubscriptionWebhook } from "@/lib/subscription-webhooks";
 import { parsePlanId, ZENCIERGE_PLANS } from "@/lib/zencierge-plans";
 import { allowMockSquareCheckout } from "@/lib/square-checkout";
 import { GUEST_ADDONS, parseGuestAddonId } from "@/lib/guest-addons";
+import { publicOriginFromRequest } from "@/lib/public-app-url";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +18,8 @@ export async function GET(request: NextRequest) {
   if (kind === "guest_addon") {
     const addonId = parseGuestAddonId(request.nextUrl.searchParams.get("addon")) ?? "early_checkin";
     const propertyId = request.nextUrl.searchParams.get("propertyId")?.trim() || "prop-1";
-    const guest = new URL(`/guest/${encodeURIComponent(propertyId)}`, request.url);
+    const origin = publicOriginFromRequest(request);
+    const guest = new URL(`/guest/${encodeURIComponent(propertyId)}`, origin);
     guest.searchParams.set("checkout", "success");
     guest.searchParams.set("addon", addonId);
     guest.searchParams.set("amount", String(GUEST_ADDONS[addonId].usd));
@@ -25,7 +27,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(guest);
   }
 
-  const login = new URL("/login", request.url);
+  const login = new URL("/login", publicOriginFromRequest(request));
   login.searchParams.set("next", `/dashboard?payment=success&tier=${request.nextUrl.searchParams.get("plan") ?? "starter"}`);
 
   const auth = await requireHostUser();
@@ -61,7 +63,7 @@ export async function GET(request: NextRequest) {
     },
   });
 
-  const dashboard = new URL("/dashboard", request.url);
+  const dashboard = new URL("/dashboard", publicOriginFromRequest(request));
   dashboard.searchParams.set("payment", "success");
   dashboard.searchParams.set("tier", plan);
   if (mock) dashboard.searchParams.set("sandbox", "1");

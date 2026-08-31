@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { QRCodeSVG } from "qrcode.react";
-import { toPng } from "html-to-image";
+import { QRCodeCanvas, QRCodeSVG } from "qrcode.react";
 import {
   Check,
   Clock,
@@ -15,14 +14,15 @@ import {
   Wifi,
 } from "lucide-react";
 import type { Property } from "@/lib/dashboard-data";
+import { guestPortalUrl, guestPortalUrlAsync, isHttpsOrigin } from "@/lib/public-app-url";
 
-const DEFAULT_BASE_URL = "https://neutral-hart-isbn-function.trycloudflare.com";
 const DEFAULT_AI_PHONE = "+1 (305) 555-0199";
+/** Forced brand ink — slate-800. Do not inherit CSS currentColor. */
+const QR_FG_COLOR = "#1E293B";
+const QR_BG_COLOR = "#FFFFFF";
 
 function defaultGuestUrl(propertyId?: string) {
-  const id = propertyId || "prop-1";
-  const base = (process.env.NEXT_PUBLIC_APP_URL || DEFAULT_BASE_URL).replace(/\/$/, "");
-  return `${base}/guest/${id}`;
+  return guestPortalUrl(propertyId);
 }
 
 export function GuestQrCard({
@@ -39,8 +39,9 @@ export function GuestQrCard({
   const propId = property.id || "prop-1";
   const [guestUrl, setGuestUrl] = useState(() => defaultGuestUrl(property.id));
   const [copied, setCopied] = useState(false);
+  const [tunnelHint, setTunnelHint] = useState<string | null>(null);
   const qrArtRef = useRef<HTMLDivElement>(null);
-  const qrPrintRef = useRef<HTMLDivElement>(null);
+  const qrPrintCanvasRef = useRef<HTMLCanvasElement>(null);
 
   const propertyName = property.name;
   const propertyAddress = `${property.address}, ${property.city}, FL`;
@@ -51,7 +52,26 @@ export function GuestQrCard({
   const checkOut = property.checkOut;
 
   useEffect(() => {
-    setGuestUrl(defaultGuestUrl(property.id));
+    let cancelled = false;
+    const refresh = async () => {
+      const url = await guestPortalUrlAsync(property.id);
+      if (!cancelled) setGuestUrl(url);
+      try {
+        const response = await fetch("/api/dev-tunnel", { cache: "no-store" });
+        const data = (await response.json()) as { origin?: string | null; running?: boolean };
+        if (!cancelled) {
+          setTunnelHint(data.running && data.origin ? data.origin : null);
+        }
+      } catch {
+        if (!cancelled) setTunnelHint(null);
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, [property.id]);
 
   const handlePrint = () => window.print();
@@ -66,13 +86,12 @@ export function GuestQrCard({
     window.setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleDownloadPng = async () => {
-    const node = qrPrintRef.current ?? qrArtRef.current;
-    if (!node) return;
+  const handleDownloadPng = () => {
+    const canvas = qrPrintCanvasRef.current;
+    if (!canvas) return;
     try {
-      const dataUrl = await toPng(node, { pixelRatio: 4, backgroundColor: "#ffffff", cacheBust: true });
       const link = document.createElement("a");
-      link.href = dataUrl;
+      link.href = canvas.toDataURL("image/png");
       link.download = `elena-guest-qr-${propId}.png`;
       link.click();
     } catch (cause) {
@@ -108,23 +127,26 @@ export function GuestQrCard({
           }
           .print-hidden { display: none !important; }
         }
+        .guest-qr-mark svg path:nth-of-type(1) { fill: #FFFFFF !important; }
+        .guest-qr-mark svg path:nth-of-type(2) { fill: #1E293B !important; }
       `}</style>
 
-      <div className="print-hidden flex items-center justify-between p-3 bg-zinc-900 border border-zinc-800 rounded-xl">
-        <span className="text-xs font-medium text-zinc-300">Welcome Sign & AI Portal</span>
+      <div className="print-hidden flex items-center justify-between rounded-xl border border-slate-200 bg-white p-3">
+        <span className="text-xs font-medium text-slate-700">Welcome Sign & AI Portal</span>
         <div className="flex gap-2">
           <button
             type="button"
             onClick={handleCopy}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg transition"
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-800 transition hover:bg-slate-100"
           >
             {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
             {copied ? "Copied" : "Copy URL"}
           </button>
           <button
             type="button"
-            onClick={() => void handleDownloadPng()}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg transition"
+            onClick={handleDownloadPng}
+            aria-label="Download QR (PNG)"
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-800 transition hover:bg-slate-100"
           >
             <Download className="w-3.5 h-3.5" />
             Download QR (PNG)
@@ -140,31 +162,72 @@ export function GuestQrCard({
         </div>
       </div>
 
-      <div className="print-guest-card p-6 bg-zinc-950 border border-zinc-800 text-zinc-100 rounded-2xl shadow-xl print:border-none print:shadow-none print:p-2 print:text-black print:bg-white">
-        <div className="text-center mb-5">
-          <span className="text-[10px] font-bold tracking-widest uppercase text-emerald-400 print:text-emerald-700">
+      <div className="print-guest-card rounded-2xl border border-slate-200 bg-white p-6 text-slate-900 shadow-sm print:border-none print:p-2 print:text-black print:shadow-none print:bg-white">
+        <div className="mb-5 text-center">
+          <span className="text-[10px] font-bold uppercase tracking-widest text-sky-700 print:text-emerald-700">
             Guest Smart Concierge
           </span>
-          <h2 className="text-xl font-bold mt-1 text-white print:text-black">{propertyName}</h2>
-          <p className="text-xs text-zinc-400 print:text-zinc-600">{propertyAddress}</p>
+          <h2 className="mt-1 text-xl font-bold text-slate-900 print:text-black">{propertyName}</h2>
+          <p className="text-xs text-slate-600 print:text-zinc-600">{propertyAddress}</p>
         </div>
 
-        <div className="flex flex-col items-center p-5 bg-zinc-900/70 border border-zinc-800 rounded-xl mb-5 text-center print:bg-zinc-50 print:border-zinc-300">
-          <div ref={qrArtRef} className="p-2.5 bg-white rounded-xl shadow-md mb-2">
-            <QRCodeSVG id="guest-qr-svg" key={guestUrl} value={guestUrl} size={160} level="M" title={guestUrl} includeMargin />
+        <div className="mb-5 flex flex-col items-center rounded-xl border border-slate-200 bg-slate-50 p-5 text-center print:border-zinc-300 print:bg-zinc-50">
+          <div ref={qrArtRef} className="guest-qr-mark mb-2 rounded-xl bg-white p-2.5 shadow-md">
+            <QRCodeCanvas
+              key={`canvas-${guestUrl}-${QR_FG_COLOR}`}
+              value={guestUrl}
+              size={160}
+              level="M"
+              marginSize={2}
+              fgColor={QR_FG_COLOR}
+              bgColor={QR_BG_COLOR}
+              title={guestUrl}
+            />
+            <QRCodeSVG
+              id="guest-qr-svg"
+              className="hidden"
+              key={`svg-${guestUrl}-${QR_FG_COLOR}`}
+              value={guestUrl}
+              size={160}
+              level="M"
+              marginSize={2}
+              title={guestUrl}
+              fgColor={QR_FG_COLOR}
+              bgColor={QR_BG_COLOR}
+            />
           </div>
-          <div
-            ref={qrPrintRef}
-            className="pointer-events-none fixed -left-[9999px] top-0 bg-white p-6"
+          <QRCodeCanvas
+            ref={qrPrintCanvasRef}
+            key={`print-${guestUrl}-${QR_FG_COLOR}`}
+            className="pointer-events-none fixed -left-[9999px] top-0"
+            value={guestUrl}
+            size={640}
+            level="H"
+            marginSize={4}
+            fgColor={QR_FG_COLOR}
+            bgColor={QR_BG_COLOR}
             aria-hidden
-          >
-            <QRCodeSVG key={`print-${guestUrl}`} value={guestUrl} size={640} level="H" includeMargin />
-          </div>
-          <p className="text-xs font-semibold text-zinc-200 print:text-zinc-800">
+          />
+          <p className="text-xs font-semibold text-slate-800 print:text-zinc-800">
             Scan to talk with Elena or open the guest portal
           </p>
+          <div className="print-hidden mt-3 w-full max-w-sm rounded-xl border border-sky-200 bg-sky-50 px-3 py-2.5 text-left text-[11px] leading-relaxed text-sky-950">
+            <p className="font-bold">Phone Tap to talk (HTTPS tunnel)</p>
+            {tunnelHint ? (
+              <p className="mt-1">
+                Tunnel is live. This QR should use <span className="break-all font-mono">{tunnelHint}</span>. Scan on
+                the phone — do not use https:// on your LAN IP.
+              </p>
+            ) : (
+              <p className="mt-1">
+                Keep <span className="font-mono">npm run dev</span> running. In a second terminal run{" "}
+                <span className="font-mono">npm run tunnel</span>, wait for an https://…trycloudflare.com URL, then
+                refresh this card and scan. Local HTTP still works for typing.
+              </p>
+            )}
+          </div>
           <label className="print-hidden mt-3 w-full max-w-sm text-left">
-            <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+            <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">
               Guest portal URL (encoded in QR)
             </span>
             <input
@@ -172,10 +235,22 @@ export function GuestQrCard({
               value={guestUrl}
               onChange={(event) => setGuestUrl(event.target.value)}
               onBlur={() => {
-                if (!guestUrl.trim()) setGuestUrl(defaultGuestUrl(propId));
+                if (!guestUrl.trim()) {
+                  void guestPortalUrlAsync(propId).then(setGuestUrl);
+                }
               }}
-              className="w-full break-all rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 font-mono text-[11px] leading-relaxed text-zinc-200 focus:border-emerald-500 focus:outline-none"
+              className="w-full break-all rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-[11px] leading-relaxed text-slate-900 focus:border-sky-600 focus:outline-none"
             />
+            {isHttpsOrigin(guestUrl) ? (
+              <p className="mt-1.5 text-[11px] leading-relaxed text-emerald-800">
+                HTTPS guest link — phones can use Tap to talk after scan.
+              </p>
+            ) : (
+              <p className="mt-1.5 text-[11px] leading-relaxed text-amber-800">
+                Local HTTP link. Fine for typing on the LAN. For real microphone testing run npm run tunnel and scan
+                the HTTPS QR.
+              </p>
+            )}
           </label>
           <p className="mt-2 hidden w-full max-w-sm break-all font-mono text-[11px] text-zinc-600 print:block">
             {guestUrl}
@@ -184,14 +259,15 @@ export function GuestQrCard({
             <button
               type="button"
               onClick={() => void handleCopy()}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-zinc-800 px-3 py-1.5 text-[11px] font-semibold text-zinc-100 hover:bg-zinc-700"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-800 hover:bg-slate-50"
             >
               {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
               {copied ? "Copied" : "Copy URL"}
             </button>
             <button
               type="button"
-              onClick={() => void handleDownloadPng()}
+              onClick={handleDownloadPng}
+              aria-label="Download QR (PNG)"
               className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-emerald-500"
             >
               <Download className="h-3.5 w-3.5" />
@@ -200,7 +276,8 @@ export function GuestQrCard({
             <button
               type="button"
               onClick={handleDownloadSvg}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-1.5 text-[11px] text-zinc-300 hover:bg-zinc-800"
+              aria-label="Download SVG"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-[11px] text-slate-700 hover:bg-slate-50"
             >
               Download SVG
             </button>
@@ -208,7 +285,7 @@ export function GuestQrCard({
               href={guestUrl}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-1 text-[11px] text-emerald-400 hover:underline"
+              className="inline-flex items-center gap-1 text-[11px] text-sky-800 hover:underline"
             >
               Open Link <ExternalLink className="w-3 h-3" />
             </a>
@@ -216,68 +293,68 @@ export function GuestQrCard({
         </div>
 
         <div className="space-y-2 mb-5">
-          <span className="text-[10px] font-bold tracking-wider uppercase text-zinc-400 print:text-zinc-600">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 print:text-zinc-600">
             Assistance & Contact
           </span>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
             <a
               href={telHref(aiPhone)}
-              className="p-3 bg-zinc-900 border border-zinc-800 rounded-xl flex items-center gap-2.5 print:border-zinc-300 print:bg-zinc-50"
+              className="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-slate-50 p-3 print:border-zinc-300 print:bg-zinc-50"
             >
               <Phone className="w-4 h-4 text-emerald-400 print:text-emerald-700 shrink-0" />
               <div>
-                <p className="font-semibold text-white print:text-black">Elena AI 24/7</p>
-                <p className="text-[11px] text-zinc-400 print:text-zinc-600">{aiPhone}</p>
+                <p className="font-semibold text-slate-900 print:text-black">Elena AI 24/7</p>
+                <p className="text-[11px] text-slate-600 print:text-zinc-600">{aiPhone}</p>
               </div>
             </a>
             <a
               href={telHref(hostLine)}
-              className="p-3 bg-zinc-900 border border-zinc-800 rounded-xl flex items-center gap-2.5 print:border-zinc-300 print:bg-zinc-50"
+              className="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-slate-50 p-3 print:border-zinc-300 print:bg-zinc-50"
             >
               <Phone className="w-4 h-4 text-blue-400 print:text-blue-700 shrink-0" />
               <div>
-                <p className="font-semibold text-white print:text-black">Host / co-host</p>
-                <p className="text-[11px] text-zinc-400 print:text-zinc-600">{hostLine}</p>
+                <p className="font-semibold text-slate-900 print:text-black">Host / co-host</p>
+                <p className="text-[11px] text-slate-600 print:text-zinc-600">{hostLine}</p>
               </div>
             </a>
           </div>
 
           <a
             href="tel:911"
-            className="p-3 bg-rose-950/30 border border-rose-900/40 rounded-xl flex items-center gap-2.5 text-xs print:border-rose-300 print:bg-rose-50"
+            className="flex items-center gap-2.5 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs print:border-rose-300 print:bg-rose-50"
           >
             <ShieldAlert className="w-4 h-4 text-rose-400 print:text-rose-700 shrink-0" />
             <div>
-              <p className="font-semibold text-rose-300 print:text-rose-900">Emergencias: 911</p>
-              <p className="text-[10px] text-zinc-400 print:text-zinc-600">
+              <p className="font-semibold text-rose-800 print:text-rose-900">Emergency: 911</p>
+              <p className="text-[10px] text-slate-600 print:text-zinc-600">
                 Address: {propertyAddress}
               </p>
               {emergencyNumber !== "911" ? (
-                <p className="text-[10px] text-zinc-500">Host emergency: {emergencyNumber}</p>
+                <p className="text-[10px] text-slate-500">Host emergency: {emergencyNumber}</p>
               ) : null}
             </div>
           </a>
         </div>
 
-        <div className="grid grid-cols-2 gap-3 pt-3 border-t border-zinc-800 text-xs print:border-zinc-300">
+        <div className="grid grid-cols-2 gap-3 border-t border-slate-200 pt-3 text-xs print:border-zinc-300">
           <div className="flex items-start gap-2">
-            <Wifi className="w-4 h-4 text-zinc-400 print:text-zinc-600 mt-0.5" />
+            <Wifi className="mt-0.5 h-4 w-4 text-slate-500 print:text-zinc-600" />
             <div>
-              <p className="text-[10px] text-zinc-400 print:text-zinc-500">Wi-Fi:</p>
-              <p className="font-bold text-white print:text-black">{wifiSsid}</p>
-              <p className="text-[10px] text-zinc-400 print:text-zinc-500 mt-1">Password:</p>
-              <p className="font-mono text-emerald-400 print:text-emerald-800 font-semibold">{wifiPass}</p>
+              <p className="text-[10px] text-slate-500 print:text-zinc-500">Wi-Fi:</p>
+              <p className="font-bold text-slate-900 print:text-black">{wifiSsid}</p>
+              <p className="mt-1 text-[10px] text-slate-500 print:text-zinc-500">Password:</p>
+              <p className="font-mono font-semibold text-sky-800 print:text-emerald-800">{wifiPass}</p>
             </div>
           </div>
           <div className="flex items-start gap-2">
-            <Clock className="w-4 h-4 text-zinc-400 print:text-zinc-600 mt-0.5" />
+            <Clock className="mt-0.5 h-4 w-4 text-slate-500 print:text-zinc-600" />
             <div>
-              <p className="text-[10px] text-zinc-400 print:text-zinc-500">Check-in / Out:</p>
-              <p className="font-semibold text-white print:text-black">
+              <p className="text-[10px] text-slate-500 print:text-zinc-500">Check-in / Out:</p>
+              <p className="font-semibold text-slate-900 print:text-black">
                 {checkIn} – {checkOut}
               </p>
-              <p className="mt-1 text-[10px] text-zinc-400 print:text-zinc-500">Door:</p>
-              <p className="font-semibold text-white print:text-black">{property.doorCode}</p>
+              <p className="mt-1 text-[10px] text-slate-500 print:text-zinc-500">Door:</p>
+              <p className="font-semibold text-slate-900 print:text-black">{property.doorCode}</p>
             </div>
           </div>
         </div>

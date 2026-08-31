@@ -1,15 +1,20 @@
 "use client";
 
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { ElenaAvatar } from "@/components/dashboard/elena-avatar";
 import {
+  AutoplayBlockedError,
   detectReplyLang,
   detectUtteranceLang,
+  isSpeechAudioUnlocked,
+  playOpenAiTtsMpeg,
   speakWithBrowserTts,
   unlockSpeechAudio,
 } from "@/lib/human-voice";
+import { guestPressClass, withMobilePress } from "@/lib/guest-press";
 import type { Property } from "@/lib/dashboard-data";
 import { askAvatarReply } from "@/lib/ask-avatar";
+import { publicApiUrl } from "@/lib/public-app-url";
 import { HOST_EMERGENCY_NUMBER } from "@/lib/receptionist-replies";
 import {
   ElenaCaptureBanner,
@@ -26,21 +31,21 @@ export default function ElenaVoiceWidget({ property }: { property?: Property }) 
   const [guestHeard, setGuestHeard] = useState("");
   const [audioPending, setAudioPending] = useState(false);
   const [isAudioReadyToPlay, setIsAudioReadyToPlay] = useState(false);
+  const [audioUnlocked, setAudioUnlocked] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const langRef = useRef<"es" | "en">("es");
   const unlockedRef = useRef(false);
+  const greetedRef = useRef(false);
+  const pendingSpeakRef = useRef<{ text: string; lang: "es" | "en" } | null>(null);
   const stopCaptureRef = useRef<(() => void) | null>(null);
   const historyRef = useRef<{ role: "user" | "assistant"; content: string }[]>([]);
-  const languageHintRef = useRef<"es" | "en">("es");
+  const languageHintRef = useRef<"es" | "en">("en");
 
   const unlockAudio = () => {
     const audio = unlockSpeechAudio(audioRef.current);
-    if (audio) {
-      audioRef.current = audio;
-      void audio.play().catch(() => {});
-      audio.pause();
-    }
+    if (audio) audioRef.current = audio;
     unlockedRef.current = true;
+    setAudioUnlocked(true);
   };
 
   const speakViaBrowser = (text: string, lang: "es" | "en") => {
@@ -57,18 +62,64 @@ export default function ElenaVoiceWidget({ property }: { property?: Property }) 
   const speak = async (text: string, lang: "es" | "en" = "es") => {
     if (!text.trim()) return;
     langRef.current = lang;
+    pendingSpeakRef.current = { text, lang };
     setMuted(false);
     setAudioPending(false);
-    setIsAudioReadyToPlay(false);
     setStatus("Speaking...");
     try {
       audioRef.current?.pause();
     } catch {
       /* ignore */
     }
-    if (speakViaBrowser(text, detectUtteranceLang(text))) return;
-    setStatus("Voice unavailable — reply shown below.");
+    try {
+      const el = await playOpenAiTtsMpeg(text, "coral", audioRef.current, lang);
+      audioRef.current = el;
+      pendingSpeakRef.current = null;
+      setIsAudioReadyToPlay(false);
+      el.onended = () => setStatus("Ready");
+      return;
+    } catch (cause) {
+      if (cause instanceof AutoplayBlockedError) {
+        setIsAudioReadyToPlay(true);
+        setStatus("Tap to hear Elena");
+        return;
+      }
+    }
+    if (!unlockedRef.current) {
+      setIsAudioReadyToPlay(true);
+      setStatus("Tap to start audio");
+      return;
+    }
+    if (speakViaBrowser(text, detectUtteranceLang(text))) {
+      pendingSpeakRef.current = null;
+      setIsAudioReadyToPlay(false);
+      return;
+    }
+    setIsAudioReadyToPlay(true);
+    setStatus("Tap to hear Elena");
   };
+
+  const playPendingOrGreet = () => {
+    unlockAudio();
+    const pending = pendingSpeakRef.current;
+    if (pending) {
+      void speak(pending.text, pending.lang);
+      return;
+    }
+    if (!greetedRef.current) {
+      greetedRef.current = true;
+      const hello = "Hi, I'm Elena, your stay concierge. How can I help?";
+      setReplyText(hello);
+      void speak(hello, "en");
+    }
+  };
+
+  useEffect(() => {
+    if (isSpeechAudioUnlocked()) {
+      unlockedRef.current = true;
+      setAudioUnlocked(true);
+    }
+  }, []);
 
   const stopVoice = () => {
     try {
@@ -108,7 +159,7 @@ export default function ElenaVoiceWidget({ property }: { property?: Property }) 
         });
         if (reply.trim()) return { reply: reply.trim(), lang };
       } else {
-        const res = await fetch("/api/chat", {
+        const res = await fetch(publicApiUrl("/api/chat"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -164,46 +215,67 @@ export default function ElenaVoiceWidget({ property }: { property?: Property }) 
   };
 
   return (
-    <div className="p-5 bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm mx-auto text-white shadow-xl space-y-4">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-3.5 min-w-0">
-          <ElenaAvatar size={64} />
-          <div className="leading-tight min-w-0">
-            <h2 className="text-lg font-bold truncate">Elena · Receptionist</h2>
+    <div className="relative z-20 mx-auto w-full min-w-0 max-w-full space-y-4 overflow-x-hidden rounded-2xl border border-slate-200 bg-white p-4 text-slate-900 shadow-sm pointer-events-auto sm:max-w-sm sm:p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-center gap-3">
+          <ElenaAvatar size={52} />
+          <div className="min-w-0 leading-tight">
+            <h2 className="truncate text-base font-bold sm:text-lg">Elena · Receptionist</h2>
             <p className="text-[11px] text-slate-500">AI Voice Concierge</p>
           </div>
         </div>
-        <span className="shrink-0 text-xs px-2 py-1 bg-emerald-900/60 text-emerald-400 border border-emerald-700 rounded-md">
+        <span className="w-fit shrink-0 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-800">
           {status}
         </span>
       </div>
 
+      {!audioUnlocked ? (
+        <button
+          type="button"
+          {...withMobilePress(playPendingOrGreet)}
+          className={`${guestPressClass} w-full rounded-xl bg-sky-600 px-4 py-4 text-base font-bold text-white shadow-lg hover:bg-sky-500`}
+        >
+          Tap to start audio
+        </button>
+      ) : null}
+
       <ElenaCaptureProvider
         onUnlock={unlockAudio}
         onTranscript={(text) => void respondTo(text)}
+        onFallbackSpeak={() => {
+          unlockAudio();
+          const line =
+            "Hi, I'm Elena. This page is on HTTP, so the microphone is blocked. Type your question and I will answer out loud.";
+          setReplyText(line);
+          void speak(line, "en");
+        }}
         stopCaptureRef={stopCaptureRef}
         languageHintRef={languageHintRef}
       >
-        <div className="space-y-4">
+        <div className="relative z-20 space-y-4 pointer-events-auto">
         <ElenaCaptureBanner />
-        <form onSubmit={handleSubmit} className="relative z-20 flex flex-row items-center gap-2 w-full pointer-events-auto">
+        <form onSubmit={handleSubmit} className="relative z-20 flex w-full min-w-0 flex-col gap-2 pointer-events-auto sm:flex-row sm:items-center">
           <input
             id="elena-guest-input"
             type="text"
             inputMode="text"
             autoComplete="off"
+            enterKeyHint="send"
             value={input}
             onChange={(e) => setInput(e.target.value)}
+            onFocus={unlockAudio}
             placeholder="Type a message..."
-            className="relative z-20 flex-1 min-w-0 px-3 py-2 bg-slate-950 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm touch-manipulation pointer-events-auto"
+            className="relative z-20 min-h-11 w-full min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-400 outline-none ring-sky-600 touch-manipulation pointer-events-auto focus:ring-2"
           />
+          <div className="flex w-full gap-2 sm:w-auto">
           <ElenaCaptureMic />
           <button
             type="submit"
-            className="relative z-20 shrink-0 px-4 py-2 bg-blue-600 hover:bg-blue-500 font-semibold rounded-lg transition text-sm touch-manipulation pointer-events-auto cursor-pointer"
+            className={`${guestPressClass} flex-1 rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400 sm:flex-none`}
           >
             Send
           </button>
+          </div>
         </form>
         <ElenaCaptureStatus muted={muted} />
         </div>
@@ -219,15 +291,15 @@ export default function ElenaVoiceWidget({ property }: { property?: Property }) 
       />
 
       {guestHeard ? (
-        <div className="ml-4 rounded-2xl rounded-tr-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 leading-relaxed">
+        <div className="ml-0 break-words rounded-2xl rounded-tr-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm leading-relaxed text-slate-800 sm:ml-4">
           {guestHeard}
         </div>
       ) : null}
       {audioPending && !replyText ? (
-        <p className="text-xs text-emerald-300/90">Elena is typing…</p>
+        <p className="text-xs text-sky-800">Elena is typing…</p>
       ) : null}
       {replyText ? (
-        <div className="mr-4 rounded-2xl rounded-tl-md border border-emerald-800/50 bg-emerald-950/40 px-3 py-2 text-sm text-slate-50 leading-relaxed">
+        <div className="mr-0 break-words rounded-2xl rounded-tl-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm leading-relaxed text-slate-900 sm:mr-4">
           {replyText}
         </div>
       ) : null}
@@ -235,26 +307,35 @@ export default function ElenaVoiceWidget({ property }: { property?: Property }) 
       {isAudioReadyToPlay ? (
         <button
           type="button"
-          onClick={() => {
+          {...withMobilePress(() => {
+            unlockAudio();
+            const pending = pendingSpeakRef.current;
             const el = audioRef.current;
-            if (!el) return;
-            el.onended = () => {
-              setIsAudioReadyToPlay(false);
-              setStatus("Ready");
-            };
-            void el.play();
-            setStatus("Talking...");
-          }}
-          className="w-full rounded-xl bg-emerald-500 px-4 py-4 text-base font-bold text-slate-950 shadow-lg transition hover:bg-emerald-400"
+            if (el?.src && !el.src.startsWith("data:")) {
+              el.onended = () => {
+                setIsAudioReadyToPlay(false);
+                setStatus("Ready");
+              };
+              void el.play().then(() => {
+                setIsAudioReadyToPlay(false);
+                setStatus("Talking...");
+              }).catch(() => {
+                if (pending) void speak(pending.text, pending.lang);
+              });
+              return;
+            }
+            playPendingOrGreet();
+          })}
+          className={`${guestPressClass} w-full rounded-xl bg-emerald-500 px-4 py-4 text-base font-bold text-slate-950 shadow-lg hover:bg-emerald-400`}
         >
-          🔊 Tap to hear Elena&apos;s answer
+          Tap to hear Elena
         </button>
       ) : null}
 
       <button
         type="button"
-        onClick={stopVoice}
-        className="w-full rounded-lg border border-slate-700 bg-slate-950/60 px-3 py-2 tabular text-xs font-semibold text-slate-300 hover:bg-slate-900 hover:text-white transition"
+        {...withMobilePress(stopVoice)}
+        className={`${guestPressClass} w-full rounded-lg bg-emerald-500 px-3 py-2 text-xs font-semibold text-slate-950 hover:bg-emerald-400`}
       >
         {muted ? "Stopped" : "Mute / Stop voice"}
       </button>

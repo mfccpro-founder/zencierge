@@ -29,6 +29,11 @@ alter table public.properties add column if not exists ai_handbook text not null
 -- have columns; trash was the missing one).
 alter table public.properties add column if not exists trash text not null default '';
 
+alter table public.properties add column if not exists assigned_avatar_name text not null default 'Elena';
+alter table public.properties add column if not exists assigned_phone_number text not null default '';
+alter table public.properties add column if not exists avatar_system_prompt text not null default '';
+alter table public.properties add column if not exists timezone text not null default 'America/New_York';
+
 update public.properties
 set ai_handbook = handbook
 where (ai_handbook is null or ai_handbook = '')
@@ -80,6 +85,7 @@ create table if not exists public.host_subscriptions (
   status text not null default 'inactive'
     check (status in ('active', 'past_due', 'canceled', 'inactive', 'trial')),
   monthly_usd numeric(10, 2) not null default 29,
+  is_lifetime_free boolean not null default false,
   square_customer_id text,
   square_subscription_id text,
   current_period_end timestamptz,
@@ -87,6 +93,8 @@ create table if not exists public.host_subscriptions (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.host_subscriptions add column if not exists is_lifetime_free boolean not null default false;
 
 create table if not exists public.subscription_payments (
   id uuid primary key default gen_random_uuid(),
@@ -102,6 +110,33 @@ create table if not exists public.subscription_payments (
 );
 
 create index if not exists subscription_payments_user_idx on public.subscription_payments (user_id, created_at desc);
+
+create table if not exists public.host_profiles (
+  user_id uuid primary key references auth.users (id) on delete cascade,
+  full_name text not null default '',
+  updated_at timestamptz not null default now()
+);
+
+alter table public.host_profiles enable row level security;
+
+drop policy if exists "host_profiles_own_select" on public.host_profiles;
+create policy "host_profiles_own_select"
+  on public.host_profiles for select
+  to authenticated
+  using (auth.uid() = user_id);
+
+drop policy if exists "host_profiles_own_upsert" on public.host_profiles;
+create policy "host_profiles_own_upsert"
+  on public.host_profiles for insert
+  to authenticated
+  with check (auth.uid() = user_id);
+
+drop policy if exists "host_profiles_own_update" on public.host_profiles;
+create policy "host_profiles_own_update"
+  on public.host_profiles for update
+  to authenticated
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
 
 alter table public.host_subscriptions enable row level security;
 alter table public.subscription_payments enable row level security;
@@ -232,16 +267,17 @@ create policy "hosts read own feature requests"
 -- Housekeeping inspection photos (staff camera portal at /housekeeping/upload)
 create table if not exists public.housekeeping_photos (
   id uuid primary key default gen_random_uuid(),
-  property_id text not null references public.properties (id) on delete cascade,
+  property_id text not null,
   reservation_id text not null,
-  category text not null
-    check (category in ('check_in', 'check_out', 'damage_report')),
+  category text not null,
   storage_path text not null,
   image_url text not null,
   captured_at timestamptz not null default now(),
   staff_name text,
   content_type text,
   file_size int,
+  notes text,
+  report_id uuid,
   created_at timestamptz not null default now()
 );
 
@@ -259,4 +295,93 @@ create policy "hosts read housekeeping photos"
 insert into storage.buckets (id, name, public)
 values ('housekeeping', 'housekeeping', true)
 on conflict (id) do nothing;
+
+alter table public.housekeeping_photos add column if not exists notes text;
+alter table public.housekeeping_photos add column if not exists report_id uuid;
+
+create table if not exists public.housekeeping_reports (
+  id uuid primary key default gen_random_uuid(),
+  property_id text not null,
+  property_name text,
+  property_city text,
+  reservation_id text,
+  category text not null,
+  notes text,
+  staff_name text,
+  photos jsonb not null default '[]'::jsonb,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists housekeeping_reports_property_idx
+  on public.housekeeping_reports (property_id, created_at desc);
+
+alter table public.housekeeping_reports enable row level security;
+
+drop policy if exists "hosts read housekeeping reports" on public.housekeeping_reports;
+create policy "hosts read housekeeping reports"
+  on public.housekeeping_reports for select
+  to authenticated
+  using (true);
+
+create table if not exists public.host_alerts (
+  id uuid primary key default gen_random_uuid(),
+  kind text not null,
+  title text not null,
+  body text not null,
+  href text not null,
+  report_id uuid,
+  property_id text,
+  created_at timestamptz not null default now()
+);
+
+alter table public.host_alerts enable row level security;
+
+drop policy if exists "hosts read host alerts" on public.host_alerts;
+create policy "hosts read host alerts"
+  on public.host_alerts for select
+  to authenticated
+  using (true);
+
+-- Property supply tracking (consumables per listing)
+create table if not exists public.property_supplies (
+  property_id text not null references public.properties (id) on delete cascade,
+  sku text not null check (sku in ('toilet_paper', 'towels', 'coffee', 'soap_shampoo', 'trash_bags')),
+  current_stock numeric not null default 0,
+  min_threshold numeric not null default 1,
+  unit text not null default 'units',
+  restock_qty numeric not null default 1,
+  last_turnover_at timestamptz,
+  last_staff_name text,
+  updated_at timestamptz not null default now(),
+  primary key (property_id, sku)
+);
+
+create table if not exists public.property_supply_logs (
+  id uuid primary key default gen_random_uuid(),
+  property_id text not null references public.properties (id) on delete cascade,
+  event_type text not null check (event_type in ('turnover', 'restock', 'adjust')),
+  staff_name text,
+  reservation_id text,
+  payload jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists property_supplies_updated_idx
+  on public.property_supplies (updated_at desc);
+create index if not exists property_supply_logs_property_idx
+  on public.property_supply_logs (property_id, created_at desc);
+
+alter table public.property_supplies enable row level security;
+alter table public.property_supply_logs enable row level security;
+
+drop policy if exists "anon all property_supplies" on public.property_supplies;
+create policy "anon all property_supplies"
+  on public.property_supplies for all to anon
+  using (true) with check (true);
+
+drop policy if exists "anon all property_supply_logs" on public.property_supply_logs;
+create policy "anon all property_supply_logs"
+  on public.property_supply_logs for all to anon
+  using (true) with check (true);
+
 

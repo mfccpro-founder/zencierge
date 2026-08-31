@@ -76,16 +76,16 @@ const MASTER_CONCIERGE_MODULES: ConciergeModule[] = [
   },
   {
     step: 4,
-    route: "/dashboard/dispute-dossier",
+    route: "/dashboard/chargeback-shield",
     badge: "Asset Protection",
-    title: "AirCover Dispute Vault & Evidence PDF",
+    title: "Chargeback Shield & Dispute Dossier",
     icon: ShieldAlert,
     fullScript:
-      "Never lose another false refund claim. Every turnover photo is cryptographically stamped with UTC time and GPS location. If a guest damages something, 1-click generates a certified PDF evidence binder ready for Airbnb support.",
+      "Never lose another false refund claim. Chargeback Shield auto-builds a dispute dossier for every reservation: house-rules signatures, smart-lock check-in timestamps, Elena chat and voice logs, and housekeeping condition proofs. Open Dispute Dossier to export a certified exhibit for Airbnb support.",
     checklist: [
-      "Immutable UTC/GPS photo stamping",
-      "Certified PDF evidence binder engine",
-      "Instant damage claim proof",
+      "Auto dossier per reservation",
+      "Lock, signature, voice, and turnover logs",
+      "Certified exhibit for AirCover / chargebacks",
     ],
   },
   {

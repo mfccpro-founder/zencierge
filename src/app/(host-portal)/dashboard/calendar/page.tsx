@@ -1,5 +1,4 @@
 import { DashboardApp } from "@/components/dashboard/dashboard-app";
-import { ListingsProvider } from "@/components/dashboard/listings-provider";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -8,9 +7,5 @@ export const metadata: Metadata = {
 };
 
 export default function DashboardCalendarPage() {
-  return (
-    <ListingsProvider>
-      <DashboardApp initialTab="calendar" />
-    </ListingsProvider>
-  );
+  return <DashboardApp initialTab="calendar" />;
 }

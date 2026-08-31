@@ -1,7 +1,10 @@
 "use client";
 
+import { useEffect, useId, useMemo, useState } from "react";
 import { Camera, Clock, Search, X } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { queueHousekeepingPhotoForDispute } from "@/lib/dispute-photo-transfer";
+import { TurnoverSupplyForm } from "@/components/housekeeping/turnover-supply-form";
 
 type PhotoPhase = "pre" | "post";
 
@@ -304,7 +307,8 @@ export function HousekeepingPanel() {
   };
 
   return (
-    <div data-tour="housekeeping">
+    <div data-tour="housekeeping" className="space-y-8">
+      <section id="live-board" className="scroll-mt-28">
       <div className="sticky top-0 z-20 mb-6 border-b border-slate-200 bg-slate-50/95 pb-4 pt-2 backdrop-blur-sm">
         <h2 className="text-lg font-bold text-slate-900">Property Turnovers</h2>
         <p className="mt-1 text-sm font-medium text-slate-800">
@@ -373,11 +377,73 @@ export function HousekeepingPanel() {
                   <Camera className="h-4 w-4 shrink-0" />
                   📸 View Photos (Pre-Checkin & Post-Checkout)
                 </button>
+                <details className="rounded-xl border border-orange-200 bg-orange-50/80 px-3 py-2">
+                  <summary className="cursor-pointer text-xs font-bold text-orange-950">
+                    Log leftover supplies
+                  </summary>
+                  <div className="mt-3">
+                    <TurnoverSupplyForm
+                      compact
+                      propertyId={row.propertyId}
+                      staffName={row.assignee}
+                    />
+                  </div>
+                </details>
               </div>
             </article>
           ))}
         </div>
       )}
+      </section>
+
+      <section id="turno-shifts" className="scroll-mt-28 rounded-2xl border border-teal-200 bg-teal-50/70 p-5 shadow-sm">
+        <p className="text-[11px] font-bold uppercase tracking-wider text-teal-800">Crew</p>
+        <h2 className="mt-1 text-lg font-bold text-slate-900">Turno</h2>
+        <p className="mt-1 text-sm text-slate-700">Assigned turnover crews for today&apos;s Florida listings.</p>
+        <ul className="mt-4 grid gap-3 sm:grid-cols-2">
+          {PROPERTIES.map((row) => (
+            <li key={`turno-${row.id}`} className="rounded-xl border border-teal-200 bg-white px-4 py-3">
+              <p className="text-sm font-bold text-slate-900">{row.assignee}</p>
+              <p className="mt-0.5 text-xs font-semibold text-slate-700">
+                {row.property} · {row.window}
+              </p>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section id="escrow-payouts" className="scroll-mt-28 rounded-2xl border border-lime-200 bg-lime-50/80 p-5 shadow-sm">
+        <p className="text-[11px] font-bold uppercase tracking-wider text-lime-800">Hold</p>
+        <h2 className="mt-1 text-lg font-bold text-slate-900">Escrow</h2>
+        <p className="mt-1 text-sm text-slate-700">
+          Cleaner payouts stay in escrow until post-clean photos pass inspection.
+        </p>
+        <ul className="mt-4 space-y-2">
+          {PROPERTIES.map((row) => {
+            const released = row.status === "ready" || row.status === "inspected";
+            return (
+              <li
+                key={`${row.id}-escrow`}
+                className="flex items-center justify-between gap-3 rounded-xl border border-lime-200 bg-white px-4 py-3"
+              >
+                <div>
+                  <p className="text-sm font-bold text-slate-900">{row.property}</p>
+                  <p className="text-xs font-semibold text-slate-700">{row.assignee}</p>
+                </div>
+                <span
+                  className={`rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase ${
+                    released
+                      ? "border-emerald-300 bg-emerald-100 text-emerald-900"
+                      : "border-amber-300 bg-amber-100 text-amber-900"
+                  }`}
+                >
+                  {released ? "Released" : "Held"}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      </section>
 
       {gallery ? (
         <div

@@ -1,22 +1,20 @@
 import type { Metadata } from "next";
-import { HousekeepingPanel } from "@/components/dashboard/housekeeping-panel";
-import { HousekeepingStaffLinkCard } from "@/components/dashboard/housekeeping-staff-link-card";
 import { HostHeroBanner } from "@/components/dashboard/host-hero-banner";
 import { HostOpsPage } from "@/components/dashboard/host-ops-page";
+import { HousekeepingOpsView } from "@/components/dashboard/housekeeping-ops-view";
 
 export const metadata: Metadata = {
-  title: "Housekeeping / Inspections · Zencierge",
+  title: "Housekeeping · Zencierge",
 };
 
 export default function HostHousekeepingPage() {
   return (
     <HostOpsPage>
       <HostHeroBanner
-        title="Housekeeping / Inspections"
-        subtitle="Inspection photos per listing, plus a public camera link for your cleaning team."
+        title="Housekeeping & staff"
+        subtitle="Inspections, consumable stock, cleaner upload access, and team invites — one operations hub."
       />
-      <HousekeepingStaffLinkCard />
-      <HousekeepingPanel />
+      <HousekeepingOpsView />
     </HostOpsPage>
   );
 }

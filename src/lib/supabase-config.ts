@@ -28,6 +28,22 @@ export function isValidSupabaseAnonKey(key = SUPABASE_ANON_KEY) {
   return key.startsWith("eyJ") && parts.length === 3 && parts.every((part) => part.length > 8);
 }
 
+export function isValidSupabaseJwt(key: string) {
+  return isValidSupabaseAnonKey(key);
+}
+
+export function isSupabaseCredentialError(message: string) {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("invalid api key") ||
+    lower.includes("invalid jwt") ||
+    lower.includes("jwt expired") ||
+    lower.includes("not a valid api key") ||
+    lower.includes("invalid apikey") ||
+    /\bapikey\b/.test(lower)
+  );
+}
+
 export function supabaseEnvIssue(): string | null {
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
     return "Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY in .env.local. Restart npm run dev after saving.";

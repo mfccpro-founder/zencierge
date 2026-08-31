@@ -61,6 +61,10 @@ export type Property = {
   /** Trash / recycling instructions for Elena and the guest card. */
   trash: string;
   handbook: string;
+  assignedAvatarName: string;
+  assignedPhoneNumber: string;
+  avatarSystemPrompt: string;
+  timezone: string;
 };
 
 export const properties: Property[] = [
@@ -83,6 +87,11 @@ export const properties: Property[] = [
     trash: "City pickup Tuesday and Friday. Place bags in the alley bins before 7:00 AM. No bulk items on the curb.",
     handbook:
       "Greet the guest as the Miami Beach Loft concierge. Wi-Fi is Zencierge-Guest, password miami2026, written on a card in the entry drawer. Door code is 4920#. Self check-in starts at 3:00 PM. Nearest grocery is Publix on Collins Ave, a 3-minute walk. Quiet hours 10:00 PM–8:00 AM. Do not share the host's personal number; escalate lockouts and leaks immediately.",
+    assignedAvatarName: "Elena",
+    assignedPhoneNumber: "+1 (305) 555-0199",
+    avatarSystemPrompt:
+      "Local tone: South Florida short-term rental. Quiet hours, HOA rules, hurricane-season common sense. Never invent codes.",
+    timezone: "America/New_York",
   },
   {
     id: "prop-2",
@@ -103,6 +112,11 @@ export const properties: Property[] = [
     trash: "Compactor on P1. No bags in the hallway. Recyclables in the blue chute.",
     handbook:
       "You are the Brickell Modern Suite concierge. Parking is bay #402 on Level 2; garage gate code is 1984#. Unit keypad is 7741#. Wi-Fi is Brickell-Suite-5G / key402wifi. Building gym is on P1, 6:00 AM–10:00 PM. Valet is not included. If the guest cannot enter the garage, walk them through the visitor lane and notify the host.",
+    assignedAvatarName: "Sofia",
+    assignedPhoneNumber: "+1 (305) 555-0188",
+    avatarSystemPrompt:
+      "Local tone: Brickell high-rise. Building desk, garage, and quiet hours. Never invent elevator or gate codes.",
+    timezone: "America/New_York",
   },
   {
     id: "prop-3",
@@ -123,6 +137,11 @@ export const properties: Property[] = [
     trash: "City pickup Tuesday and Friday. Cans at the alley, not the driveway.",
     handbook:
       "You represent Fort Lauderdale Villa. Currently vacant until Léa Martin's Friday arrival. Side-gate code 8820#, villa door 3301#. Wi-Fi FLL-Villa-Guest / coralreef26. Pool heat is host-controlled; do not promise it without checking. AC issues go to ops, not DIY troubleshooting beyond filter and thermostat set to Cool 72°F. Trash pickup Tuesday and Friday.",
+    assignedAvatarName: "Austin",
+    assignedPhoneNumber: "+1 (954) 555-0144",
+    avatarSystemPrompt:
+      "Local tone: Fort Lauderdale villa. Pool, alley parking, and side-gate arrival. Never invent HVAC promises.",
+    timezone: "America/New_York",
   },
   {
     id: "prop-4",
@@ -143,6 +162,11 @@ export const properties: Property[] = [
     trash: "Chute on the PH hallway. Recyclables in the labeled room next to the elevator.",
     handbook:
       "You are the Sunny Isles Penthouse concierge. Elevator/door code 1206#. Garage gate 5610#, stall P-12 after valet drop-off. Wi-Fi SunnyIsles-PH / atlantic1206. Late checkout is never authorized by AI — always escalate to Javier. Building quiet hours 11:00 PM. Beach chairs are in the hall closet. Do not discuss other guests in the tower.",
+    assignedAvatarName: "Elena",
+    assignedPhoneNumber: "+1 (305) 555-0177",
+    avatarSystemPrompt:
+      "Local tone: Sunny Isles tower. Valet, PH elevator, and host-only late checkout. Never discuss other residents.",
+    timezone: "America/New_York",
   },
 ];
 

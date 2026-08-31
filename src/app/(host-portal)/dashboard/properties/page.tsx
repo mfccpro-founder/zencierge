@@ -1,5 +1,4 @@
 import { DashboardApp } from "@/components/dashboard/dashboard-app";
-import { ListingsProvider } from "@/components/dashboard/listings-provider";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -7,9 +6,5 @@ export const metadata: Metadata = {
 };
 
 export default function DashboardPropertiesPage() {
-  return (
-    <ListingsProvider>
-      <DashboardApp initialTab="properties" />
-    </ListingsProvider>
-  );
+  return <DashboardApp initialTab="properties" />;
 }

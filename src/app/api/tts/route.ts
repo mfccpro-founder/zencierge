@@ -2,11 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 
 export const runtime = "nodejs";
-export const dynamic = "force-dynamic"; // ← prevent CDN/caching of personalized TTS
+export const dynamic = "force-dynamic";
 
-const VOICES = new Set(["nova", "shimmer", "coral", "sage"]);
+const VOICES = new Set(["nova", "shimmer", "coral", "sage", "marin", "ballad"]);
 
-/** Lazily create the client only when a key exists so the route never throws at module scope (build/collect time). */
+/** Warm concierge delivery for gpt-4o-mini-tts (ignored by tts-1 / tts-1-hd). */
+const HOSPITALITY_VOICE_INSTRUCTIONS =
+  "Speak as Elena, a warm boutique-stay concierge. Sound conversational and human, with a slight smile and natural ups and downs in pitch. Unhurried but not slow. Friendly hospitality energy — never robotic, monotone, clipped, or overly formal. Pause briefly at commas. If the text is Spanish, speak clear, friendly Latin American Spanish in the same warm tone.";
+
 function createOpenAI(): OpenAI | null {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return null;
@@ -22,7 +25,7 @@ export async function POST(req: NextRequest) {
     const openai = createOpenAI();
     if (!openai) {
       return NextResponse.json(
-        { error: "Falta OPENAI_API_KEY en variables de entorno" },
+        { error: "OPENAI_API_KEY is missing in environment variables" },
         { status: 500 },
       );
     }
@@ -34,23 +37,16 @@ export async function POST(req: NextRequest) {
       speed?: number;
       language?: string;
     };
-    const text = body.text || "Hola, ¿en qué te puedo ayudar?";
+    const text = (body.text || "Hi, I'm Elena. How can I help you today?").slice(0, 4096);
     const requested =
-      body.voice ?? (body.voiceProfile === "sarah" ? "shimmer" : "nova");
-    const voice = VOICES.has(requested) ? requested : "nova";
-    // Slightly slower than default so Elena (nova) sounds natural, paused and clear.
-    const speed = Number.isFinite(body.speed) ? Math.min(Math.max(body.speed as number, 0.5), 1.2) : 1;
-    // Reply language for this clip (es/en) — used to log and confirm the
-    // requested pronunciation; nova handles both accents natively.
-    const language = body.language === "en" ? "en" : "es";
+      body.voice ?? (body.voiceProfile === "sarah" || body.voiceProfile === "austin" ? "shimmer" : "coral");
+    const voice = VOICES.has(requested) ? requested : "coral";
+    const speed = Number.isFinite(body.speed)
+      ? Math.min(Math.max(body.speed as number, 0.75), 1.15)
+      : 0.96;
+    const language = body.language === "es" ? "es" : "en";
 
-    const mp3 = await openai.audio.speech.create({
-      model: "tts-1",
-      voice: voice as "nova" | "shimmer" | "coral" | "sage",
-      input: text,
-      speed,
-    });
-
+    const mp3 = await synthesizeSpeech(openai, { text, voice, speed });
     const buffer = Buffer.from(await mp3.arrayBuffer());
 
     return new NextResponse(buffer, {
@@ -59,16 +55,42 @@ export async function POST(req: NextRequest) {
         "Content-Length": String(buffer.length),
         "Cache-Control": "no-store",
         "X-Reply-Language": language,
+        "X-Tts-Voice": voice,
       },
     });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Error al generar audio";
+    const message = error instanceof Error ? error.message : "Could not generate speech audio";
     const isKeyIssue = /api key|credentials|unauthorized|401/i.test(message);
     console.error(
-      `[tts] OpenAI TTS falló (${isKeyIssue ? "falta/inválida OPENAI_API_KEY" : "error de red o de la API de OpenAI"}):`,
+      `[tts] OpenAI TTS failed (${isKeyIssue ? "missing or invalid OPENAI_API_KEY" : "network or OpenAI API error"}):`,
       message,
       error,
     );
     return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+async function synthesizeSpeech(
+  openai: OpenAI,
+  input: { text: string; voice: string; speed: number },
+) {
+  try {
+    return await openai.audio.speech.create({
+      model: "gpt-4o-mini-tts",
+      voice: input.voice,
+      input: input.text,
+      speed: input.speed,
+      instructions: HOSPITALITY_VOICE_INSTRUCTIONS,
+      response_format: "mp3",
+    });
+  } catch (cause) {
+    console.warn("[tts] gpt-4o-mini-tts unavailable, falling back to tts-1-hd", cause);
+    return openai.audio.speech.create({
+      model: "tts-1-hd",
+      voice: input.voice,
+      input: input.text,
+      speed: input.speed,
+      response_format: "mp3",
+    });
   }
 }

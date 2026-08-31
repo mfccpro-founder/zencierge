@@ -31,30 +31,34 @@ type ViewMode = "month" | "week";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-const PROPERTY_COLORS: Record<string, { chip: string; meta: string; dot: string; label: string }> = {
+const PROPERTY_COLORS: Record<string, { chip: string; meta: string; dot: string; label: string; filterActive: string }> = {
   "prop-1": {
     chip: "bg-emerald-100/70 border-emerald-200 text-emerald-800",
     meta: "text-emerald-700",
     dot: "bg-emerald-300 ring-1 ring-emerald-200",
     label: "Emerald",
+    filterActive: "border-emerald-700 bg-emerald-600 text-white",
   },
   "prop-2": {
     chip: "bg-sky-100/70 border-sky-200 text-sky-800",
     meta: "text-sky-700",
     dot: "bg-sky-300 ring-1 ring-sky-200",
     label: "Sky",
+    filterActive: "border-sky-700 bg-sky-600 text-white",
   },
   "prop-3": {
     chip: "bg-violet-100/70 border-violet-200 text-violet-800",
     meta: "text-violet-700",
     dot: "bg-violet-300 ring-1 ring-violet-200",
     label: "Violet",
+    filterActive: "border-violet-700 bg-violet-600 text-white",
   },
   "prop-4": {
     chip: "bg-amber-100/70 border-amber-200 text-amber-900",
     meta: "text-amber-800",
     dot: "bg-amber-300 ring-1 ring-amber-200",
     label: "Amber",
+    filterActive: "border-amber-700 bg-amber-500 text-white",
   },
 };
 
@@ -209,22 +213,22 @@ export function CalendarView({ onWatchSyncGuide }: { onWatchSyncGuide?: () => vo
           : "Reservations live from Supabase"}
         {error ? ` · ${error}` : ""}
       </p>
-      <div className="space-y-4">
+      <div className="space-y-4 rounded-xl border border-sky-200 bg-sky-50 p-6 text-slate-900 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => shift(-1)}
-              className="rounded-lg border border-slate-800 p-2 text-slate-300 hover:bg-slate-800"
+              className="rounded-lg border border-sky-200 bg-white p-2 text-sky-700 hover:bg-sky-100"
               aria-label="Previous"
             >
               <ChevronLeft className="h-4 w-4" />
             </button>
-            <h3 className="text-sm font-semibold text-white min-w-[220px] text-center">{heading}</h3>
+            <h3 className="min-w-[220px] text-center text-sm font-semibold text-sky-950">{heading}</h3>
             <button
               type="button"
               onClick={() => shift(1)}
-              className="rounded-lg border border-slate-800 p-2 text-slate-300 hover:bg-slate-800"
+              className="rounded-lg border border-sky-200 bg-white p-2 text-sky-700 hover:bg-sky-100"
               aria-label="Next"
             >
               <ChevronRight className="h-4 w-4" />
@@ -232,12 +236,12 @@ export function CalendarView({ onWatchSyncGuide }: { onWatchSyncGuide?: () => vo
             <button
               type="button"
               onClick={() => setCursor(new Date(today))}
-              className="rounded-lg border border-slate-800 px-2.5 py-1.5 text-[11px] font-medium text-slate-300 hover:bg-slate-800"
+              className="rounded-lg border border-sky-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-sky-700 hover:bg-sky-100"
             >
               Today
             </button>
           </div>
-          <div className="flex rounded-lg border border-slate-800 bg-slate-900 p-0.5">
+          <div className="flex rounded-lg border border-sky-200 bg-white p-0.5">
             {(["month", "week"] as const).map((item) => (
               <button
                 key={item}
@@ -245,8 +249,8 @@ export function CalendarView({ onWatchSyncGuide }: { onWatchSyncGuide?: () => vo
                 onClick={() => setMode(item)}
                 className={`px-3 py-1.5 text-xs font-semibold rounded-md capitalize ${
                   mode === item
-                    ? "bg-emerald-500/20 text-emerald-300"
-                    : "text-slate-400 hover:text-slate-200"
+                    ? "border border-emerald-500/40 bg-emerald-600/20 text-emerald-800"
+                    : "text-slate-600 hover:bg-sky-100 hover:text-sky-700"
                 }`}
               >
                 {item}
@@ -260,6 +264,7 @@ export function CalendarView({ onWatchSyncGuide }: { onWatchSyncGuide?: () => vo
             active={propertyFilter === "all"}
             onClick={() => setPropertyFilter("all")}
             label="All properties"
+            activeClassName="border-blue-800 bg-blue-800 text-white"
           />
           {properties.map((property) => (
             <FilterChip
@@ -268,11 +273,13 @@ export function CalendarView({ onWatchSyncGuide }: { onWatchSyncGuide?: () => vo
               onClick={() => setPropertyFilter(property.id)}
               label={property.name}
               dot={colorFor(property.id).dot}
+              activeClassName={colorFor(property.id).filterActive}
             />
           ))}
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+        <div className="overflow-hidden rounded-lg border border-sky-200 bg-white p-4 shadow-sm">
+          <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
           <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50">
             {WEEKDAYS.map((day) => (
               <div
@@ -345,6 +352,7 @@ export function CalendarView({ onWatchSyncGuide }: { onWatchSyncGuide?: () => vo
                 </div>
               );
             })}
+          </div>
           </div>
         </div>
       </div>
@@ -512,11 +520,13 @@ function FilterChip({
   label,
   onClick,
   dot,
+  activeClassName,
 }: {
   active: boolean;
   label: string;
   onClick: () => void;
   dot?: string;
+  activeClassName?: string;
 }) {
   return (
     <button
@@ -524,8 +534,8 @@ function FilterChip({
       onClick={onClick}
       className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium ${
         active
-          ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-300"
-          : "border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200"
+          ? (activeClassName ?? "border-blue-800 bg-blue-800 text-white")
+          : "border-sky-200 bg-sky-50 text-sky-800 hover:bg-sky-100"
       }`}
     >
       {dot ? <span className={`h-2 w-2 rounded-full ${dot}`} /> : null}

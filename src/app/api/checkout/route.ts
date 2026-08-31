@@ -1,6 +1,7 @@
 import { createSquareCheckoutSession } from "@/lib/square-checkout";
 import { createSupabaseRouteClient } from "@/lib/supabase-route";
 import { parsePlanId } from "@/lib/zencierge-plans";
+import { publicOriginFromRequest } from "@/lib/public-app-url";
 
 export async function POST(request: Request) {
   const supabase = await createSupabaseRouteClient();
@@ -36,7 +37,7 @@ export async function POST(request: Request) {
       billing: body.billing,
       email: body.email?.trim() || user?.email || null,
       userId: user?.id ?? null,
-      origin: new URL(request.url).origin,
+      origin: publicOriginFromRequest(request),
     });
     return Response.json({
       url: session.url,

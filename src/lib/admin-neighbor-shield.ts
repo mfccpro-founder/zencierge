@@ -50,6 +50,16 @@ const GUEST_NOTICE: Record<CommunityAlertType, string> = {
     "Waste notice: trash must be bagged and placed inside the designated dumpster. Please correct this now to avoid an HOA fine.",
 };
 
+export function isInvalidProviderKey(error: { message?: string; status?: number; code?: string } | string | null | undefined) {
+  if (!error) return false;
+  const message = typeof error === "string" ? error : `${error.message ?? ""} ${error.code ?? ""}`;
+  const status = typeof error === "object" ? error.status : undefined;
+  if (status === 401) return true;
+  return /invalid api key|invalid jwt|jwt expired|not a valid api key|unauthorized|authentication token|auth token|account sid/i.test(
+    message,
+  );
+}
+
 export function isCommunityAlertType(value: string): value is CommunityAlertType {
   return (COMMUNITY_ALERT_TYPES as readonly string[]).includes(value);
 }

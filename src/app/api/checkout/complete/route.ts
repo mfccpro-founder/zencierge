@@ -2,10 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireHostUser } from "@/lib/supabase-route";
 import { applySubscriptionWebhook } from "@/lib/subscription-webhooks";
 import { parsePlanId, ZENCIERGE_PLANS } from "@/lib/zencierge-plans";
+import { publicOriginFromRequest } from "@/lib/public-app-url";
 
 export async function GET(request: NextRequest) {
   const planId = parsePlanId(request.nextUrl.searchParams.get("plan"));
-  const login = new URL("/login", request.url);
+  const login = new URL("/login", publicOriginFromRequest(request));
   login.searchParams.set("next", `/dashboard?payment=success&tier=${planId ?? "starter"}`);
 
   const auth = await requireHostUser();
@@ -34,7 +35,7 @@ export async function GET(request: NextRequest) {
     },
   });
 
-  const dashboard = new URL("/dashboard", request.url);
+  const dashboard = new URL("/dashboard", publicOriginFromRequest(request));
   dashboard.searchParams.set("payment", "success");
   dashboard.searchParams.set("tier", plan);
   return NextResponse.redirect(dashboard);

@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { Download, FileText, Loader2, Printer } from "lucide-react";
 import {
   consumeHousekeepingPhotoQueue,
@@ -118,10 +120,12 @@ function buildReport(form: IncidentForm) {
 }
 
 export function DisputeDossierPanel() {
+  const searchParams = useSearchParams();
   const [form, setForm] = useState<IncidentForm>(EMPTY_FORM);
   const [guests, setGuests] = useState<GuestOption[]>([]);
   const [loadingGuests, setLoadingGuests] = useState(true);
   const [incomingPhotos, setIncomingPhotos] = useState<HousekeepingDisputePhoto[]>([]);
+  const [shieldPrefill, setShieldPrefill] = useState<string | null>(null);
 
   useEffect(() => {
     const queued = consumeHousekeepingPhotoQueue();
@@ -143,6 +147,36 @@ export function DisputeDossierPanel() {
       };
     });
   }, []);
+
+  useEffect(() => {
+    const reservationId = searchParams.get("reservation");
+    if (!reservationId) return;
+    let active = true;
+    fetch(`/api/chargeback-shield?reservation=${encodeURIComponent(reservationId)}`)
+      .then(
+        (res) =>
+          res.json() as Promise<{
+            dossier?: { guest: string; phone: string; propertyId: string; reservationId: string };
+            text?: string;
+          }>,
+      )
+      .then((data) => {
+        if (!active || !data.dossier) return;
+        setShieldPrefill(data.dossier.reservationId);
+        setForm((prev) => ({
+          ...prev,
+          guestName: prev.guestName || data.dossier!.guest,
+          guestPhone: prev.guestPhone || data.dossier!.phone,
+          propertyId: prev.propertyId || data.dossier!.propertyId,
+          reservationCode: prev.reservationCode || data.dossier!.reservationId,
+          evidenceNotes: prev.evidenceNotes || data.text || "",
+        }));
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [searchParams]);
 
   useEffect(() => {
     let active = true;
@@ -197,9 +231,19 @@ export function DisputeDossierPanel() {
       <div className="rounded-2xl border border-slate-200 bg-white p-7 shadow-sm">
         <h2 className="text-2xl font-bold text-slate-900">Forensic exhibit builder</h2>
         <p className="mt-2 text-base text-slate-600">
-          Assemble a chain-of-custody pack for AirCover or OTA Trust &amp; Safety. Prefill identity from Guest DNA, then export
-          TXT or print to PDF.
+          Assemble a chain-of-custody pack for AirCover or OTA Trust &amp; Safety. Prefill identity from Guest DNA or open a
+          reservation from{" "}
+          <Link href="/dashboard/chargeback-shield" className="font-semibold text-sky-800 hover:underline">
+            Chargeback Shield
+          </Link>
+          , then export TXT or print to PDF.
         </p>
+        {shieldPrefill ? (
+          <p className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+            Chargeback Shield dossier attached for reservation {shieldPrefill}. Evidence notes include signatures, lock
+            logs, communications, and housekeeping proofs.
+          </p>
+        ) : null}
 
         {incomingPhotos.length > 0 ? (
           <div className="mt-5 rounded-xl border border-sky-200 bg-sky-50 p-4">

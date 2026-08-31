@@ -72,6 +72,7 @@ export function GuestDnaPanel() {
 
   return (
     <div className="space-y-8">
+      <section id="direct-bookings" className="scroll-mt-28 space-y-8">
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
         {[
           { label: "Captured Guests (All Time)", value: snapshot.metrics.total },
@@ -105,8 +106,11 @@ export function GuestDnaPanel() {
           Export Leads CSV
         </button>
       </div>
+      </section>
 
-      <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <section id="id-verification" className="scroll-mt-28 space-y-3">
+        <h2 className="text-2xl font-bold text-slate-900">ID Verification &amp; risk tags</h2>
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
         <table className="w-full min-w-[1100px] text-left text-base">
           <thead className="border-b border-slate-300 bg-slate-100 text-sm font-semibold uppercase tracking-wide text-slate-900">
             <tr>
@@ -171,7 +175,8 @@ export function GuestDnaPanel() {
             ) : null}
           </tbody>
         </table>
-      </div>
+        </div>
+      </section>
     </div>
   );
 }

@@ -1,3 +1,5 @@
+import { publicApiUrl } from "@/lib/public-app-url";
+
 export async function startSquareCheckout(body: {
   kind?: "host_subscription" | "guest_addon";
   planId?: string;
@@ -5,7 +7,7 @@ export async function startSquareCheckout(body: {
   addonId?: "early_checkin" | "mid_stay_clean";
   propertyId?: string;
 }) {
-  const response = await fetch("/api/payments/square/checkout", {
+  const response = await fetch(publicApiUrl("/api/payments/square/checkout"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ kind: "host_subscription", ...body }),

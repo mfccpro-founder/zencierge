@@ -30,6 +30,10 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
+# local housekeeping photo reports
+.data/
+/public/uploads/
+
 # env files (can opt-in for committing if needed)
 .env*
 !.env.example

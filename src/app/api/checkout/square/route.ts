@@ -1,6 +1,7 @@
 import { createSquareCheckoutSession } from "@/lib/square-checkout";
 import { createSupabaseRouteClient } from "@/lib/supabase-route";
 import { parsePlanId } from "@/lib/zencierge-plans";
+import { publicOriginFromRequest } from "@/lib/public-app-url";
 
 export async function POST(request: Request) {
   let body: { planId?: string; billing?: string; email?: string; name?: string };
@@ -44,7 +45,7 @@ export async function POST(request: Request) {
       email: body.email?.trim() || user?.email || null,
       name: body.name?.trim() || null,
       userId: user?.id ?? null,
-      origin: new URL(request.url).origin,
+      origin: publicOriginFromRequest(request),
       forceLiveSquare: true,
     });
     const checkoutUrl = session.url;

@@ -1,5 +1,8 @@
 import { createSupabaseRouteClient } from "@/lib/supabase-route";
 import { createSquareCheckoutSession } from "@/lib/square-checkout";
+import { hasLifetimeVipAccess } from "@/lib/lifetime-vip";
+import { betaPartnerTrial, isBetaFounderPartner } from "@/lib/beta-partner";
+import { publicOriginFromRequest } from "@/lib/public-app-url";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +26,12 @@ export async function POST(request: Request) {
   }
 
   const kind = body.kind === "guest_addon" ? "guest_addon" : "host_subscription";
+  if (kind === "host_subscription" && hasLifetimeVipAccess(user)) {
+    return Response.json({ ok: true, lifetimeVip: true, planId: "enterprise", planName: "Founder VIP", monthlyUsd: 0, squareSkipped: true });
+  }
+  if (kind === "host_subscription" && user && isBetaFounderPartner(user) && betaPartnerTrial(user).active) {
+    return Response.json({ ok: true, betaPartner: true, planId: "enterprise", planName: "Beta Founder Partner", monthlyUsd: 0, squareSkipped: true });
+  }
   if (kind === "host_subscription" && user) {
     try {
       await supabase.auth.updateUser({
@@ -45,7 +54,7 @@ export async function POST(request: Request) {
       propertyId: body.propertyId,
       email: user?.email ?? null,
       userId: user?.id ?? null,
-      origin: new URL(request.url).origin,
+      origin: publicOriginFromRequest(request),
     });
     return Response.json(session);
   } catch (cause) {

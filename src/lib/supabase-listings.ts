@@ -11,6 +11,12 @@ import {
 } from "@/lib/dashboard-data";
 import { supabase } from "@/lib/supabase";
 import { hasSupabaseEnv } from "@/lib/supabase-config";
+import {
+  defaultAgentConfig,
+  parseAvatarName,
+  resolvePropertyForInbound,
+  withAgentDefaults,
+} from "@/lib/property-agent";
 
 export { guestStayFallback };
 
@@ -58,6 +64,10 @@ export type PropertyRow = {
   trash?: string;
   handbook?: string;
   ai_handbook?: string;
+  assigned_avatar_name?: string;
+  assigned_phone_number?: string;
+  avatar_system_prompt?: string;
+  timezone?: string;
 };
 
 export type ReservationRow = {
@@ -105,12 +115,22 @@ function asStayStatus(value: string): Reservation["status"] {
 
 function fillHouseRulesFromSeed(mapped: Property): Property {
   const seed = seedProperties.find((property) => property.id === mapped.id);
-  if (!seed) return mapped;
-  return {
+  const index = Math.max(0, seedProperties.findIndex((property) => property.id === mapped.id));
+  const defaults = defaultAgentConfig(mapped.city, index);
+  const merged: Property = {
     ...mapped,
-    trash: mapped.trash.trim() || seed.trash,
-    handbook: mapped.handbook.trim() || seed.handbook,
+    trash: mapped.trash.trim() || seed?.trash || "",
+    handbook: mapped.handbook.trim() || seed?.handbook || "",
+    assignedAvatarName: parseAvatarName(
+      mapped.assignedAvatarName || seed?.assignedAvatarName || defaults.assignedAvatarName,
+    ),
+    assignedPhoneNumber:
+      mapped.assignedPhoneNumber?.trim() || seed?.assignedPhoneNumber || defaults.assignedPhoneNumber,
+    avatarSystemPrompt:
+      mapped.avatarSystemPrompt?.trim() || seed?.avatarSystemPrompt || defaults.avatarSystemPrompt,
+    timezone: mapped.timezone?.trim() || seed?.timezone || defaults.timezone,
   };
+  return withAgentDefaults(merged, index);
 }
 
 export function propertyFromRow(row: PropertyRow): Property {
@@ -132,6 +152,10 @@ export function propertyFromRow(row: PropertyRow): Property {
     currentGuest: row.current_guest,
     trash: row.trash ?? "",
     handbook: row.ai_handbook ?? row.handbook ?? "",
+    assignedAvatarName: row.assigned_avatar_name ?? "",
+    assignedPhoneNumber: row.assigned_phone_number ?? "",
+    avatarSystemPrompt: row.avatar_system_prompt ?? "",
+    timezone: row.timezone ?? "",
   });
 }
 
@@ -154,6 +178,10 @@ export function propertyToRow(property: Property): PropertyRow {
     current_guest: property.currentGuest,
     trash: property.trash,
     ai_handbook: property.handbook,
+    assigned_avatar_name: property.assignedAvatarName,
+    assigned_phone_number: property.assignedPhoneNumber,
+    avatar_system_prompt: property.avatarSystemPrompt,
+    timezone: property.timezone,
   };
 }
 
@@ -166,6 +194,21 @@ function isMissingColumnError(message: string) {
 function rowWithoutTrash(row: PropertyRow): PropertyRow {
   const { trash: _trash, ...rest } = row;
   void _trash;
+  return rest as PropertyRow;
+}
+
+function rowWithoutAgent(row: PropertyRow): PropertyRow {
+  const {
+    assigned_avatar_name: _avatar,
+    assigned_phone_number: _phone,
+    avatar_system_prompt: _prompt,
+    timezone: _tz,
+    ...rest
+  } = row;
+  void _avatar;
+  void _phone;
+  void _prompt;
+  void _tz;
   return rest as PropertyRow;
 }
 
@@ -336,14 +379,65 @@ export async function fetchReservationById(id: string): Promise<Reservation | nu
 
 export async function upsertProperty(property: Property) {
   const row = propertyToRow(property);
-  const { error } = await supabase.from("properties").upsert(row);
-  if (!error) return;
+  const attempts = [
+    row,
+    rowWithoutAgent(row),
+    rowWithoutTrash(row),
+    rowWithoutTrash(rowWithoutAgent(row)),
+  ];
+  let lastMessage = "";
+  for (const attempt of attempts) {
+    const { error } = await supabase.from("properties").upsert(attempt);
+    if (!error) return;
+    lastMessage = error.message;
+    if (!isMissingColumnError(error.message)) throw new Error(error.message);
+  }
+  throw new Error(lastMessage || "Could not save property");
+}
 
-  // `trash` was added later — retry without it so hosts who have not run
-  // supabase/schema.sql yet can still save a property.
-  if (!isMissingColumnError(error.message)) throw new Error(error.message);
-  const retry = await supabase.from("properties").upsert(rowWithoutTrash(row));
-  if (retry.error) throw new Error(retry.error.message);
+export async function loadInboundProperty(input: {
+  property?: Property | null;
+  propertyId?: string | null;
+  to?: string | null;
+  calledNumber?: string | null;
+}): Promise<Property | null> {
+  const { properties } = await fetchListings();
+  const dialed = (input.to ?? input.calledNumber ?? "").trim();
+  if (dialed) {
+    return resolvePropertyForInbound(properties, {
+      to: input.to,
+      calledNumber: input.calledNumber,
+    });
+  }
+  const propertyId = (input.propertyId ?? input.property?.id ?? "").trim();
+  if (propertyId) {
+    const live = resolvePropertyForInbound(properties, { propertyId });
+    if (live) {
+      if (input.property?.name && input.property.id === live.id) {
+        return withAgentDefaults(
+          {
+            ...live,
+            ...input.property,
+            assignedAvatarName: live.assignedAvatarName,
+            assignedPhoneNumber: live.assignedPhoneNumber,
+            avatarSystemPrompt: live.avatarSystemPrompt,
+            timezone: live.timezone,
+            handbook: input.property.handbook?.trim() || live.handbook,
+          },
+          properties.findIndex((item) => item.id === live.id),
+        );
+      }
+      return live;
+    }
+  }
+  if (input.property?.name && input.property.city) {
+    const index = Math.max(
+      0,
+      properties.findIndex((item) => item.id === input.property?.id),
+    );
+    return withAgentDefaults(input.property, index);
+  }
+  return resolvePropertyForInbound(properties, {});
 }
 
 export async function upsertReservation(reservation: Reservation) {

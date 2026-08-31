@@ -2,6 +2,7 @@ import type { Property } from "@/lib/dashboard-data";
 import type { AvatarChatTurn } from "@/lib/avatar-prompt";
 import type { LanguageMode, ReplyLang } from "@/lib/human-voice";
 import { answerGuestQuestion, type HoursMode } from "@/lib/receptionist-replies";
+import { publicApiUrl } from "@/lib/public-app-url";
 
 export async function askAvatarReply(options: {
   question: string;
@@ -27,7 +28,7 @@ export async function askAvatarReply(options: {
   options.signal?.addEventListener("abort", onExternalAbort);
 
   try {
-    const response = await fetch("/api/avatar", {
+    const response = await fetch(publicApiUrl("/api/avatar"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal: controller.signal,
@@ -42,6 +43,7 @@ export async function askAvatarReply(options: {
         openaiKey: options.openaiKey || undefined,
         history: options.history ?? [],
         property: options.property,
+        propertyId: options.property.id,
       }),
     });
     if (response.ok) {

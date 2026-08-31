@@ -6,16 +6,16 @@ import { Mic } from "lucide-react";
 /** Deterministic markup for SSR + first client paint. Must match Elena idle UI. */
 export function ElenaIdleShell() {
   return (
-    <div className="p-5 bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm mx-auto text-white shadow-xl space-y-4">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-3.5 min-w-0">
-          <ElenaAvatar size={64} />
-          <div className="leading-tight min-w-0">
-            <h2 className="text-lg font-bold truncate">Elena · Receptionist</h2>
+    <div className="mx-auto w-full min-w-0 max-w-full space-y-4 overflow-x-hidden rounded-2xl border border-slate-700 bg-slate-900 p-4 text-white shadow-xl sm:max-w-sm sm:p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-center gap-3">
+          <ElenaAvatar size={52} />
+          <div className="min-w-0 leading-tight">
+            <h2 className="truncate text-base font-bold sm:text-lg">Elena · Receptionist</h2>
             <p className="text-[11px] text-slate-500">AI Voice Concierge</p>
           </div>
         </div>
-        <span className="shrink-0 text-xs px-2 py-1 bg-emerald-900/60 text-emerald-400 border border-emerald-700 rounded-md">
+        <span className="w-fit shrink-0 rounded-md border border-emerald-700 bg-emerald-900/60 px-2 py-1 text-xs text-emerald-400">
           Ready
         </span>
       </div>
@@ -27,27 +27,29 @@ export function ElenaIdleShell() {
         Tap to talk
       </button>
 
-      <form className="flex flex-row items-center gap-2 w-full" onSubmit={(event) => event.preventDefault()}>
+      <form className="flex w-full min-w-0 flex-col gap-2 sm:flex-row sm:items-center" onSubmit={(event) => event.preventDefault()}>
         <input
           id="elena-guest-input"
           type="text"
           placeholder="Type a message..."
-          className="flex-1 min-w-0 px-3 py-2 bg-slate-950 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm"
+          className="min-h-11 w-full min-w-0 flex-1 rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500"
           defaultValue=""
         />
+        <div className="flex w-full gap-2 sm:w-auto">
         <button
           type="button"
           aria-label="Speak into the microphone"
-          className="shrink-0 flex items-center justify-center w-11 h-[40px] rounded-lg transition bg-slate-700 hover:bg-slate-600 text-white"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-slate-700 text-white transition hover:bg-slate-600"
         >
           <Mic className="h-5 w-5" />
         </button>
         <button
           type="submit"
-          className="shrink-0 px-4 py-2 bg-blue-600 hover:bg-blue-500 font-semibold rounded-lg transition text-sm"
+          className="min-h-11 flex-1 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold transition hover:bg-blue-500 sm:flex-none"
         >
           Send
         </button>
+        </div>
       </form>
 
       <div className="space-y-2">

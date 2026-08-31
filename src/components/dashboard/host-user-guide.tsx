@@ -140,6 +140,37 @@ const MODULES: GuideModule[] = [
     ],
   },
   {
+    id: "chargeback-shield",
+    title: "Chargeback Shield",
+    href: "/dashboard/chargeback-shield",
+    summary:
+      "Automatic dispute defense. Every reservation gets a Chargeback Shield dossier: digital signatures and house-rules acceptance, smart-lock audit timestamps, chat and Elena voice logs, and housekeeping condition proofs.",
+    lifecycle: [
+      "A booking appears on the calendar.",
+      "Zencierge compiles signatures, lock events, communications, and turnover proofs into one pack.",
+      "Coverage shows complete, partial, or evidence gap.",
+      "Download the dossier or open Dispute Dossier to file an AirCover exhibit.",
+    ],
+    steps: [
+      {
+        title: "Open Chargeback Shield",
+        body: "From Financials, open Chargeback Shield. Each row is one reservation’s auto-generated pack.",
+      },
+      {
+        title: "Review the four evidence blocks",
+        body: "Confirm house-rules signature, first unlock time, Elena/chat history, and housekeeping photos before a guest files a chargeback.",
+      },
+      {
+        title: "Export or file the claim",
+        body: "Download dossier for your records. Use File AirCover exhibit to prefill Dispute Dossier with the same reservation.",
+      },
+    ],
+    tips: [
+      "Upcoming stays may show an evidence gap until check-in and the guest gate are complete. That is expected.",
+      "Keep lock vendor and PIN accurate on the listing so the audit log matches what actually opened the door.",
+    ],
+  },
+  {
     id: "dispute-dossier",
     title: "Dispute Dossier",
     href: "/dashboard/dispute-dossier",

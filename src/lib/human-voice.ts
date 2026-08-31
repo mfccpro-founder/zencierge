@@ -1,4 +1,6 @@
-export type VoiceProfileId = "elena" | "mateo" | "sarah";
+import { isPrivateNetworkHostname, publicApiUrl } from "@/lib/public-app-url";
+
+export type VoiceProfileId = "elena" | "mateo" | "sarah" | "austin" | "sofia";
 export type LanguageMode = "auto" | "en" | "es";
 export type ReplyLang = "en" | "es";
 
@@ -81,7 +83,12 @@ export function startBrowserSpeechListen(options: {
   try {
     recognition.start();
   } catch (cause) {
-    options.onError?.(cause instanceof Error ? cause.message : "Could not start listening.");
+    const name = cause instanceof DOMException ? cause.name : "";
+    if (name === "InvalidStateError") {
+      options.onError?.("Already listening. Tap to stop, then try again.");
+    } else {
+      options.onError?.("Could not start listening. Try again, or type a question.");
+    }
     return null;
   }
 
@@ -106,9 +113,10 @@ export function speechLangForHint(hint: "es" | "en" | "auto"): string {
 }
 
 /** Auto and Spanish session modes listen in es-US so Spanish transcribes cleanly. */
-export function speechRecognitionLang(mode: LanguageMode): string {
+export function speechRecognitionLang(mode: LanguageMode, lastDetected?: ReplyLang): string {
+  if (mode === "es") return "es-US";
   if (mode === "en") return "en-US";
-  return "es-US";
+  return lastDetected === "es" ? "es-US" : "en-US";
 }
 
 const ES_WORD =
@@ -134,17 +142,18 @@ export function detectUtteranceLang(text: string): ReplyLang {
   return "es";
 }
 
-/** OpenAI TTS voices: Elena/Mateo = nova, Sarah = shimmer. Never alloy/onyx. */
-export type OpenAiTtsVoice = "nova" | "shimmer";
-export const FEMALE_OPENAI_VOICE = "nova" as const;
+/** OpenAI TTS: Elena uses coral (warm hospitality). Sarah uses shimmer. */
+export type OpenAiTtsVoice = "nova" | "shimmer" | "coral" | "sage";
+export const FEMALE_OPENAI_VOICE = "coral" as const;
+export const HOSPITALITY_TTS_SPEED = 0.96;
 export const FEMALE_ELEVENLABS_VOICE_ID = "21m00Tcm4TlvDq8ikWAM";
 
 const MALE_BROWSER_VOICE = /raul|david|male|hombre|pablo/i;
 const EXPLICIT_FEMALE_BROWSER_VOICE =
-  /zira|samantha|victoria|karen|jenny|aria|sabina|helena|monica|paulina|laura|sofia|elena|maria|female|mujer/i;
+  /zira|samantha|victoria|karen|jenny|aria|sabina|helena|monica|paulina|laura|sofia|elena|maria|natural|neural|google|female|mujer/i;
 
 export function studioVoiceForProfile(id: VoiceProfileId): OpenAiTtsVoice {
-  return id === "sarah" ? "shimmer" : "nova";
+  return id === "sarah" || id === "austin" ? "shimmer" : "coral";
 }
 
 export function isMaleBrowserVoiceName(name: string) {
@@ -173,27 +182,27 @@ export const VOICE_PROFILES: VoiceProfile[] = [
     id: "elena",
     name: "Elena",
     title: "Warm & Bilingual (Miami Hostess)",
-    hint: "Firm, clear projection with air",
+    hint: "Warm, conversational hospitality tone",
     openaiVoice: FEMALE_OPENAI_VOICE,
     elevenLabsVoiceId: FEMALE_ELEVENLABS_VOICE_ID,
     gender: "female",
-    rate: 1,
-    pitch: 1,
+    rate: 0.96,
+    pitch: 1.04,
     preview: {
       es: "Hola. Soy Elena, tu anfitriona en Miami. Estoy aquí para lo que necesites. El Wi-Fi, el estacionamiento, o simplemente sentirte en casa. Dime, ¿cómo te ayudo?",
-      en: "Hi. I'm Elena, your Miami hostess. I'm right here if you need Wi-Fi, parking, or just a warm welcome. How can I help you?",
+      en: "Hi, I'm Elena, your Miami hostess. I'm right here if you need Wi-Fi, parking, or just a warm welcome. How can I help you?",
     },
   },
   {
     id: "mateo",
     name: "Mateo",
     title: "Luxury Concierge",
-    hint: "Studio female voice (nova)",
+    hint: "Calm luxury concierge (coral)",
     openaiVoice: FEMALE_OPENAI_VOICE,
     elevenLabsVoiceId: FEMALE_ELEVENLABS_VOICE_ID,
     gender: "female",
-    rate: 1,
-    pitch: 1,
+    rate: 0.94,
+    pitch: 1.03,
     preview: {
       es: "Buenas noches. Soy Mateo, concierge de lujo. Será un placer atenderle con calma y discreción. ¿En qué puedo servirle?",
       en: "Good evening. This is Mateo, your luxury concierge. It would be my pleasure to assist you. Calmly, and with care. How may I help?",
@@ -207,11 +216,41 @@ export const VOICE_PROFILES: VoiceProfile[] = [
     openaiVoice: "shimmer",
     elevenLabsVoiceId: FEMALE_ELEVENLABS_VOICE_ID,
     gender: "female",
-    rate: 1,
-    pitch: 1,
+    rate: 0.98,
+    pitch: 1.05,
     preview: {
       es: "¡Hola! Soy Sarah. Hablo español también, así que no te preocupes. Dime qué necesitas y lo resolvemos ya.",
       en: "Hey! I'm Sarah, your friendly American host. Super happy to help — let's get you settled in. What do you need?",
+    },
+  },
+  {
+    id: "austin",
+    name: "Austin",
+    title: "Texas-friendly host",
+    hint: "Clear American English, warm and direct",
+    openaiVoice: "shimmer",
+    elevenLabsVoiceId: FEMALE_ELEVENLABS_VOICE_ID,
+    gender: "female",
+    rate: 0.97,
+    pitch: 1.04,
+    preview: {
+      es: "Hola. Soy Austin. Estoy aquí para lo que necesites en la casa: Wi-Fi, llegada o reglas locales. ¿Cómo te ayudo?",
+      en: "Hi. I'm Austin, your local host. Wi-Fi, check-in, house rules — just tell me what you need.",
+    },
+  },
+  {
+    id: "sofia",
+    name: "Sofia",
+    title: "Bilingual Florida hostess",
+    hint: "Warm coral voice, Spanish-first when needed",
+    openaiVoice: FEMALE_OPENAI_VOICE,
+    elevenLabsVoiceId: FEMALE_ELEVENLABS_VOICE_ID,
+    gender: "female",
+    rate: 0.96,
+    pitch: 1.04,
+    preview: {
+      es: "Hola. Soy Sofía, tu anfitriona. Estoy aquí para el Wi-Fi, el parking o lo que haga falta. ¿En qué te ayudo?",
+      en: "Hi. I'm Sofia, your host. I'm here for Wi-Fi, parking, or anything else you need. How can I help?",
     },
   },
 ];
@@ -269,19 +308,20 @@ export async function resumePersistentAudio(audio: HTMLAudioElement) {
   await audio.play();
 }
 
+/** Light punctuation so TTS breathes naturally without sounding chopped. */
 export function paceForSpeech(text: string) {
   let paced = text.trim();
-  paced = paced.replace(/\u2026/g, ". ");
-  paced = paced.replace(/\.{3,}/g, ". ");
-  paced = paced.replace(/\s*[—–]\s*/g, ". ");
-  paced = paced.replace(/\s*;\s*/g, ". ");
-  paced = paced.replace(/^(¡?Hola)!?\s+/i, "Hola. ");
-  paced = paced.replace(/^(¡?Buenas noches)!?\s+/i, "Buenas noches. ");
-  paced = paced.replace(/^(Hey|Hi|Hello)!?\s+/i, "$1. ");
-  paced = paced.replace(/\s+y la contraseña es/gi, ". Y la contraseña es");
-  paced = paced.replace(/\s+and the password is/gi, ". And the password is");
-  paced = paced.replace(/\s+y el check-out/gi, ". Y el check-out");
-  paced = paced.replace(/\s+and check-out/gi, ". And check-out");
+  paced = paced.replace(/\u2026/g, ", ");
+  paced = paced.replace(/\.{3,}/g, ", ");
+  paced = paced.replace(/\s*[—–]\s*/g, ", ");
+  paced = paced.replace(/\s*;\s*/g, ", ");
+  paced = paced.replace(/^(¡?Hola)!?\s+/i, "Hola, ");
+  paced = paced.replace(/^(¡?Buenas noches)!?\s+/i, "Buenas noches, ");
+  paced = paced.replace(/^(Hey|Hi|Hello)!?\s+/i, "$1, ");
+  paced = paced.replace(/\s+y la contraseña es/gi, ", y la contraseña es");
+  paced = paced.replace(/\s+and the password is/gi, ", and the password is");
+  paced = paced.replace(/\s+y el check-out/gi, ", y el check-out");
+  paced = paced.replace(/\s+and check-out/gi, ", and check-out");
   paced = paced.replace(/\s{2,}/g, " ");
   paced = paced.replace(/\s+([.,!?])/g, "$1");
   paced = paced.replace(/\.{2,}/g, ".");
@@ -290,7 +330,7 @@ export function paceForSpeech(text: string) {
 }
 
 /**
- * Strips everything tts-1 would read literally or garble: markdown,
+ * Strips everything the TTS model would read literally or garble: markdown,
  * code fences, emojis/symbols, URLs. Keeps natural prose for the engine.
  */
 export function sanitizeForTts(input: string): string {
@@ -431,8 +471,8 @@ export function speakWithBrowserTts(options: {
     utterance.lang = "es-US";
   }
 
-  utterance.pitch = 1.15;
-  utterance.rate = 1;
+  utterance.pitch = 1.06;
+  utterance.rate = 0.92;
   utterance.onstart = () => options.onStart?.();
   utterance.onend = () => options.onEnd?.();
   utterance.onerror = () => options.onEnd?.();
@@ -446,10 +486,46 @@ export function isFatalTtsNetworkError(cause: unknown) {
 }
 
 let unlockedAudio: HTMLAudioElement | null = null;
+let sharedAudioContext: AudioContext | null = null;
+let speechAudioUnlocked = false;
 
 /** The element unlocked by the first user tap, if any. */
 export function getUnlockedAudio() {
   return unlockedAudio;
+}
+
+export function isSpeechAudioUnlocked() {
+  return speechAudioUnlocked;
+}
+
+function resumeSharedAudioContext() {
+  if (typeof window === "undefined") return;
+  try {
+    const Ctx =
+      window.AudioContext ||
+      (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!Ctx) return;
+    if (!sharedAudioContext) sharedAudioContext = new Ctx();
+    if (sharedAudioContext.state === "suspended") {
+      void sharedAudioContext.resume().catch(() => {});
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+function unlockSpeechSynthesis() {
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+  try {
+    const synth = window.speechSynthesis;
+    const probe = new SpeechSynthesisUtterance(" ");
+    probe.volume = 0;
+    probe.rate = 1;
+    synth.speak(probe);
+    synth.cancel();
+  } catch {
+    /* ignore */
+  }
 }
 
 /**
@@ -488,37 +564,216 @@ export type PushToTalkSession = {
 
 const STOP_TIMEOUT_MS = 3000;
 
+type LegacyGetUserMedia = (
+  constraints: MediaStreamConstraints,
+  success: (stream: MediaStream) => void,
+  error: (cause: Error) => void,
+) => void;
+
+function legacyGetUserMedia(): LegacyGetUserMedia | null {
+  const nav = navigator as Navigator & {
+    getUserMedia?: LegacyGetUserMedia;
+    webkitGetUserMedia?: LegacyGetUserMedia;
+    mozGetUserMedia?: LegacyGetUserMedia;
+  };
+  return nav.getUserMedia ?? nav.webkitGetUserMedia ?? nav.mozGetUserMedia ?? null;
+}
+
+/** Always attempts capture, including HTTP LAN IPs during local development. */
+export async function acquireMicrophoneStream(): Promise<MediaStream> {
+  const constraints: MediaStreamConstraints = { audio: true, video: false };
+  const modern = navigator.mediaDevices?.getUserMedia?.bind(navigator.mediaDevices);
+  if (modern) {
+    return modern(constraints);
+  }
+  const legacy = legacyGetUserMedia();
+  if (legacy) {
+    return new Promise((resolve, reject) => {
+      legacy.call(navigator, constraints, resolve, reject);
+    });
+  }
+  throw new Error("MIC_UNAVAILABLE");
+}
+
 export function assertCanRecordAudio() {
   if (typeof window === "undefined") {
     throw new Error("MIC_UNAVAILABLE");
   }
-  if (!window.isSecureContext) {
-    throw new Error("MIC_INSECURE");
+}
+
+export function isInsecureMicrophoneContext() {
+  if (typeof window === "undefined") return false;
+  if (isPrivateNetworkHostname(window.location.hostname)) return false;
+  return !window.isSecureContext;
+}
+
+export function describeGetUserMediaFailure(cause: unknown): {
+  kind: "insecure" | "permission" | "other";
+  message: string;
+} {
+  const name = cause instanceof DOMException ? cause.name : "";
+  const text = cause instanceof Error ? cause.message : String(cause);
+  const onLan =
+    typeof window !== "undefined" && isPrivateNetworkHostname(window.location.hostname);
+
+  if (
+    name === "NotAllowedError" ||
+    name === "PermissionDeniedError" ||
+    /notallowed|permission|denied|dismissed/i.test(text)
+  ) {
+    return {
+      kind: "permission",
+      message:
+        "Microphone permission was denied. Allow the microphone for this site, then tap to talk again — or type a question.",
+    };
   }
-  if (!navigator.mediaDevices?.getUserMedia) {
-    throw new Error("MIC_INSECURE");
+  if (name === "NotFoundError" || /notfound|no device/i.test(text)) {
+    return {
+      kind: "other",
+      message: "No microphone was found on this device. Type a question instead.",
+    };
   }
-  if (typeof MediaRecorder === "undefined") {
-    throw new Error("MIC_UNSUPPORTED");
+  if (name === "SecurityError" || text === "MIC_INSECURE") {
+    return {
+      kind: "insecure",
+      message: onLan
+        ? "This browser blocked the microphone on a local HTTP address. Allow the mic if prompted, or type a question."
+        : "This browser blocked the microphone (often because the page is not HTTPS). Type a question, or open the portal over HTTPS.",
+    };
   }
+  if (typeof navigator !== "undefined" && !navigator.mediaDevices?.getUserMedia && !legacyGetUserMedia()) {
+    return {
+      kind: onLan ? "other" : "insecure",
+      message: onLan
+        ? "Could not start the microphone on this local address. Type a question, or try again after allowing the mic."
+        : "This browser blocked microphone access. Type a question, or open the portal over HTTPS.",
+    };
+  }
+  return { kind: "other", message: micErrorMessage(cause) };
 }
 
 export function micErrorMessage(cause: unknown) {
   const code = cause instanceof Error ? cause.message : String(cause);
-  if (code === "MIC_INSECURE" || /secure|https|getUserMedia/i.test(code)) {
-    return "Open this page over HTTPS (Cloudflare tunnel) to use the microphone. Safari cannot record over HTTP.";
+  if (code === "MIC_INSECURE" || /secure|https/i.test(code)) {
+    return "Could not start the microphone. Try again, allow the mic if asked, or type a question.";
   }
   if (code === "MIC_UNSUPPORTED") {
-    return "This browser cannot record audio.";
+    return "This browser cannot record audio. Type a question instead.";
   }
   if (code === "MIC_UNAVAILABLE") {
-    return "The microphone is not available right now.";
+    return "The microphone is not available right now. Type a question instead.";
   }
-  return "Could not start the microphone. Check permission in Settings → Safari.";
+  return "Could not start the microphone. Check permission in your browser settings, or type a question.";
+}
+
+function encodeWav(samples: Float32Array, sampleRate: number): Blob {
+  const pcm = new Int16Array(samples.length);
+  for (let i = 0; i < samples.length; i += 1) {
+    const s = Math.max(-1, Math.min(1, samples[i] ?? 0));
+    pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  const buffer = new ArrayBuffer(44 + pcm.byteLength);
+  const view = new DataView(buffer);
+  const writeString = (offset: number, value: string) => {
+    for (let i = 0; i < value.length; i += 1) view.setUint8(offset + i, value.charCodeAt(i));
+  };
+  writeString(0, "RIFF");
+  view.setUint32(4, 36 + pcm.byteLength, true);
+  writeString(8, "WAVE");
+  writeString(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeString(36, "data");
+  view.setUint32(40, pcm.byteLength, true);
+  new Uint8Array(buffer, 44).set(new Uint8Array(pcm.buffer));
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+/** Direct PCM recorder when MediaRecorder is missing (common on HTTP LAN). */
+export function startFallbackWavRecorder(
+  stream: MediaStream,
+  options: { onStop: (blob: Blob) => void },
+): PushToTalkSession {
+  const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AudioCtx) {
+    stream.getTracks().forEach((track) => track.stop());
+    throw new Error("MIC_UNSUPPORTED");
+  }
+  const ctx = new AudioCtx();
+  void ctx.resume();
+  const source = ctx.createMediaStreamSource(stream);
+  const processor = ctx.createScriptProcessor(4096, 1, 1);
+  const chunks: Float32Array[] = [];
+  processor.onaudioprocess = (event) => {
+    chunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));
+  };
+  const mute = ctx.createGain();
+  mute.gain.value = 0;
+  source.connect(processor);
+  processor.connect(mute);
+  mute.connect(ctx.destination);
+
+  let delivered = false;
+  const stopTracks = () => stream.getTracks().forEach((track) => track.stop());
+  const tearDown = () => {
+    try {
+      processor.disconnect();
+      source.disconnect();
+      mute.disconnect();
+    } catch {
+      /* ignore */
+    }
+    void ctx.close();
+  };
+
+  const finish = (send: boolean) => {
+    if (delivered) return;
+    delivered = true;
+    stopTracks();
+    if (!send) {
+      tearDown();
+      return;
+    }
+    const length = chunks.reduce((sum, part) => sum + part.length, 0);
+    const merged = new Float32Array(length);
+    let offset = 0;
+    for (const part of chunks) {
+      merged.set(part, offset);
+      offset += part.length;
+    }
+    const rate = ctx.sampleRate || 44100;
+    tearDown();
+    options.onStop(encodeWav(merged, rate));
+  };
+
+  return {
+    stop: () => finish(true),
+    cancel: () => finish(false),
+  };
 }
 
 /** Builds the recorder after getUserMedia already ran in the user-gesture callback. */
 export function startPushToTalkFromStream(
+  stream: MediaStream,
+  options: { onStop: (blob: Blob) => void },
+): PushToTalkSession {
+  if (typeof MediaRecorder === "undefined") {
+    return startFallbackWavRecorder(stream, options);
+  }
+  try {
+    return startMediaRecorderFromStream(stream, options);
+  } catch (cause) {
+    console.warn("[voice] MediaRecorder failed, using WAV fallback", cause);
+    return startFallbackWavRecorder(stream, options);
+  }
+}
+
+function startMediaRecorderFromStream(
   stream: MediaStream,
   options: { onStop: (blob: Blob) => void },
 ): PushToTalkSession {
@@ -598,15 +853,26 @@ export async function startPushToTalk(options: {
   onStop: (blob: Blob) => void;
 }): Promise<PushToTalkSession> {
   assertCanRecordAudio();
-  const media = navigator.mediaDevices;
-  if (!media?.getUserMedia) throw new Error("MIC_INSECURE");
-  const stream = await media.getUserMedia({ audio: true });
+  const stream = await acquireMicrophoneStream();
   return startPushToTalkFromStream(stream, options);
 }
 
-export async function transcribePushToTalkBlob(_blob: Blob, _language?: "es" | "en"): Promise<string> {
-  console.warn("[elena] Whisper /api/transcribe is unused; use startBrowserSpeechListen.");
-  return "";
+export async function transcribePushToTalkBlob(blob: Blob, language?: "es" | "en"): Promise<string> {
+  if (blob.size < 200) return "";
+  const meta = whisperFileMeta(blob.type);
+  const file = new File([blob], meta.name, { type: meta.type || blob.type || "audio/webm" });
+  const form = new FormData();
+  form.append("file", file);
+  if (language) form.append("language", language);
+  const response = await fetch(publicApiUrl("/api/transcribe"), { method: "POST", body: form });
+  const payload = (await response.json().catch(() => ({}))) as { text?: string; error?: string; code?: string };
+  if (!response.ok) {
+    if (payload.code === "NO_API_KEY" || payload.code === "INVALID_OPENAI_KEY") {
+      throw new Error("Voice transcription is not configured. Type a question instead.");
+    }
+    throw new Error("Could not transcribe speech. Try again, or type a question.");
+  }
+  return payload.text?.trim() ?? "";
 }
 
 export function unlockSpeechAudio(persistent?: HTMLAudioElement | null) {
@@ -617,25 +883,17 @@ export function unlockSpeechAudio(persistent?: HTMLAudioElement | null) {
     audio.setAttribute("playsinline", "true");
     audio.setAttribute("webkit-playsinline", "true");
     if (persistent) unlockedAudio = persistent;
-    try {
-      const Ctx = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (Ctx) {
-        const ctx = new Ctx();
-        void ctx.resume().catch(() => {});
-      }
-    } catch {
-      /* ignore */
+    resumeSharedAudioContext();
+    unlockSpeechSynthesis();
+    const src = audio.currentSrc || audio.src;
+    if (!src || src.startsWith("data:")) {
+      keepAudioChannelAlive(audio);
     }
-    if (!audio.src) assignAudioSrc(audio, SILENT_WAV);
-    audio.muted = false;
-    audio.volume = 0;
-    void audio.play().catch(() => {});
-    audio.pause();
-    audio.volume = 1;
-    audio.currentTime = 0;
+    speechAudioUnlocked = true;
     return audio;
   } catch (cause) {
     console.error("[voice] HTMLAudio unlock failed", cause);
+    speechAudioUnlocked = true;
     return persistent ?? unlockedAudio;
   }
 }
@@ -654,12 +912,13 @@ export async function loadOpenAiTtsMpeg(
   target?: HTMLAudioElement | null,
   lang?: ReplyLang,
 ): Promise<HTMLAudioElement> {
-  const ttsRes = await fetch("/api/tts", {
+  const ttsRes = await fetch(publicApiUrl("/api/tts"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       text: paceForSpeech(sanitizeForTts(text)),
       voice,
+      speed: HOSPITALITY_TTS_SPEED,
       ...(lang ? { language: lang } : {}),
     }),
   }).catch((cause) => {
@@ -724,7 +983,7 @@ async function speakStudioAudio(options: {
   onPlaybackEnd?: () => void;
 }) {
   const voice = studioVoiceForProfile(options.profile.id);
-  const response = await fetch("/api/tts", {
+  const response = await fetch(publicApiUrl("/api/tts"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({

@@ -8,6 +8,7 @@ import { GuestQrCard } from "@/components/dashboard/guest-qr-card";
 import type { ReceptionistPhase } from "@/components/dashboard/receptionist-avatar";
 import type { Property } from "@/lib/dashboard-data";
 import { askAvatarReply } from "@/lib/ask-avatar";
+import { localTimeLabel, phonesMatch, voiceIdFromAvatarName } from "@/lib/property-agent";
 import { useHeygenRepeatAvatar } from "@/components/dashboard/use-heygen-repeat";
 import {
   VOICE_PROFILES,
@@ -56,8 +57,8 @@ type SpeechRec = {
   stop: () => void;
 };
 
-function recognitionLangFor(mode: LanguageMode, _session: LanguageMode): string {
-  return speechRecognitionLang(mode);
+function recognitionLangFor(mode: LanguageMode, lastDetected: ReplyLang): string {
+  return speechRecognitionLang(mode, lastDetected);
 }
 
 const LANGUAGE_MIRROR_INSTRUCTION =
@@ -68,13 +69,13 @@ function detectGuestLang(text: string): ReplyLang {
 }
 
 const inputClass =
-  "w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-200 focus:border-emerald-500 focus:outline-none";
+  "w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-sky-600";
 
 export function VoiceConciergeView() {
   const { properties } = useListings();
   const [voiceId, setVoiceId] = useState<VoiceProfileId>("elena");
   const [language, setLanguage] = useState<LanguageMode>("auto");
-  const [speed, setSpeed] = useState(0.85);
+  const [speed, setSpeed] = useState(0.96);
   const [stability, setStability] = useState(68);
   const [floridaLine, setFloridaLine] = useState<FloridaLine>("305");
   const [emergencyNumber, setEmergencyNumber] = useState("+1 (954) 275-3544");
@@ -102,6 +103,7 @@ export function VoiceConciergeView() {
   const selectedProperty =
     properties.find((property) => property.id === propertyId) ?? properties[0];
   const lineMeta = FLORIDA_LINES[floridaLine];
+  const lineNumber = selectedProperty?.assignedPhoneNumber?.trim() || lineMeta.number;
   const studioReady = Boolean(elevenKey.trim() || openaiKey.trim());
 
   const idRef = useRef(0);
@@ -110,7 +112,7 @@ export function VoiceConciergeView() {
   const callActiveRef = useRef(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const unlockedRef = useRef(false);
-  const speedRef = useRef(0.85);
+  const speedRef = useRef(0.96);
   const heygen = useHeygenRepeatAvatar();
   const abortRef = useRef<AbortController | null>(null);
   const safetyRef = useRef(0);
@@ -124,7 +126,7 @@ export function VoiceConciergeView() {
   const sessionLangRef = useRef<LanguageMode>(language);
   // Language detected for the CURRENT utterance only. The UI selector never
   // changes when the user speaks — in Auto it stays "Auto" forever.
-  const currentTurnLangRef = useRef<ReplyLang>("es");
+  const currentTurnLangRef = useRef<ReplyLang>("en");
   const speakingRef = useRef(false);
   const respondingRef = useRef(false);
   const thinkingRef = useRef(false);
@@ -137,6 +139,16 @@ export function VoiceConciergeView() {
   useEffect(() => {
     callActiveRef.current = callActive;
   }, [callActive]);
+
+  useEffect(() => {
+    if (!selectedProperty) return;
+    setVoiceId(voiceIdFromAvatarName(selectedProperty.assignedAvatarName));
+    if (phonesMatch(selectedProperty.assignedPhoneNumber, FLORIDA_LINES["954"].number)) {
+      setFloridaLine("954");
+    } else if (phonesMatch(selectedProperty.assignedPhoneNumber, FLORIDA_LINES["305"].number)) {
+      setFloridaLine("305");
+    }
+  }, [selectedProperty?.id, selectedProperty?.assignedAvatarName, selectedProperty?.assignedPhoneNumber]);
 
   useEffect(() => {
     languageRef.current = language;
@@ -566,7 +578,7 @@ export function VoiceConciergeView() {
     }
 
     const recognition = new Ctor();
-    recognition.lang = recognitionLangFor(languageRef.current, sessionLangRef.current);
+    recognition.lang = recognitionLangFor(languageRef.current, currentTurnLangRef.current);
     recognition.interimResults = true;
     recognition.continuous = true;
     recognition.onresult = (event) => {
@@ -635,7 +647,7 @@ export function VoiceConciergeView() {
       language,
       hours,
       property: selectedProperty,
-      lineNumber: lineMeta.number,
+      lineNumber,
     });
     setCallActive(true);
     setStreamReady(true);
@@ -644,7 +656,7 @@ export function VoiceConciergeView() {
       {
         id: nextId(),
         speaker: "system",
-        text: `Connected · ${lineMeta.number} · ${selectedProperty.name} · ${profile.name}`,
+        text: `Connected · ${lineNumber} · ${selectedProperty.name} · ${profile.name} · ${selectedProperty.timezone}`,
       },
     ]);
 
@@ -700,16 +712,17 @@ export function VoiceConciergeView() {
   return (
     <div className="space-y-8">
       <div>
-        <h2 className="text-2xl font-bold text-white tracking-tight">
+        <h2 className="text-2xl font-bold tracking-tight text-slate-900">
           AI Voice Concierge Settings
         </h2>
-        <p className="text-sm text-slate-400 mt-0.5">
+        <p className="mt-0.5 text-sm text-slate-600">
           Human voice profiles, Florida routing, and a live receptionist avatar grounded in
           ai_handbook.
         </p>
       </div>
 
       <audio ref={audioRef} className="sr-only" preload="auto" playsInline />
+      <div id="heygen" className="scroll-mt-28">
       <div id="ai-receptionist">
         {responding ? (
           <button
@@ -717,7 +730,7 @@ export function VoiceConciergeView() {
             onClick={() => {
               cancelSpeech();
             }}
-            className="mb-3 w-full text-center text-xs font-medium text-emerald-300 hover:underline"
+            className="mb-3 w-full text-center text-xs font-medium text-sky-800 hover:underline"
           >
             Elena is responding... (tap to cancel)
           </button>
@@ -746,9 +759,9 @@ export function VoiceConciergeView() {
           streamReady={streamReady || heygen.ready}
           connectionLabel={
             heygen.ready
-              ? "HeyGen REPEAT · EN/ES · female voice"
+              ? "Elena live · EN/ES · female voice"
               : streamReady
-                ? "Audio stream ready · /api/tts nova"
+                ? "Audio stream ready · hospitality TTS"
                 : "Standby · No media session"
           }
           lines={lines}
@@ -768,22 +781,25 @@ export function VoiceConciergeView() {
           videoReady={heygen.ready}
         />
       </div>
+      </div>
 
+      <div id="guest-qr" className="scroll-mt-28">
       <GuestQrCard
         property={selectedProperty}
-        aiPhone={lineMeta.number}
+        aiPhone={lineNumber}
         emergencyNumber={emergencyNumber}
       />
+      </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         <div className="space-y-6">
-          <section className="p-6 rounded-2xl bg-slate-900/60 border border-slate-800/80 space-y-5">
+          <section className="space-y-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2.5">
-                <Sparkles className="h-5 w-5 text-emerald-400" />
-                <h3 className="font-semibold text-white">Human voice profiles</h3>
+                <Sparkles className="h-5 w-5 text-sky-700" />
+                <h3 className="font-semibold text-slate-900">Human voice profiles</h3>
               </div>
-              <span className="text-[11px] font-medium text-slate-400 bg-slate-950 border border-slate-800 px-2 py-1 rounded-full">
+              <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-medium text-slate-600">
                 {engineLabel}
               </span>
             </div>
@@ -796,27 +812,27 @@ export function VoiceConciergeView() {
                     key={item.id}
                     className={`rounded-xl border px-4 py-3 transition-all ${
                       active
-                        ? "bg-emerald-500/15 border-emerald-500/40"
-                        : "bg-slate-950/50 border-slate-800"
+                        ? "border-sky-300 bg-sky-50"
+                        : "border-slate-200 bg-slate-50"
                     }`}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <button
                         type="button"
                         onClick={() => setVoiceId(item.id)}
-                        className="text-left flex-1"
+                        className="flex-1 text-left"
                       >
-                        <div className="text-sm font-semibold text-white">
+                        <div className="text-sm font-semibold text-slate-900">
                           {item.name}{" "}
-                          <span className="text-slate-400 font-medium">— {item.title}</span>
+                          <span className="font-medium text-slate-600">— {item.title}</span>
                         </div>
-                        <div className="text-[11px] text-slate-500 mt-1">{item.hint}</div>
+                        <div className="mt-1 text-[11px] text-slate-500">{item.hint}</div>
                       </button>
                       <button
                         type="button"
                         onClick={() => void playPreview(item)}
                         disabled={previewing === item.id}
-                        className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-[11px] font-semibold text-slate-200 hover:bg-slate-800 disabled:opacity-50"
+                        className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-800 hover:bg-slate-100 disabled:opacity-50"
                       >
                         <Play className="h-3 w-3" />
                         {previewing === item.id ? "Playing…" : "Preview"}
@@ -828,7 +844,7 @@ export function VoiceConciergeView() {
             </div>
 
             <div>
-              <label className="text-xs font-medium text-slate-400 block mb-1.5">Language</label>
+              <label className="mb-1.5 block text-xs font-medium text-slate-600">Language</label>
               <select
                 value={language}
                 onChange={(event) => setLanguage(event.target.value as LanguageMode)}
@@ -844,8 +860,8 @@ export function VoiceConciergeView() {
               <SliderField
                 label="Speaking Speed"
                 value={speed}
-                min={0.75}
-                max={0.95}
+                min={0.85}
+                max={1.08}
                 step={0.01}
                 display={`${speed.toFixed(2)}×`}
                 onChange={applySpeed}
@@ -861,28 +877,28 @@ export function VoiceConciergeView() {
               />
             </div>
 
-            <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-4 space-y-3">
+            <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <KeyRound className="h-4 w-4 text-amber-300" />
-                  <p className="text-sm font-semibold text-white">Studio TTS</p>
+                  <KeyRound className="h-4 w-4 text-amber-600" />
+                  <p className="text-sm font-semibold text-slate-900">Studio TTS</p>
                 </div>
                 <button
                   type="button"
                   onClick={() => setShowKeys((value) => !value)}
-                  className="text-slate-400 hover:text-white"
+                  className="text-slate-500 hover:text-slate-900"
                   aria-label={showKeys ? "Hide API keys" : "Show API keys"}
                 >
                   {showKeys ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
               </div>
-              <p className="text-[11px] text-slate-500 leading-relaxed">
-                Audio is always generated as MP3 by /api/tts (OpenAI tts-1-hd or ElevenLabs). Keys in
-                .env.local or pasted here.
+              <p className="text-[11px] leading-relaxed text-slate-600">
+                Audio is generated as MP3 by /api/tts (OpenAI gpt-4o-mini-tts with a hospitality
+                speaking style, falling back to tts-1-hd). Keys in .env.local or pasted here.
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[11px] font-medium text-slate-400 block mb-1.5">
+                  <label className="mb-1.5 block text-[11px] font-medium text-slate-600">
                     ElevenLabs API Key
                   </label>
                   <input
@@ -898,7 +914,7 @@ export function VoiceConciergeView() {
                   />
                 </div>
                 <div>
-                  <label className="text-[11px] font-medium text-slate-400 block mb-1.5">
+                  <label className="mb-1.5 block text-[11px] font-medium text-slate-600">
                     OpenAI TTS API Key
                   </label>
                   <input
@@ -914,7 +930,7 @@ export function VoiceConciergeView() {
                   />
                 </div>
               </div>
-              <p className="text-[11px] text-emerald-400/80">
+              <p className="text-[11px] text-sky-800">
                 {studioReady
                   ? "Studio audio enabled. Previews and test calls use /api/tts MP3."
                   : "Uses ELEVENLABS_API_KEY or OPENAI_API_KEY from the server if no key is pasted here."}
@@ -924,36 +940,42 @@ export function VoiceConciergeView() {
         </div>
 
         <div className="space-y-6">
-          <section className="p-6 rounded-2xl bg-slate-900/60 border border-slate-800/80 space-y-5">
+          <section className="space-y-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2.5">
-                <Phone className="h-5 w-5 text-sky-400" />
-                <h3 className="font-semibold text-white">Phone routing</h3>
+                <Phone className="h-5 w-5 text-sky-700" />
+                <h3 className="font-semibold text-slate-900">Phone routing</h3>
               </div>
-              <span className="text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2.5 py-1 rounded-full font-medium">
+              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-800">
                 Twilio SIP Connected
               </span>
             </div>
 
             <div>
-              <p className="text-xs font-medium text-slate-400 mb-2">Florida virtual number</p>
+              <p className="mb-2 text-xs font-medium text-slate-600">Inbound DID by listing</p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {(Object.keys(FLORIDA_LINES) as FloridaLine[]).map((key) => {
-                  const item = FLORIDA_LINES[key];
-                  const active = floridaLine === key;
+                {properties.map((item) => {
+                  const active = item.id === selectedProperty?.id;
                   return (
                     <button
-                      key={key}
+                      key={item.id}
                       type="button"
-                      onClick={() => setFloridaLine(key)}
-                      className={`text-left rounded-xl border px-4 py-3 transition-all ${
+                      onClick={() => setPropertyId(item.id)}
+                      className={`rounded-xl border px-4 py-3 text-left transition-all ${
                         active
-                          ? "bg-sky-500/10 border-sky-500/40"
-                          : "bg-slate-950/50 border-slate-800 hover:border-slate-700"
+                          ? "border-sky-400 bg-sky-50"
+                          : "border-slate-200 bg-slate-50 hover:border-slate-300"
                       }`}
                     >
-                      <div className="text-sm font-mono font-bold text-white">{item.number}</div>
-                      <div className="text-[11px] text-slate-500 mt-1">{item.area}</div>
+                      <div className="font-mono text-sm font-bold text-slate-900">
+                        {item.assignedPhoneNumber || "No DID yet"}
+                      </div>
+                      <div className="mt-1 text-[11px] text-slate-600">
+                        {item.assignedAvatarName} · {item.name} · {item.timezone}
+                      </div>
+                      <div className="mt-0.5 text-[10px] text-slate-500">
+                        Local {localTimeLabel(item.timezone)}
+                      </div>
                     </button>
                   );
                 })}
@@ -961,7 +983,7 @@ export function VoiceConciergeView() {
             </div>
 
             <div>
-              <label className="text-xs font-medium text-slate-400 block mb-1.5">
+              <label className="mb-1.5 block text-xs font-medium text-slate-600">
                 Host emergency forwarding
               </label>
               <input
@@ -970,21 +992,21 @@ export function VoiceConciergeView() {
                 className={`${inputClass} font-mono`}
                 aria-label="Emergency forwarding number"
               />
-              <p className="mt-2 text-xs text-slate-500 leading-relaxed">
+              <p className="mt-2 text-xs leading-relaxed text-slate-600">
                 Instant transfer on severe incidents: water leaks, broken locks, lockouts.
               </p>
             </div>
 
             <div>
-              <p className="text-xs font-medium text-slate-400 mb-2">AI coverage hours</p>
+              <p className="mb-2 text-xs font-medium text-slate-600">AI coverage hours</p>
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
                   onClick={() => setHours("always")}
                   className={`rounded-xl border px-3 py-2.5 text-sm font-medium transition-all ${
                     hours === "always"
-                      ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-300"
-                      : "bg-slate-950/50 border-slate-800 text-slate-300 hover:border-slate-700"
+                      ? "border-sky-400 bg-sky-50 text-sky-900"
+                      : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
                   }`}
                 >
                   24/7
@@ -994,8 +1016,8 @@ export function VoiceConciergeView() {
                   onClick={() => setHours("night")}
                   className={`rounded-xl border px-3 py-2.5 text-sm font-medium transition-all ${
                     hours === "night"
-                      ? "bg-violet-500/15 border-violet-500/40 text-violet-300"
-                      : "bg-slate-950/50 border-slate-800 text-slate-300 hover:border-slate-700"
+                      ? "border-violet-300 bg-violet-50 text-violet-900"
+                      : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
                   }`}
                 >
                   Overnight (10 PM–8 AM)
@@ -1029,8 +1051,8 @@ function SliderField({
   return (
     <div>
       <div className="flex items-center justify-between mb-1.5">
-        <label className="text-xs font-medium text-slate-400">{label}</label>
-        <span className="text-[11px] font-mono text-slate-500">{display}</span>
+        <label className="text-xs font-medium text-slate-600">{label}</label>
+        <span className="font-mono text-[11px] text-slate-500">{display}</span>
       </div>
       <input
         type="range"
@@ -1039,7 +1061,7 @@ function SliderField({
         step={step}
         value={value}
         onChange={(event) => onChange(Number(event.target.value))}
-        className="w-full accent-emerald-400"
+        className="w-full accent-sky-600"
       />
     </div>
   );
@@ -1085,6 +1107,6 @@ function buildGreeting({
   }
 
   return lang === "es"
-    ? `Hola. Qué gusto escucharte. Soy Elena, tu anfitriona de ${property.name}, en ${property.address}, ${property.city}. Llamas al ${lineNumber}.${night} Cuéntame. ¿En qué te ayudo hoy?`
-    : `Hi there. So nice to hear from you. I'm Elena, your host at ${property.name}, ${property.address}, ${property.city}. You're on ${lineNumber}.${night} Tell me. What can I do for you?`;
+    ? `Hola. Qué gusto escucharte. Soy ${profile.name}, tu anfitriona de ${property.name}, en ${property.address}, ${property.city}. Llamas al ${lineNumber}.${night} Cuéntame. ¿En qué te ayudo hoy?`
+    : `Hi there. So nice to hear from you. I'm ${profile.name}, your host at ${property.name}, ${property.address}, ${property.city}. You're on ${lineNumber}.${night} Tell me. What can I do for you?`;
 }

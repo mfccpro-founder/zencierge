@@ -28,7 +28,10 @@ export async function POST(req: NextRequest) {
     const openai = createOpenAI();
     if (!openai) {
       console.error("[transcribe] missing OPENAI_API_KEY");
-      return NextResponse.json({ error: "Falta OPENAI_API_KEY", code: "NO_API_KEY" }, { status: 500 });
+      return NextResponse.json(
+        { error: "Voice transcription is not configured.", code: "NO_API_KEY" },
+        { status: 500 },
+      );
     }
 
     const form = await req.formData();
@@ -65,7 +68,7 @@ export async function POST(req: NextRequest) {
     if (err?.status === 401 || err?.code === "invalid_api_key") {
       return NextResponse.json(
         {
-          error: "OpenAI rejected the API key (401 invalid_api_key). Update OPENAI_API_KEY in .env.local and restart the dev server.",
+          error: "Voice transcription is not available right now. Type a question instead.",
           code: "INVALID_OPENAI_KEY",
           status: 401,
         },

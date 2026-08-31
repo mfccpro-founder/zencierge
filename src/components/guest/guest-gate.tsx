@@ -1,11 +1,27 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
-import { CheckCircle2, Loader2, ShieldAlert, ShieldCheck, ShieldQuestion } from "lucide-react";
+import { Loader2, ShieldAlert, ShieldCheck, ShieldQuestion } from "lucide-react";
+import { guestPressClass } from "@/lib/guest-press";
+import { unlockSpeechAudio } from "@/lib/human-voice";
+import { publicApiUrl } from "@/lib/public-app-url";
 
 type RiskLevel = "clear" | "watch" | "flagged" | "unknown";
 type RiskPayload = { level?: RiskLevel; notes?: string | null };
 type Registered = { fullName: string; risk: RiskLevel; riskNotes: string | null };
+
+function guestFacingError(message: string) {
+  const lower = message.toLowerCase();
+  if (
+    lower.includes("invalid api key") ||
+    lower.includes("invalid jwt") ||
+    lower.includes("apikey") ||
+    lower.includes("unauthorized")
+  ) {
+    return "Check-in could not reach the host database. Please try again, or ask the host if the issue continues.";
+  }
+  return message;
+}
 
 const RISK_BADGE: Record<RiskLevel, { label: string; className: string; icon: typeof ShieldCheck }> = {
   clear: { label: "Safety check passed", className: "border-emerald-500/40 bg-emerald-500/15 text-emerald-300", icon: ShieldCheck },
@@ -44,21 +60,30 @@ export function GuestGate({
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
+    unlockSpeechAudio();
     setError(null);
     setSubmitting(true);
     try {
-      const res = await fetch("/api/guest/register", {
+      const res = await fetch(publicApiUrl("/api/guest/register"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ propertyId, fullName, phone, email }),
       });
       const payload = (await res.json()) as { error?: string; risk?: RiskPayload };
-      if (!res.ok) throw new Error(payload.error ?? "Check-in failed. Please try again.");
-      const next = { fullName: fullName.trim(), risk: payload.risk?.level ?? "unknown", riskNotes: payload.risk?.notes ?? null };
+      if (!res.ok) {
+        throw new Error(guestFacingError(payload.error ?? "Check-in failed. Please try again."));
+      }
+      const next = {
+        fullName: fullName.trim(),
+        risk: payload.risk?.level ?? "unknown",
+        riskNotes: payload.risk?.notes ?? null,
+      };
       window.localStorage.setItem(storageKey, JSON.stringify(next));
       setRegistered(next);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Check-in failed.");
+      setError(
+        guestFacingError(cause instanceof Error ? cause.message : "Check-in failed."),
+      );
     } finally {
       setSubmitting(false);
     }
@@ -70,17 +95,17 @@ export function GuestGate({
     const badge = RISK_BADGE[registered.risk];
     const Icon = badge.icon;
     return (
-      <>
-        <div className={`mx-auto max-w-md mb-4 flex items-start gap-2 rounded-2xl border px-4 py-3 text-xs ${badge.className}`}>
+      <div className="w-full min-w-0 overflow-x-hidden">
+        <div className={`mx-auto mb-4 flex w-full min-w-0 max-w-md items-start gap-2 rounded-2xl border px-4 py-3 text-xs ${badge.className}`}>
           <Icon className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>
+          <span className="min-w-0 break-words">
             <span className="block font-semibold">Welcome back, {registered.fullName.split(" ")[0]} ✅</span>
             {badge.label}
             {registered.riskNotes ? <span className="mt-0.5 block opacity-80">{registered.riskNotes}</span> : null}
           </span>
         </div>
         {children}
-      </>
+      </div>
     );
   }
 
@@ -124,10 +149,10 @@ function GateForm({
   onEmail: (value: string) => void;
 }) {
   return (
-    <div className="min-h-dvh bg-[#07080c] text-slate-100 relative z-10 touch-manipulation" suppressHydrationWarning>
-      <div className="mx-auto max-w-md px-5 pt-10 pb-20">
-        <p className="text-[10px] uppercase tracking-[0.28em] text-emerald-400/80 font-semibold">Zencierge · Guest Check-in</p>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-white">Welcome to {propertyName}</h1>
+    <div className="relative z-10 min-h-dvh w-full min-w-0 overflow-x-hidden bg-[#07080c] text-slate-100 touch-manipulation" suppressHydrationWarning>
+      <div className="mx-auto w-full min-w-0 max-w-md px-4 pb-24 pt-8 sm:px-5 sm:pt-10">
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-emerald-400/80">Zencierge · Guest Check-in</p>
+        <h1 className="mt-2 break-words text-2xl font-semibold tracking-tight text-white sm:text-3xl">Welcome to {propertyName}</h1>
         <p className="mt-3 text-sm leading-relaxed text-slate-400">
           Verify your check-in to unlock the Wi-Fi credentials, door access code, and Elena AI — your 24/7 bilingual concierge.
         </p>
@@ -146,7 +171,8 @@ function GateForm({
               placeholder="Jane Doe"
               value={fullName}
               onChange={(event) => onFullName(event.target.value)}
-              className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-900/80 px-4 py-3 text-base text-white placeholder:text-slate-600 focus:border-emerald-500/60 focus:outline-none"
+              onPointerDown={() => unlockSpeechAudio()}
+              className="mt-1 w-full min-w-0 rounded-xl border border-slate-700 bg-slate-900/80 px-4 py-3 text-base text-white placeholder:text-slate-600 focus:border-emerald-500/60 focus:outline-none"
             />
           </div>
           <div>
@@ -161,7 +187,8 @@ function GateForm({
               placeholder="+1 (305) 555-0142"
               value={phone}
               onChange={(event) => onPhone(event.target.value)}
-              className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-900/80 px-4 py-3 text-base text-white placeholder:text-slate-600 focus:border-emerald-500/60 focus:outline-none"
+              onPointerDown={() => unlockSpeechAudio()}
+              className="mt-1 w-full min-w-0 rounded-xl border border-slate-700 bg-slate-900/80 px-4 py-3 text-base text-white placeholder:text-slate-600 focus:border-emerald-500/60 focus:outline-none"
             />
           </div>
           <div>
@@ -176,7 +203,8 @@ function GateForm({
               placeholder="jane@example.com"
               value={email}
               onChange={(event) => onEmail(event.target.value)}
-              className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-900/80 px-4 py-3 text-base text-white placeholder:text-slate-600 focus:border-emerald-500/60 focus:outline-none"
+              onPointerDown={() => unlockSpeechAudio()}
+              className="mt-1 w-full min-w-0 rounded-xl border border-slate-700 bg-slate-900/80 px-4 py-3 text-base text-white placeholder:text-slate-600 focus:border-emerald-500/60 focus:outline-none"
             />
           </div>
 
@@ -187,7 +215,8 @@ function GateForm({
           <button
             type="submit"
             disabled={submitting}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3.5 text-base font-bold text-slate-950 transition hover:bg-emerald-400 disabled:opacity-60"
+            onPointerDown={() => unlockSpeechAudio()}
+            className={`${guestPressClass} flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3.5 text-base font-bold text-slate-950 hover:bg-emerald-400 disabled:opacity-60`}
           >
             {submitting ? <Loader2 className="h-5 w-5 animate-spin" /> : <ShieldCheck className="h-5 w-5" />}
             {submitting ? "Verifying…" : "Check in & Unlock Portal"}

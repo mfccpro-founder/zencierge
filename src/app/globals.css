@@ -204,3 +204,48 @@ body {
 .avatar-speak-pulse {
   animation: avatar-speak-pulse 1.1s ease-in-out infinite;
 }
+
+.host-sidebar-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(100 116 139) rgb(15 23 42);
+}
+
+.host-sidebar-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.host-sidebar-scroll::-webkit-scrollbar-track {
+  background: rgb(15 23 42);
+  border-radius: 999px;
+}
+
+.host-sidebar-scroll::-webkit-scrollbar-thumb {
+  background: rgb(100 116 139);
+  border-radius: 999px;
+  border: 2px solid rgb(15 23 42);
+}
+
+.host-sidebar-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgb(148 163 184);
+}
+
+/* Sidebar links: never use a white pill (default or selected). */
+a.host-nav-item {
+  background-color: transparent !important;
+  color: rgb(226 232 240) !important;
+  box-shadow: none !important;
+}
+a.host-nav-item:hover,
+a.host-nav-item:focus,
+a.host-nav-item:focus-visible,
+a.host-nav-item:active {
+  background-color: rgb(255 255 255 / 0.1) !important;
+  color: #fff !important;
+  outline: none;
+  box-shadow: none !important;
+}
+a.host-nav-item[data-current="true"] {
+  background-color: rgb(14 165 233 / 0.22) !important;
+  color: #fff !important;
+  box-shadow: none !important;
+}

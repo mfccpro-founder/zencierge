@@ -83,6 +83,7 @@ export function answerGuestQuestion({
   const property = matchProperty(question, listings, fallback);
   const night = nightNote(hours, lang);
   const name = property.name;
+  const agent = property.assignedAvatarName?.trim() || "Elena";
   const intent = detectGuestIntent(question);
 
   if (intent === "emergency") {
@@ -120,8 +121,8 @@ export function answerGuestQuestion({
   }
   if (isFollowUp) {
     return lang === "es"
-      ? `¿Sobre qué seguimos? Dime "restaurante", "playa", "casual", "italiano", "mariscos" o "desayuno", o pregunta por el Wi-Fi, el estacionamiento o el código de la puerta. Dime cuál de ellas y te ayudo enseguida.${night}`
-      : `What would you like next? Say "restaurant", "beach", "casual", "italian", "seafood", or "breakfast", or ask about Wi-Fi, parking, or the door code, and I'll help right away.${night}`;
+      ? `Claro. ¿Qué detalle quieres que confirme?${night}`
+      : `Of course. What detail would you like me to confirm?${night}`;
   }
 
   if (intent === "restaurant") {
@@ -134,10 +135,15 @@ export function answerGuestQuestion({
   }
 
   if (intent === "greeting") {
+    const ongoingConversation = history.some((turn) => turn.content.trim().length > 0);
     if (lang === "es") {
-      return `Hola. Soy Elena, tu conserje en ${name}, ${property.address}, ${property.city}. Dime qué necesitas.${night}`;
+      return ongoingConversation
+        ? `Hola de nuevo. ¿Cómo te ayudo?${night}`
+        : `Hola. Soy ${agent}, tu conserje en ${name}. ¿Cómo te ayudo?${night}`;
     }
-    return `Hi. I'm Elena, your concierge at ${name}, ${property.address}, ${property.city}. What do you need?${night}`;
+    return ongoingConversation
+      ? `Hi again. How can I help?${night}`
+      : `Hi. I'm ${agent}, your concierge at ${name}. How can I help?${night}`;
   }
 
   if (intent === "wifi") {
@@ -212,9 +218,9 @@ export function answerGuestQuestion({
   }
 
   if (lang === "es") {
-    return `No tengo ese detalle exacto en el handbook de ${name}. Estás en ${property.address}, ${property.city}. Dime qué buscas — por ejemplo una farmacia, un súper o un restaurante — y te oriento desde ahí.${night}`;
+    return `No tengo ese detalle exacto para ${name}. Dime qué necesitas y lo confirmo con el anfitrión.${night}`;
   }
-  return `I don't have that exact note in the ${name} handbook. You're at ${property.address}, ${property.city}. Tell me what you need — a pharmacy, grocery, or restaurant — and I'll point you from there.${night}`;
+  return `I don't have that exact detail for ${name}. Tell me what you need and I'll confirm it with the host.${night}`;
 }
 
 function detectRestaurantCue(question: string): RestaurantCue | undefined {
