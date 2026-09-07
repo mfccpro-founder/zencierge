@@ -1,6 +1,12 @@
 import { createSupabaseAdminClient } from "@/lib/supabase-admin";
 import { isComplimentaryWindowOpen } from "@/lib/complimentary-access-core";
-import { isTrialWindowOpen, parsePlanId, ZENCIERGE_PLANS, type ZenciergePlanId } from "@/lib/zencierge-plans";
+import {
+  isTrialWindowOpen,
+  parsePlanId,
+  ZENCIERGE_PLAN_IDS,
+  ZENCIERGE_PLANS,
+  type ZenciergePlanId,
+} from "@/lib/zencierge-plans";
 
 export type PaymentState = "al_dia" | "moroso" | "cancelado" | "sin_suscripcion";
 
@@ -47,7 +53,57 @@ export type AdminBillingSnapshot = {
   };
 };
 
+export type AdminBillingPlanSummary = {
+  planId: ZenciergePlanId;
+  planName: string;
+  catalogMonthlyUsd: number;
+  accountCount: number;
+  payingCount: number;
+  mrrUsd: number;
+  trialCount: number;
+  complimentaryCount: number;
+  pastDueCount: number;
+};
+
 const MS_DAY = 86_400_000;
+
+export function isPayingBillingSubscriber(row: AdminSubscriberRow) {
+  return (
+    row.paymentState === "al_dia" &&
+    !row.complimentaryActive &&
+    !row.isLifetimeFree &&
+    !row.trialActive
+  );
+}
+
+/** Read-only plan rollup from the same live rows used by Founder Customers. */
+export function summarizeAdminBillingByPlan(
+  rows: readonly AdminSubscriberRow[],
+): AdminBillingPlanSummary[] {
+  return ZENCIERGE_PLAN_IDS.map((planId) => {
+    const plan = ZENCIERGE_PLANS[planId];
+    const planRows = rows.filter((row) => row.planId === planId);
+    const payingRows = planRows.filter(isPayingBillingSubscriber);
+    return {
+      planId,
+      planName: plan.name,
+      catalogMonthlyUsd: plan.monthlyUsd,
+      accountCount: planRows.length,
+      payingCount: payingRows.length,
+      mrrUsd: payingRows.reduce((sum, row) => sum + row.monthlyUsd, 0),
+      trialCount: planRows.filter((row) => row.trialActive).length,
+      complimentaryCount: planRows.filter((row) => row.complimentaryActive).length,
+      pastDueCount: planRows.filter((row) => row.paymentState === "moroso").length,
+    };
+  });
+}
+
+export function formatBillingUsd(amount: number) {
+  return `$${amount.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
 
 function formatDate(iso: string | null | undefined) {
   if (!iso) return "—";
@@ -273,13 +329,7 @@ export async function getAdminBillingSnapshot(): Promise<AdminBillingSnapshot> {
   rows.sort((a, b) => stateOrder[a.paymentState] - stateOrder[b.paymentState] || a.email.localeCompare(b.email));
 
   // Paying MRR excludes complimentary, lifetime-free, and active public trials.
-  const payingRows = rows.filter(
-    (row) =>
-      row.paymentState === "al_dia" &&
-      !row.complimentaryActive &&
-      !row.isLifetimeFree &&
-      !row.trialActive,
-  );
+  const payingRows = rows.filter(isPayingBillingSubscriber);
   const failed30d = rows.reduce(
     (count, row) =>
       count + row.failedPayments.filter((pay) => now.getTime() - new Date(pay.at).getTime() < 30 * MS_DAY).length,

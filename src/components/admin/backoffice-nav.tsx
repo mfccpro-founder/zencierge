@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 const LINKS = [
   { href: "/backoffice", label: "Overview", match: "exact" as const, status: "ready" as const },
   { href: "/backoffice/customers", label: "Customers", match: "prefix" as const, status: "ready" as const },
-  { href: "/backoffice/billing", label: "Billing", match: "prefix" as const, status: "soon" as const },
+  { href: "/backoffice/billing", label: "Billing", match: "prefix" as const, status: "ready" as const },
   { href: "/backoffice/isabela-usage", label: "Isabela Usage", match: "prefix" as const, status: "ready" as const },
   { href: "/backoffice/income", label: "Income", match: "prefix" as const, status: "ready" as const },
   {

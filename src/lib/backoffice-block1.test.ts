@@ -105,14 +105,14 @@ function runBackOfficeBlock1Tests() {
   assert(!isabelaPage.includes("BackOfficeComingNext"), "Isabela Usage is no longer Coming next");
   assert(!isabelaPage.includes("Pricing not configured yet"), "Phase 1 pricing stub removed");
 
-  for (const stub of ["billing"]) {
-    const page = readFileSync(
-      join(root, `src/app/(founder-admin)/backoffice/${stub}/page.tsx`),
-      "utf8",
-    );
-    assert(page.includes("BackOfficeComingNext") || page.includes("Coming next"), `${stub} is a safe Coming next page`);
-    assert(!/\$\d/.test(page) || page.includes("no fake") || page.includes("no demo") || page.includes("no placeholder"), `${stub} avoids fake financial figures`);
-  }
+  const billingPage = readFileSync(
+    join(root, "src/app/(founder-admin)/backoffice/billing/page.tsx"),
+    "utf8",
+  );
+  assert(billingPage.includes("getAdminBillingSnapshot"), "Billing uses live billing snapshot");
+  assert(billingPage.includes("BackOfficeBillingPanel"), "Billing mounts read-only detail panel");
+  assert(!billingPage.includes("BackOfficeComingNext"), "Billing is no longer Coming next");
+  assert(!billingPage.includes("admin-revenue-store"), "Billing does not use demo revenue store");
 
   const incomePage = readFileSync(
     join(root, "src/app/(founder-admin)/backoffice/income/page.tsx"),
