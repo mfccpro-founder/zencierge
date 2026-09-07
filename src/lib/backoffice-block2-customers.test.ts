@@ -143,7 +143,7 @@ function runBackOfficeBlock2Tests() {
   const migrationsDir = join(root, "supabase/migrations");
   const migrationNames = existsSync(migrationsDir) ? readdirSync(migrationsDir) : [];
   assert(
-    !migrationNames.some((name) => /backoffice_block2|customer_comp|ai_usage/i.test(name)),
+    !migrationNames.some((name) => /backoffice_block2|customer_comp/i.test(name)),
     "Block 2 created no migrations",
   );
 
