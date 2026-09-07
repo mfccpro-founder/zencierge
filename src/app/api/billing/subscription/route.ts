@@ -1,5 +1,6 @@
 import { requireHostUser } from "@/lib/supabase-route";
 import { fetchListings } from "@/lib/supabase-listings";
+import { hasLifetimeVipAccess } from "@/lib/lifetime-vip";
 import {
   isHostAccessGranted,
   isPaidSubscriptionStatus,
@@ -23,7 +24,7 @@ export async function GET() {
   const { data: sub, error: subError } = await auth.supabase
     .from("host_subscriptions")
     .select(
-      "plan_id, status, monthly_usd, last_payment_at, current_period_end, square_customer_id, square_subscription_id",
+      "plan_id, status, monthly_usd, last_payment_at, current_period_end, square_customer_id, square_subscription_id, complimentary_ends_at, complimentary_starts_at, is_lifetime_free",
     )
     .eq("user_id", auth.user.id)
     .maybeSingle();
@@ -35,15 +36,26 @@ export async function GET() {
   const plan = ZENCIERGE_PLANS[planId];
   const trialEndsAt = typeof meta?.trial_ends_at === "string" ? meta.trial_ends_at : null;
   const trialActive = isTrialWindowOpen(trialEndsAt);
+  const complimentaryEndsAt =
+    typeof sub?.complimentary_ends_at === "string" ? sub.complimentary_ends_at : null;
+  const compOpen =
+    typeof complimentaryEndsAt === "string" &&
+    Number.isFinite(Date.parse(complimentaryEndsAt)) &&
+    Date.parse(complimentaryEndsAt) > Date.now();
   const access = isHostAccessGranted({
     subscriptionStatus: (sub?.status as string | undefined) ?? (meta?.subscription_status as string | undefined),
     metadata: meta,
+    complimentaryEndsAt,
+    isLifetimeFree: sub?.is_lifetime_free === true,
+    lifetimeVip: hasLifetimeVipAccess(auth.user),
   });
   const status = isPaidSubscriptionStatus(sub?.status as string | undefined)
     ? "active"
-    : trialActive || (access && !isPaidSubscriptionStatus(sub?.status as string | undefined))
-      ? "trial"
-      : ((sub?.status as string | undefined) ?? "inactive");
+    : compOpen
+      ? "complimentary"
+      : trialActive || (access && !isPaidSubscriptionStatus(sub?.status as string | undefined))
+        ? "trial"
+        : ((sub?.status as string | undefined) ?? "inactive");
   const isActive = access;
   const canAddProperty = isActive && (!Number.isFinite(plan.maxProperties) || propertyCount < plan.maxProperties);
 
@@ -67,11 +79,14 @@ export async function GET() {
     canUseOvernightCoverage: planId !== "starter",
     canUseAgencyTools: planId === "agency",
     lastPaymentAt: sub?.last_payment_at ?? null,
-    currentPeriodEnd: trialEndsAt ?? sub?.current_period_end ?? null,
+    currentPeriodEnd: complimentaryEndsAt ?? trialEndsAt ?? sub?.current_period_end ?? null,
     squareCustomerId: sub?.square_customer_id ?? null,
     tableReady: !tableMissing,
     payments: payments ?? [],
     trialEndsAt,
     trialActive,
+    complimentaryEndsAt,
+    complimentaryStartsAt: sub?.complimentary_starts_at ?? null,
+    complimentaryActive: compOpen,
   });
 }

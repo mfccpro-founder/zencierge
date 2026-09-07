@@ -30,6 +30,7 @@ import { FinancesView } from "@/components/dashboard/finances-view";
 import { SettingsView } from "@/components/dashboard/settings-view";
 import { AiAvatarGuide, type AiAvatarGuideHandle } from "@/components/dashboard/ai-avatar-guide";
 import { HostHeroBanner } from "@/components/dashboard/host-hero-banner";
+import { SmartVoiceBriefingCard } from "@/components/dashboard/smart-voice-briefing-card";
 import { dashboardTabFromPath } from "@/lib/dashboard-nav";
 import type { NavId } from "@/lib/dashboard-data";
 
@@ -122,6 +123,7 @@ function OverviewPanel({
 
   return (
     <div className="space-y-8">
+      <SmartVoiceBriefingCard />
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between">

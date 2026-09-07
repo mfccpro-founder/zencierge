@@ -1,6 +1,13 @@
 import type { Property } from "@/lib/dashboard-data";
 import { buildAvatarSystemPrompt, type AvatarChatTurn } from "@/lib/avatar-prompt";
 import { detectUtteranceLang, type LanguageMode, type ReplyLang } from "@/lib/human-voice";
+import {
+  detectGuestIntent,
+  extractGuestUtterance,
+  isAccessSecretIntent,
+  isNearbyPlaceIntent,
+} from "@/lib/receptionist-intent";
+import { answerGuestQuestion } from "@/lib/receptionist-replies";
 import { loadInboundProperty } from "@/lib/supabase-listings";
 
 type AvatarBody = {
@@ -39,25 +46,41 @@ export async function POST(request: Request) {
   }
 
   const emergencyNumber = body.emergencyNumber?.trim() || "+1 (954) 275-3544";
+  const guestText = extractGuestUtterance(question);
+  const intent = detectGuestIntent(guestText);
+
+  if (isNearbyPlaceIntent(intent) || isAccessSecretIntent(intent)) {
+    const reply = answerGuestQuestion({
+      question: guestText,
+      properties: [property],
+      fallback: property,
+      language: body.lastUserLang ?? body.language ?? "auto",
+      hours: body.hours,
+      emergencyNumber,
+    });
+    return Response.json({ reply, engine: "local-policy" });
+  }
+
   const system = buildAvatarSystemPrompt({
     property,
     language: body.language ?? "auto",
     hours: body.hours,
     emergencyNumber,
+    intent,
+    guestText,
   });
 
   // The client may prefix the question with mirror instructions — extract the
   // raw guest text so the LLM receives a clean message plus an explicit
   // language flag (never a rigid language template).
-  const guestText = extractGuestText(question);
-  const forcedLang = body.language === "es" || body.language === "en" ? body.language : null;
-  // Priority: forced mode > client's per-utterance detection > server detection.
-  // This is the language of the LATEST message only, never the session's.
-  const guestLang = forcedLang ?? body.lastUserLang ?? detectUtteranceLang(guestText);
+  const guestLang =
+    body.language === "es" || body.language === "en"
+      ? body.language
+      : detectUtteranceLang(guestText);
   const langOverride =
     guestLang === "es"
-      ? "[SYSTEM OVERRIDE] Detect the language of the user's incoming message. This message is SPANISH. You MUST respond entirely in fluent Spanish. Never respond in English to a Spanish question."
-      : "[SYSTEM OVERRIDE] The user's current message is ENGLISH. Respond entirely in English.";
+      ? "[SYSTEM OVERRIDE] Automatically detect the user's language. This message is SPANISH. You MUST reply entirely in fluent Spanish. Never reply in English to Spanish."
+      : "[SYSTEM OVERRIDE] Automatically detect the user's language. This message is ENGLISH. You MUST reply entirely in English. Never reply in Spanish to English.";
   const userContent = `${langOverride}\n\nGuest: ${guestText}`;
 
   const openaiKey = body.openaiKey?.trim() || process.env.OPENAI_API_KEY || process.env.OPENAI_TTS_API_KEY || "";
@@ -81,16 +104,6 @@ export async function POST(request: Request) {
     console.error("[avatar] LLM failed", cause);
     return Response.json({ error: "Avatar LLM failed" }, { status: 502 });
   }
-}
-
-/** Strips any client-side mirror instruction so only the guest text reaches the LLM. */
-function extractGuestText(question: string) {
-  const marker = "\n\nGuest: ";
-  const idx = question.lastIndexOf(marker);
-  if (idx !== -1) return question.slice(idx + marker.length).trim();
-  const guestIdx = question.indexOf("Guest: ");
-  if (guestIdx !== -1) return question.slice(guestIdx + 7).trim();
-  return question.trim();
 }
 
 function chatTurns(history: AvatarChatTurn[]) {

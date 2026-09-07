@@ -1,96 +1,127 @@
 import { NextRequest, NextResponse } from "next/server";
-import OpenAI from "openai";
+import { recordAiUsageEvent, safeRecordAiUsageEvent } from "@/lib/ai-usage";
+import { requireHostAuthContext } from "@/lib/supabase-route";
+import {
+  AdvancedAudioTtsError,
+  OPENAI_STREAM_TTS_MODEL,
+  hostTtsInputText,
+  streamElenaSpeech,
+} from "@/lib/tts-synthesize";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const VOICES = new Set(["nova", "shimmer", "coral", "sage", "marin", "ballad"]);
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Warm concierge delivery for gpt-4o-mini-tts (ignored by tts-1 / tts-1-hd). */
-const HOSPITALITY_VOICE_INSTRUCTIONS =
-  "Speak as Elena, a warm boutique-stay concierge. Sound conversational and human, with a slight smile and natural ups and downs in pitch. Unhurried but not slow. Friendly hospitality energy — never robotic, monotone, clipped, or overly formal. Pause briefly at commas. If the text is Spanish, speak clear, friendly Latin American Spanish in the same warm tone.";
-
-function createOpenAI(): OpenAI | null {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) return null;
-  return new OpenAI({ apiKey });
+async function optionalHostUserId(): Promise<string | null> {
+  try {
+    const auth = await requireHostAuthContext();
+    const id = auth.user?.id?.trim() ?? "";
+    return UUID_RE.test(id) ? id : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function GET() {
-  return NextResponse.json({ status: "ok", message: "TTS API online" });
+  return NextResponse.json({
+    status: "ok",
+    message: "TTS API online",
+    defaultEngine: "openai-tts-stream",
+    defaultVoice: "coral",
+    model: OPENAI_STREAM_TTS_MODEL,
+    format: "pcm-24kHz-s16le-mono",
+    note: "POST streams PCM as it is generated. The browser plays chunks immediately.",
+  });
 }
 
 export async function POST(req: NextRequest) {
-  try {
-    const openai = createOpenAI();
-    if (!openai) {
-      return NextResponse.json(
-        { error: "OPENAI_API_KEY is missing in environment variables" },
-        { status: 500 },
-      );
-    }
+  let inputCharacters = 0;
+  const hostId = await optionalHostUserId();
 
+  try {
     const body = (await req.json()) as {
       text?: string;
       voice?: string;
       voiceProfile?: string;
       speed?: number;
       language?: string;
+      provider?: "auto" | "elevenlabs" | "openai" | "openai-audio";
+      apiKey?: string;
     };
-    const text = (body.text || "Hi, I'm Elena. How can I help you today?").slice(0, 4096);
+
+    const rawText = body.text || "Hi, I'm Elena. How can I help you today?";
+    const text = hostTtsInputText(rawText);
+    inputCharacters = text.length;
     const requested =
       body.voice ?? (body.voiceProfile === "sarah" || body.voiceProfile === "austin" ? "shimmer" : "coral");
-    const voice = VOICES.has(requested) ? requested : "coral";
-    const speed = Number.isFinite(body.speed)
-      ? Math.min(Math.max(body.speed as number, 0.75), 1.15)
-      : 0.96;
-    const language = body.language === "es" ? "es" : "en";
 
-    const mp3 = await synthesizeSpeech(openai, { text, voice, speed });
-    const buffer = Buffer.from(await mp3.arrayBuffer());
+    const result = await streamElenaSpeech({
+      text,
+      voice: requested,
+      language: body.language === "es" || body.language === "en" ? body.language : "auto",
+      speed: body.speed,
+      openaiApiKey: body.provider === "elevenlabs" ? undefined : body.apiKey?.trim(),
+    });
 
-    return new NextResponse(buffer, {
+    await safeRecordAiUsageEvent(recordAiUsageEvent, {
+      host_id: hostId,
+      property_id: null,
+      reservation_id: null,
+      source: "host_tts",
+      provider: "openai",
+      model: result.model,
+      operation: "tts",
+      status: "success",
+      input_characters: inputCharacters,
+      calculated_cost_cents: null,
+    });
+
+    return new NextResponse(result.stream, {
       headers: {
-        "Content-Type": "audio/mpeg",
-        "Content-Length": String(buffer.length),
-        "Cache-Control": "no-store",
-        "X-Reply-Language": language,
-        "X-Tts-Voice": voice,
+        "Content-Type": result.contentType,
+        "Cache-Control": "no-store, no-transform",
+        "X-Accel-Buffering": "no",
+        "X-Reply-Language": result.language,
+        "X-Tts-Voice": result.voice,
+        "X-Tts-Engine": result.engine,
+        "X-Tts-Model": result.model,
+        "X-Tts-Stream": "1",
+        "X-Tts-Sample-Rate": String(result.sampleRate),
       },
     });
   } catch (error: unknown) {
+    const advanced = error instanceof AdvancedAudioTtsError ? error : null;
     const message = error instanceof Error ? error.message : "Could not generate speech audio";
-    const isKeyIssue = /api key|credentials|unauthorized|401/i.test(message);
+    const isKeyIssue = /api key|credentials|unauthorized|401|missing-key|OPENAI_API_KEY/i.test(message);
     console.error(
-      `[tts] OpenAI TTS failed (${isKeyIssue ? "missing or invalid OPENAI_API_KEY" : "network or OpenAI API error"}):`,
+      `[tts] Streaming TTS failed (${isKeyIssue ? "missing or invalid API key" : "provider error"}):`,
       message,
-      error,
     );
-    return NextResponse.json({ error: message }, { status: 500 });
-  }
-}
 
-async function synthesizeSpeech(
-  openai: OpenAI,
-  input: { text: string; voice: string; speed: number },
-) {
-  try {
-    return await openai.audio.speech.create({
-      model: "gpt-4o-mini-tts",
-      voice: input.voice,
-      input: input.text,
-      speed: input.speed,
-      instructions: HOSPITALITY_VOICE_INSTRUCTIONS,
-      response_format: "mp3",
+    await safeRecordAiUsageEvent(recordAiUsageEvent, {
+      host_id: hostId,
+      property_id: null,
+      reservation_id: null,
+      source: "host_tts",
+      provider: "openai",
+      model: OPENAI_STREAM_TTS_MODEL,
+      operation: "tts",
+      status: "failed",
+      input_characters: inputCharacters > 0 ? inputCharacters : null,
+      calculated_cost_cents: null,
     });
-  } catch (cause) {
-    console.warn("[tts] gpt-4o-mini-tts unavailable, falling back to tts-1-hd", cause);
-    return openai.audio.speech.create({
-      model: "tts-1-hd",
-      voice: input.voice,
-      input: input.text,
-      speed: input.speed,
-      response_format: "mp3",
-    });
+
+    return NextResponse.json(
+      {
+        error: message,
+        code: advanced?.code ?? "ADVANCED_AUDIO_FAILED",
+        engine: null,
+        voice: advanced?.voice ?? "coral",
+        attempted: advanced?.attempted ?? [OPENAI_STREAM_TTS_MODEL],
+        stream: false,
+      },
+      { status: isKeyIssue ? 503 : 502 },
+    );
   }
 }

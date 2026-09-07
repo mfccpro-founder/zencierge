@@ -1,15 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useState, useSyncExternalStore } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { ChevronDown, Lightbulb } from "lucide-react";
 import {
   HOST_NAV_SECTIONS,
-  SETTINGS_PATH,
   hostNavSectionIdForPath,
   isHostNavItemActive,
 } from "@/lib/host-nav";
+import { getHostTourHighlight, subscribeHostTourHighlight } from "@/lib/host-guide-tour";
 import { useFeatureRequest } from "@/components/dashboard/feature-request-widget";
 import { useHostShell } from "@/components/dashboard/host-shell-context";
 
@@ -20,6 +20,7 @@ function HostSidebarInner() {
   const { open: openFeatureRequest } = useFeatureRequest();
   const { mobileNavOpen, setMobileNavOpen } = useHostShell();
   const activeSectionId = hostNavSectionIdForPath(pathname, tab);
+  const tourNavId = useSyncExternalStore(subscribeHostTourHighlight, getHostTourHighlight, () => "");
   const [openIds, setOpenIds] = useState<string[]>([activeSectionId]);
 
   useEffect(() => {
@@ -65,15 +66,18 @@ function HostSidebarInner() {
             {HOST_NAV_SECTIONS.map((section) => {
               const standaloneItem = section.standalone ? section.items[0] : undefined;
               if (standaloneItem) {
-                const settingsActive = isHostNavItemActive(pathname, tab, standaloneItem);
+                const itemActive = isHostNavItemActive(pathname, tab, standaloneItem);
                 return (
                   <div key={section.id} className="mt-2 border-t border-white/10 pt-2">
                     <Link
-                      href={SETTINGS_PATH}
-                      aria-current={settingsActive ? "page" : undefined}
+                      href={standaloneItem.href}
+                      data-nav-id={standaloneItem.id}
+                      aria-current={itemActive ? "page" : undefined}
                       onClick={() => setMobileNavOpen(false)}
-                      className="host-nav-item flex w-full items-center rounded-lg px-3 py-1.5 text-sm font-medium"
-                      data-current={settingsActive ? "true" : "false"}
+                      className={`host-nav-item flex w-full items-center rounded-lg px-3 py-1.5 text-sm font-medium ${
+                        tourNavId === standaloneItem.id ? "ring-2 ring-sky-400 ring-offset-1 ring-offset-slate-800" : ""
+                      }`}
+                      data-current={itemActive ? "true" : "false"}
                     >
                       {section.label}
                     </Link>
@@ -110,12 +114,13 @@ function HostSidebarInner() {
                           <Link
                             key={item.href}
                             href={item.href}
+                            data-nav-id={item.id}
                             data-tour={tour}
                             aria-current={active ? "page" : undefined}
                             data-current={active ? "true" : "false"}
                             className={`host-nav-item flex w-full items-center rounded-lg py-1.5 text-sm font-medium ${
                               item.nested ? "px-3 pl-5" : "px-3"
-                            }`}
+                            } ${tourNavId === item.id ? "ring-2 ring-sky-400 ring-offset-1 ring-offset-slate-800" : ""}`}
                           >
                             {item.label}
                           </Link>

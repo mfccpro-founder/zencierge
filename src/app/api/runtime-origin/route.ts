@@ -1,10 +1,8 @@
 import { NextResponse } from "next/server";
-import { preferredLanIpv4 } from "@/lib/lan-ipv4";
 import { readDevTunnelOrigin } from "@/lib/dev-tunnel";
 import {
   configuredPublicOrigin,
   configuredSecureOrigin,
-  isLoopbackHostname,
 } from "@/lib/public-app-url";
 
 export const dynamic = "force-dynamic";
@@ -23,12 +21,25 @@ function parseHost(hostHeader: string): { hostname: string; port: string | null 
   return { hostname: hostHeader, port: null };
 }
 
-function originFor(protocol: string, hostname: string, port: string | null) {
+export function originFor(protocol: string, hostname: string, port: string | null) {
   const hidePort =
     (protocol === "https" && (port === "443" || !port)) ||
     (protocol === "http" && (port === "80" || !port));
   const suffix = hidePort || !port ? "" : `:${port}`;
   return `${protocol}://${hostname}${suffix}`;
+}
+
+/** Keep the request host as-is. Loopback is never rewritten to a LAN address. */
+export function fallbackRuntimeOriginFromRequest(input: {
+  protocol: string;
+  hostname: string;
+  port: string | null;
+}) {
+  return {
+    origin: originFor(input.protocol, input.hostname, input.port),
+    hostname: input.hostname,
+    source: "request" as const,
+  };
 }
 
 export async function GET(request: Request) {
@@ -75,14 +86,15 @@ export async function GET(request: Request) {
 
   const parsed = parseHost(hostHeader);
   const requestPort = parsed.port || url.port || (protocol === "https" ? "443" : "3000");
-  const lan = preferredLanIpv4();
-  const hostname = isLoopbackHostname(parsed.hostname)
-    ? (lan ?? parsed.hostname)
-    : parsed.hostname;
+  const fallback = fallbackRuntimeOriginFromRequest({
+    protocol,
+    hostname: parsed.hostname,
+    port: requestPort,
+  });
 
   return NextResponse.json({
-    origin: originFor(protocol, hostname, requestPort),
-    hostname,
-    source: "lan",
+    origin: fallback.origin,
+    hostname: fallback.hostname,
+    source: fallback.source,
   });
 }

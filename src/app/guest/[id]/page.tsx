@@ -1,17 +1,15 @@
-import { GuestPortal } from "@/components/guest/guest-portal";
-import { guestStayFallback } from "@/lib/dashboard-data";
+import { LegacyGuestLink } from "@/components/guest/legacy-guest-link";
 import type { Metadata } from "next";
 
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
-  title: "Your stay · Elena AI Concierge",
-  description: "Wi-Fi, door code, check-in hours, and a 24/7 voice concierge for this listing.",
+  title: "Guest portal",
+  description: "This guest link is no longer valid.",
+  robots: { index: false, follow: false },
+  referrer: "no-referrer",
 };
 
-export default async function GuestStayPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id } = await params;
-  return <GuestPortal propertyId={id} initialProperty={guestStayFallback(id)} />;
+export default function LegacyGuestStayPage() {
+  return <LegacyGuestLink />;
 }

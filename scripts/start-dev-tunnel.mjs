@@ -1,6 +1,6 @@
 /**
  * Free public HTTPS tunnel to this machine's Next.js HTTP server (port 3000).
- * Keep `npm run dev` running. Phones open the printed HTTPS URL for Tap to talk.
+ * Keep `npm run dev` running. Phones use the saved HTTPS origin for Tap to talk.
  * Does not change the local server — it stays HTTP on localhost / LAN IPs.
  */
 import { spawn } from "node:child_process";
@@ -13,6 +13,8 @@ const file = path.join(root, ".data", "dev-tunnel.json");
 const PORT = process.env.PORT || "3000";
 const URL_RE =
   /https:\/\/[a-z0-9.-]+\.(trycloudflare\.com|loca\.lt|localtunnel\.me|ngrok-free\.app|ngrok\.io)/i;
+const URL_WATCH_MS = 90_000;
+const BUFFER_MAX = 64_000;
 
 function save(origin, provider) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -26,9 +28,9 @@ function save(origin, provider) {
     "utf8",
   );
   console.log("");
-  console.log(`[tunnel] HTTPS for phones: ${origin.replace(/\/$/, "")}`);
+  console.log("[tunnel] HTTPS origin saved for phones.");
   console.log("[tunnel] Keep this window open. Refresh the guest QR card, then scan on your phone.");
-  console.log("[tunnel] Local http://localhost and LAN IPs are unchanged.");
+  console.log("[tunnel] Local HTTP and LAN addresses are unchanged.");
   console.log("");
 }
 
@@ -40,33 +42,72 @@ function clear() {
   }
 }
 
+function sanitizeTunnelText(text) {
+  return text.replace(URL_RE, "[https-origin]");
+}
+
+function npxInvocation(extraArgs) {
+  const bundled = path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npx-cli.js");
+  if (fs.existsSync(bundled)) {
+    return { command: process.execPath, args: [bundled, ...extraArgs] };
+  }
+  return {
+    command: process.platform === "win32" ? "npx.cmd" : "npx",
+    args: extraArgs,
+  };
+}
+
 function start(command, args) {
-  return spawn(command, args, { cwd: root, shell: true, stdio: ["ignore", "pipe", "pipe"] });
+  return spawn(command, args, {
+    cwd: root,
+    shell: false,
+    windowsHide: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+}
+
+function terminateTree(child) {
+  if (!child?.pid) return;
+  if (process.platform === "win32") {
+    spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], {
+      shell: false,
+      windowsHide: true,
+      stdio: "ignore",
+    });
+    return;
+  }
+  try {
+    child.kill("SIGTERM");
+  } catch {
+    /* ignore */
+  }
 }
 
 function watch(child, provider) {
   return new Promise((resolve, reject) => {
     let settled = false;
     let found = "";
+    let buffer = "";
+    let timer;
+
     const succeed = () => {
       if (settled || !found) return;
       settled = true;
+      if (timer) clearTimeout(timer);
       resolve({ child, found });
     };
     const fail = (message) => {
       if (settled) return;
       settled = true;
-      try {
-        child.kill();
-      } catch {
-        /* ignore */
-      }
+      if (timer) clearTimeout(timer);
+      terminateTree(child);
       reject(new Error(message));
     };
     const onChunk = (buf) => {
       const text = buf.toString();
-      process.stdout.write(text);
-      const match = text.match(URL_RE);
+      process.stdout.write(sanitizeTunnelText(text));
+      buffer = (buffer + text).slice(-BUFFER_MAX);
+      const match = buffer.match(URL_RE);
       if (match && !found) {
         found = match[0];
         save(found, provider);
@@ -80,27 +121,22 @@ function watch(child, provider) {
       if (found) succeed();
       else fail(`${provider} exited (${code ?? "?"}) before publishing an HTTPS URL.`);
     });
-    setTimeout(() => {
-      if (found) succeed();
-    }, 6000);
-    setTimeout(() => {
+    timer = setTimeout(() => {
       if (!found) fail(`${provider} did not print an HTTPS URL in time.`);
-    }, 28000);
+    }, URL_WATCH_MS);
   });
 }
 
 async function main() {
-  console.log(`[tunnel] Forwarding http://127.0.0.1:${PORT} to a public HTTPS URL…`);
+  console.log(`[tunnel] Forwarding local port ${PORT} to a public HTTPS origin…`);
   const attempts = [
     {
       provider: "cloudflare",
-      command: "npx",
-      args: ["--yes", "cloudflared", "tunnel", "--url", `http://127.0.0.1:${PORT}`],
+      ...npxInvocation(["--yes", "cloudflared", "tunnel", "--url", `http://127.0.0.1:${PORT}`]),
     },
     {
       provider: "localtunnel",
-      command: "npx",
-      args: ["--yes", "localtunnel", "--port", PORT],
+      ...npxInvocation(["--yes", "localtunnel", "--port", PORT]),
     },
   ];
 
@@ -110,11 +146,7 @@ async function main() {
       const child = start(attempt.command, attempt.args);
       await watch(child, attempt.provider);
       const stop = () => {
-        try {
-          child.kill();
-        } catch {
-          /* ignore */
-        }
+        terminateTree(child);
         clear();
         process.exit(0);
       };

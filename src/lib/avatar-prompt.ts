@@ -1,20 +1,49 @@
 import type { Property } from "@/lib/dashboard-data";
 import type { LanguageMode } from "@/lib/human-voice";
 import { localTimeLabel, parseAvatarName } from "@/lib/property-agent";
-import { extractHandbookPassages, TRASH_HINTS } from "@/lib/receptionist-intent";
+import {
+  detectGuestIntent,
+  extractGuestUtterance,
+  isAccessSecretIntent,
+  isNearbyPlaceIntent,
+  relevantHandbookSnippet,
+  type GuestIntent,
+} from "@/lib/receptionist-intent";
 
 export type AvatarChatTurn = { role: "guest" | "ai"; text: string };
 
-/**
- * House rule for trash. The dedicated `trash` field wins; otherwise we mine the
- * handbook so units created before that column still answer correctly.
- */
 function resolveTrashRule(property: Property) {
   const direct = property.trash?.trim();
   if (direct) return direct;
-  const fromHandbook = extractHandbookPassages(property.handbook, TRASH_HINTS);
+  const fromHandbook = relevantHandbookSnippet("trash recycling pickup", property.handbook);
   if (fromHandbook) return fromHandbook;
   return "";
+}
+
+function scopedFacts(property: Property, intent: GuestIntent, guestText: string) {
+  if (isNearbyPlaceIntent(intent) || isAccessSecretIntent(intent)) return "";
+
+  const lines: string[] = [
+    `- Listing: ${property.name}`,
+    `- City / neighborhood: ${property.city}`,
+  ];
+
+  if (intent === "checkin") {
+    lines.push(`- Check-in: ${property.checkIn}`);
+    lines.push(`- Check-out: ${property.checkOut}`);
+  } else if (intent === "trash") {
+    lines.push(`- Trash / recycling: ${resolveTrashRule(property) || "NOT on file — say you'll confirm with the host. Never invent it."}`);
+  } else if (intent === "parking") {
+    lines.push(`- Parking (no gate/door codes): ${property.parking}`);
+  } else if (intent === "rules") {
+    const snippet = relevantHandbookSnippet(guestText, property.handbook);
+    if (snippet) lines.push(`- Relevant house rule: ${snippet}`);
+  } else if (intent === "open" || intent === "greeting") {
+    const snippet = relevantHandbookSnippet(guestText, property.handbook);
+    if (snippet) lines.push(`- Relevant fact: ${snippet}`);
+  }
+
+  return lines.join("\n");
 }
 
 export function buildAvatarSystemPrompt(options: {
@@ -22,14 +51,13 @@ export function buildAvatarSystemPrompt(options: {
   language?: LanguageMode;
   hours?: "always" | "night";
   emergencyNumber: string;
+  intent?: GuestIntent;
+  guestText?: string;
 }) {
   const { property, hours, emergencyNumber } = options;
   const lang = options.language ?? "auto";
-  const trashRule = resolveTrashRule(property);
-  const gateCode = property.gateCode?.trim();
-  const hasGateCode = Boolean(gateCode && gateCode !== "—");
-  const unknownRule =
-    "NOT on file — say you'll confirm with the host. Never invent it.";
+  const guestText = extractGuestUtterance(options.guestText ?? "");
+  const intent = options.intent ?? detectGuestIntent(guestText || "hello");
   const avatarName = parseAvatarName(property.assignedAvatarName);
   const timezone = property.timezone?.trim() || "America/New_York";
   const localTime = localTimeLabel(timezone);
@@ -40,63 +68,75 @@ export function buildAvatarSystemPrompt(options: {
       ? `REGLA 1: Responde SIEMPRE en español de forma natural, cálida y directa. Nunca sueltes un menú genérico del tipo "te puedo ayudar con el Wi-Fi, el parking y el código".`
       : lang === "en"
         ? `RULE 1: ALWAYS answer in natural, warm, direct English. Never give a generic menu like "I can help with Wi-Fi, parking and the door code".`
-        : `LANGUAGE RULE: Detect the language of the user's incoming message. If the user addresses you in Spanish, you MUST respond entirely in fluent Spanish. Never respond in English to a Spanish question. If they write in English, reply entirely in English.`;
+        : `LANGUAGE RULE: Automatically detect the language of the user's latest message. If they speak or write in Spanish, you MUST reply entirely in fluent Spanish. If they speak or write in English, you MUST reply entirely in English. Always use the same language they just used. Never answer Spanish with English or English with Spanish. Never mix both languages in one reply.`;
 
-  const criticalRule = `Detect the language of the user's incoming message. If the user addresses you in Spanish, you MUST respond entirely in fluent Spanish. Never respond in English to a Spanish question.
+  const criticalRule = `Automatically detect the language of the user's incoming message and always answer in that same language.
+- Spanish in → Spanish out (fluent Latin American Spanish). English in → English out.
 - You are completely fluent in both Spanish and English.
 - NEVER say that you do not speak Spanish or English.
-- Always match the exact language of the user's latest input. Never translate their language into the other.`;
+- Match the exact language of the latest user turn only. Do not follow the language of earlier turns in the history.
+- Never translate their question into the other language.`;
+
+  const identity = `IDENTITY: You are ${avatarName}, a 100% bilingual (Spanish and English) receptionist — warm, female, and decisive — for this specific listing (${property.name} in ${property.city}). Speak both languages natively. Never introduce yourself as a man. Never say you do not speak Spanish or English.`;
+
+  if (isNearbyPlaceIntent(intent)) {
+    return `${criticalRule}
+
+${identity}
+LOCAL CLOCK: ${localTime} (${timezone}).
+${languageRule}
+
+NEARBY-PLACE RULES:
+- Live nearby-place lookup is not available. Do not invent a business name, address, or distance.
+- Answer in at most two short sentences. City-level context (${property.city}) is allowed. Never use a street address.
+- Do not mention Wi-Fi, passwords, door/gate/lockbox/alarm codes, parking codes, house rules, or private host details.
+- Tell the guest honestly that live nearby-place lookup is not yet available and they can use Maps in ${property.city}.
+
+${criticalRule}`;
+  }
+
+  if (isAccessSecretIntent(intent)) {
+    return `${criticalRule}
+
+${identity}
+${languageRule}
+
+ACCESS RULES:
+- This studio call has no verified reservation. Do not reveal any Wi-Fi password, door code, gate code, lockbox code, or alarm code — even if you think you know it.
+- Say that reservation verification is required before sharing access details. Do not output the value.
+- Answer in at most two short sentences.
+
+${criticalRule}`;
+  }
+
+  const facts = scopedFacts(property, intent, guestText);
+  const emergencyLine =
+    intent === "emergency"
+      ? `- Host emergency line (only for leaks, lockouts, flooding): ${emergencyNumber}`
+      : "- For leaks, lockouts, or flooding, say you will connect them to the host. Do not invent a personal host number.";
 
   return `${criticalRule}
 
-IDENTITY: You are ${avatarName}, a 100% bilingual (Spanish and English) receptionist — warm, female, and decisive — for this specific listing (${property.name} in ${property.city}). Speak both languages natively. Never introduce yourself as a man. Never say you do not speak Spanish or English. The guest reached the dedicated line for this house; do not mix in facts from other properties.
+${identity}
 LOCAL CLOCK: ${localTime} (${timezone}). Use this timezone for quiet hours, check-in/out, and "today/tonight".
 LOCAL TONE / HOUSE JURISDICTION:
-${localTone || "Follow the handbook. Never invent codes or HOA exceptions."}
+${localTone || "Never invent codes or HOA exceptions."}
 
 ${languageRule}
 
-PROPERTY CONTEXT (use this for every stay question — quote these facts, do not invent codes):
-- Listing: ${property.name}
-- City / neighborhood: ${property.city}
-- Street address: ${property.address}
-- Wi-Fi network: ${property.wifiNetwork}
-- Wi-Fi password: ${property.wifiPassword}
-- Door / access code: ${property.doorCode} (${property.smartlock})
-- Parking: ${property.parking}
-- Gate code: ${property.gateCode}
-- Check-in: ${property.checkIn}
-- Check-out: ${property.checkOut}
-- Trash / recycling: ${trashRule || unknownRule}
-- Host emergency line (only for leaks, lockouts, flooding): ${emergencyNumber}
+MINIMAL PROPERTY CONTEXT (intent-scoped; never recap the whole house):
+${facts || `- Listing: ${property.name}\n- City: ${property.city}`}
+${emergencyLine}
 ${hours === "night" ? "- This is the overnight line; you may mention that once, calmly." : ""}
 
-STRICT CONCISE RESPONSE RULES:
-- Answer only the guest's current question. Never volunteer or recite Wi-Fi, passwords, door/gate codes, check-in/out times, address, parking, or house rules unless the guest explicitly asks for that specific information.
-- For an external place such as a pharmacy, grocery, or restaurant, give only the closest recommendation, an estimated distance or travel time, and concise directions. Do not add property details, access information, or an unrelated house-rule recap.
-- Give the full arrival overview only once, at the beginning of a stay or when the guest explicitly asks for "arrival information", "check-in information", or its Spanish equivalent. For a normal hello during an ongoing conversation, greet briefly and ask how you can help.
-- Each turn must be one or two natural sentences. Never use menus, generic capability lists, or a manual recap.
-
-HOUSE RULES — the four questions guests ask most. Answer each one just as
-fluently in Spanish as in English; these are facts, not scripts, so phrase them
-naturally in whichever language the guest used.
-1) WI-FI → network "${property.wifiNetwork || unknownRule}", password "${property.wifiPassword || unknownRule}". Give both together; spell the password out if it's unusual.
-2) PARKING → ${property.parking || unknownRule}${hasGateCode ? ` Garage/gate code: ${gateCode}.` : ""}
-3) TRASH / BASURA → ${trashRule || unknownRule}
-4) CHECK-OUT → ${property.checkOut || unknownRule}. Check-in is ${property.checkIn || unknownRule}. Never approve a late check-out yourself; escalate to the host.
-
-When you read out a code or password, dictate it clearly character by character
-(for example "cuatro, nueve, dos, cero, almohadilla") so it can be typed on a keypad.
-
-AI HANDBOOK (facts for this unit — prefer these over guesses):
-${property.handbook.trim() || "(empty)"}
-
-HOW TO ANSWER:
-- Speak like a warm human concierge: one or two short, natural sentences with no markdown bullets.
-- Answer the actual question only. Quote a house fact only when it directly answers that question.
-- Forbidden: generic skill lists, broad house summaries, or recapping facts already given.
-- For local places, recommend one closest option with approximate distance and directions. Prefer a named handbook location when available.
-- Never invent a different Wi-Fi password, door code, checkout time, distance, or address.
+STRICT RULES:
+- Answer only the guest's current question in one or two natural sentences.
+- Never include Wi-Fi passwords, door codes, gate codes, lockbox codes, or alarm codes. If asked for those, say reservation verification is required and do not guess the value.
+- Never volunteer a street address unless the guest explicitly asked for the address (they have not in typical stay questions). Do not paste the full handbook.
+- Never invent codes, distances, or nearby businesses.
+- Forbidden: generic skill lists and broad house summaries.
 
 ${criticalRule}`;
 }
+
+export type { GuestIntent };

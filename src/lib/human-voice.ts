@@ -1,4 +1,7 @@
 import { isPrivateNetworkHostname, publicApiUrl } from "@/lib/public-app-url";
+import { FEMALE_ELEVENLABS_VOICE_ID } from "@/lib/elena-voice-ids";
+
+export { FEMALE_ELEVENLABS_VOICE_ID };
 
 export type VoiceProfileId = "elena" | "mateo" | "sarah" | "austin" | "sofia";
 export type LanguageMode = "auto" | "en" | "es";
@@ -142,18 +145,17 @@ export function detectUtteranceLang(text: string): ReplyLang {
   return "es";
 }
 
-/** OpenAI TTS: Elena uses coral (warm hospitality). Sarah uses shimmer. */
-export type OpenAiTtsVoice = "nova" | "shimmer" | "coral" | "sage";
-export const FEMALE_OPENAI_VOICE = "coral" as const;
-export const HOSPITALITY_TTS_SPEED = 0.96;
-export const FEMALE_ELEVENLABS_VOICE_ID = "21m00Tcm4TlvDq8ikWAM";
+/** OpenAI TTS: Elena uses marin. Sarah uses shimmer. */
+export type OpenAiTtsVoice = "nova" | "shimmer" | "coral" | "sage" | "marin";
+export const FEMALE_OPENAI_VOICE = "marin" as const;
+export const HOSPITALITY_TTS_SPEED = 1.0;
 
 const MALE_BROWSER_VOICE = /raul|david|male|hombre|pablo/i;
 const EXPLICIT_FEMALE_BROWSER_VOICE =
   /zira|samantha|victoria|karen|jenny|aria|sabina|helena|monica|paulina|laura|sofia|elena|maria|natural|neural|google|female|mujer/i;
 
 export function studioVoiceForProfile(id: VoiceProfileId): OpenAiTtsVoice {
-  return id === "sarah" || id === "austin" ? "shimmer" : "coral";
+  return id === "sarah" || id === "austin" ? "shimmer" : "marin";
 }
 
 export function isMaleBrowserVoiceName(name: string) {
@@ -186,7 +188,7 @@ export const VOICE_PROFILES: VoiceProfile[] = [
     openaiVoice: FEMALE_OPENAI_VOICE,
     elevenLabsVoiceId: FEMALE_ELEVENLABS_VOICE_ID,
     gender: "female",
-    rate: 0.96,
+    rate: 0.93,
     pitch: 1.04,
     preview: {
       es: "Hola. Soy Elena, tu anfitriona en Miami. Estoy aquí para lo que necesites. El Wi-Fi, el estacionamiento, o simplemente sentirte en casa. Dime, ¿cómo te ayudo?",
@@ -246,7 +248,7 @@ export const VOICE_PROFILES: VoiceProfile[] = [
     openaiVoice: FEMALE_OPENAI_VOICE,
     elevenLabsVoiceId: FEMALE_ELEVENLABS_VOICE_ID,
     gender: "female",
-    rate: 0.96,
+    rate: 0.93,
     pitch: 1.04,
     preview: {
       es: "Hola. Soy Sofía, tu anfitriona. Estoy aquí para el Wi-Fi, el parking o lo que haga falta. ¿En qué te ayudo?",
@@ -308,20 +310,38 @@ export async function resumePersistentAudio(audio: HTMLAudioElement) {
   await audio.play();
 }
 
-/** Light punctuation so TTS breathes naturally without sounding chopped. */
+function spokenListConnectors(text: string) {
+  const spanish = /[áéíóúñ¿¡]|\b(?:buenos|buenas|días|tardes|noches|primero|después)\b/i.test(text);
+  return spanish
+    ? ["Primero,", "Después,", "Luego,", "También,", "Por último,"]
+    : ["First,", "Next,", "Then,", "Also,", "Finally,"];
+}
+
+/** Shape prose for coral TTS: natural connectors, not a metronome of commas or numbered beats. */
 export function paceForSpeech(text: string) {
   let paced = text.trim();
-  paced = paced.replace(/\u2026/g, ", ");
-  paced = paced.replace(/\.{3,}/g, ", ");
-  paced = paced.replace(/\s*[—–]\s*/g, ", ");
-  paced = paced.replace(/\s*;\s*/g, ", ");
+  paced = paced.replace(/\u2026/g, ". ");
+  paced = paced.replace(/\.{3,}/g, ". ");
+  paced = paced.replace(/\s*[—–]\s*/g, ". ");
+  paced = paced.replace(/\s*;\s*/g, ". ");
+  const connectors = spokenListConnectors(paced);
+  let item = 0;
+  paced = paced.replace(/(?:^|\s)\d{1,2}\.\s+/g, () => {
+    const label = connectors[Math.min(item, connectors.length - 1)]!;
+    item += 1;
+    return item === 1 ? `${label} ` : ` ${label} `;
+  });
   paced = paced.replace(/^(¡?Hola)!?\s+/i, "Hola, ");
   paced = paced.replace(/^(¡?Buenas noches)!?\s+/i, "Buenas noches, ");
+  paced = paced.replace(/^(¡?Buenos días)!?\s+/i, "Buenos días, ");
+  paced = paced.replace(/^(¡?Buenas tardes)!?\s+/i, "Buenas tardes, ");
+  paced = paced.replace(/^(Good (?:morning|afternoon|evening)),?\s+/i, "$1, ");
   paced = paced.replace(/^(Hey|Hi|Hello)!?\s+/i, "$1, ");
   paced = paced.replace(/\s+y la contraseña es/gi, ", y la contraseña es");
   paced = paced.replace(/\s+and the password is/gi, ", and the password is");
   paced = paced.replace(/\s+y el check-out/gi, ", y el check-out");
   paced = paced.replace(/\s+and check-out/gi, ", and check-out");
+  paced = paced.replace(/,{2,}/g, ",");
   paced = paced.replace(/\s{2,}/g, " ");
   paced = paced.replace(/\s+([.,!?])/g, "$1");
   paced = paced.replace(/\.{2,}/g, ".");
@@ -416,6 +436,7 @@ export async function speakHumanVoice(options: {
 }
 
 export function stopHumanVoice(audioRef: { current: HTMLAudioElement | null }) {
+  stopPcmPlayback();
   const audio = audioRef.current;
   if (audio) {
     audio.pause();
@@ -488,6 +509,53 @@ export function isFatalTtsNetworkError(cause: unknown) {
 let unlockedAudio: HTMLAudioElement | null = null;
 let sharedAudioContext: AudioContext | null = null;
 let speechAudioUnlocked = false;
+let audioContextHoldSource: AudioBufferSourceNode | null = null;
+let audioContextHoldGain: GainNode | null = null;
+let pcmSession = 0;
+const pcmSources: AudioBufferSourceNode[] = [];
+let pcmLiveCount = 0;
+let pcmStreamFinished = true;
+let pcmEndedSettled = true;
+let pcmPlaybackEnded: Promise<void> = Promise.resolve();
+let resolvePcmPlaybackEnded: () => void = () => {};
+
+function beginPcmEndedGate() {
+  pcmStreamFinished = false;
+  pcmEndedSettled = false;
+  pcmPlaybackEnded = new Promise<void>((resolve) => {
+    resolvePcmPlaybackEnded = resolve;
+  });
+}
+
+function settlePcmEndedGate() {
+  if (pcmEndedSettled) return;
+  pcmEndedSettled = true;
+  const resolve = resolvePcmPlaybackEnded;
+  resolvePcmPlaybackEnded = () => {};
+  resolve();
+}
+
+function finishPcmEndedGate() {
+  pcmStreamFinished = true;
+  settlePcmEndedGate();
+}
+
+function trySettlePcmPlayback(session: number, audio?: HTMLAudioElement) {
+  if (session !== pcmSession) return;
+  if (pcmEndedSettled) return;
+  if (!pcmStreamFinished) return;
+  if (pcmLiveCount > 0) return;
+  if (audio) {
+    audio.dataset.ttsEnded = "1";
+    audio.dispatchEvent(new Event("ended"));
+  }
+  settlePcmEndedGate();
+}
+
+/** True while this page still has live PCM sources or an unfinished TTS stream. */
+export function isSharedPcmPlaybackActive() {
+  return pcmLiveCount > 0 || !pcmEndedSettled;
+}
 
 /** The element unlocked by the first user tap, if any. */
 export function getUnlockedAudio() {
@@ -499,19 +567,125 @@ export function isSpeechAudioUnlocked() {
 }
 
 function resumeSharedAudioContext() {
-  if (typeof window === "undefined") return;
+  if (typeof window === "undefined") return null;
   try {
     const Ctx =
       window.AudioContext ||
       (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!Ctx) return;
+    if (!Ctx) return null;
     if (!sharedAudioContext) sharedAudioContext = new Ctx();
     if (sharedAudioContext.state === "suspended") {
       void sharedAudioContext.resume().catch(() => {});
     }
+    return sharedAudioContext;
+  } catch {
+    return null;
+  }
+}
+
+export function getSharedAudioContext() {
+  return resumeSharedAudioContext();
+}
+
+function releaseAudioContextHold() {
+  const source = audioContextHoldSource;
+  const gain = audioContextHoldGain;
+  audioContextHoldSource = null;
+  audioContextHoldGain = null;
+  if (source) {
+    try {
+      source.stop();
+    } catch {
+      /* already stopped */
+    }
+    try {
+      source.disconnect();
+    } catch {
+      /* ignore */
+    }
+  }
+  if (gain) {
+    try {
+      gain.disconnect();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function stopPcmSourcesOnly() {
+  const sources = pcmSources.splice(0, pcmSources.length);
+  pcmLiveCount = 0;
+  for (const source of sources) {
+    try {
+      source.onended = null;
+    } catch {
+      /* ignore */
+    }
+    try {
+      source.stop();
+    } catch {
+      /* already stopped */
+    }
+    try {
+      source.disconnect();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function stopPcmPlayback() {
+  pcmSession += 1;
+  stopPcmSourcesOnly();
+  releaseAudioContextHold();
+  finishPcmEndedGate();
+}
+
+/**
+ * Must run inside a click/tap. Starts a looping zero-gain buffer so the
+ * shared AudioContext stays running across the later /api/tts fetch.
+ */
+function holdSharedAudioContextFromGesture() {
+  const ctx = resumeSharedAudioContext();
+  if (!ctx) return;
+  void ctx.resume().catch(() => {});
+  try {
+    const frames = Math.max(1, Math.floor((ctx.sampleRate || 24000) * 0.25));
+    const buffer = ctx.createBuffer(1, frames, ctx.sampleRate || 24000);
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.loop = true;
+    const gain = ctx.createGain();
+    gain.gain.value = 0;
+    source.connect(gain);
+    gain.connect(ctx.destination);
+    source.start(0);
+    const previousSource = audioContextHoldSource;
+    const previousGain = audioContextHoldGain;
+    audioContextHoldSource = source;
+    audioContextHoldGain = gain;
+    if (previousSource && previousSource !== source) {
+      try {
+        previousSource.stop();
+      } catch {
+        /* already stopped */
+      }
+      try {
+        previousSource.disconnect();
+        previousGain?.disconnect();
+      } catch {
+        /* ignore */
+      }
+    }
   } catch {
     /* ignore */
   }
+}
+
+/** Must run inside a click/tap so later PCM playback is allowed. */
+function primeAudioContextFromGesture() {
+  holdSharedAudioContextFromGesture();
 }
 
 function unlockSpeechSynthesis() {
@@ -581,7 +755,14 @@ function legacyGetUserMedia(): LegacyGetUserMedia | null {
 
 /** Always attempts capture, including HTTP LAN IPs during local development. */
 export async function acquireMicrophoneStream(): Promise<MediaStream> {
-  const constraints: MediaStreamConstraints = { audio: true, video: false };
+  const constraints: MediaStreamConstraints = {
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    },
+    video: false,
+  };
   const modern = navigator.mediaDevices?.getUserMedia?.bind(navigator.mediaDevices);
   if (modern) {
     return modern(constraints);
@@ -883,12 +1064,8 @@ export function unlockSpeechAudio(persistent?: HTMLAudioElement | null) {
     audio.setAttribute("playsinline", "true");
     audio.setAttribute("webkit-playsinline", "true");
     if (persistent) unlockedAudio = persistent;
-    resumeSharedAudioContext();
+    primeAudioContextFromGesture();
     unlockSpeechSynthesis();
-    const src = audio.currentSrc || audio.src;
-    if (!src || src.startsWith("data:")) {
-      keepAudioChannelAlive(audio);
-    }
     speechAudioUnlocked = true;
     return audio;
   } catch (cause) {
@@ -899,12 +1076,9 @@ export function unlockSpeechAudio(persistent?: HTMLAudioElement | null) {
 }
 
 /**
- * Fetch OpenAI MP3 from /api/tts and play it with HTMLAudioElement — never speechSynthesis.
- *
- * iOS/Safari only allows playback on an element that was already unlocked inside a
- * real user gesture. Because this runs after `await`, a freshly constructed
- * `new Audio()` is always blocked there, so callers should pass the persistent
- * element they unlocked on first tap via `target`.
+ * Stream 24 kHz s16le PCM from /api/tts into AudioContext.
+ * Chunks are ArrayBuffer → Int16Array → Float32Array → AudioBufferSourceNode.
+ * Never uses createObjectURL, decodeAudioData, or MP3.
  */
 export async function loadOpenAiTtsMpeg(
   text: string,
@@ -912,43 +1086,308 @@ export async function loadOpenAiTtsMpeg(
   target?: HTMLAudioElement | null,
   lang?: ReplyLang,
 ): Promise<HTMLAudioElement> {
-  const ttsRes = await fetch(publicApiUrl("/api/tts"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      text: paceForSpeech(sanitizeForTts(text)),
-      voice,
-      speed: HOSPITALITY_TTS_SPEED,
-      ...(lang ? { language: lang } : {}),
-    }),
-  }).catch((cause) => {
-    console.error("[voice] /api/tts network error", cause);
-    throw new Error("tts-network");
-  });
-
-  if (!ttsRes.ok) {
-    const detail = await ttsRes.text().catch(() => "");
-    console.error("[voice] /api/tts rejected", ttsRes.status, detail.slice(0, 400));
-    throw new Error(`tts-network-${ttsRes.status}`);
-  }
-
-  const buffer = await ttsRes.arrayBuffer();
-  const blob = new Blob([buffer], { type: "audio/mpeg" });
-  if (!blob.size) {
-    throw new Error("tts-network-empty");
-  }
-
-  const url = URL.createObjectURL(blob);
-  const audio = target ?? unlockedAudio ?? new Audio();
+  const audio = unlockSpeechAudio(target) ?? target ?? unlockedAudio ?? new Audio();
   audio.setAttribute("playsinline", "true");
   audio.setAttribute("webkit-playsinline", "true");
-  audio.preload = "auto";
   audio.loop = false;
   audio.muted = false;
   audio.volume = 1;
-  audio.playbackRate = 1;
-  assignAudioSrc(audio, url);
+  audio.dataset.ttsEnded = "";
+
+  stopPcmPlayback();
+  const session = pcmSession;
+
+  let ttsRes: Response;
+  try {
+    ttsRes = await fetch(publicApiUrl("/api/tts"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "audio/pcm" },
+      body: JSON.stringify({
+        text: paceForSpeech(sanitizeForTts(text)),
+        voice,
+        speed: HOSPITALITY_TTS_SPEED,
+        ...(lang ? { language: lang } : {}),
+        provider: "openai-audio",
+        stream: true,
+      }),
+    });
+  } catch (cause) {
+    if (session === pcmSession) releaseAudioContextHold();
+    console.error("[voice] /api/tts network error", cause);
+    throw new Error("Could not reach /api/tts. Browser TTS was not used.");
+  }
+
+  if (session !== pcmSession) {
+    try {
+      await ttsRes.body?.cancel();
+    } catch {
+      /* ignore */
+    }
+    return audio;
+  }
+
+  const engine = ttsRes.headers.get("X-Tts-Engine") ?? "";
+  const model = ttsRes.headers.get("X-Tts-Model") ?? "";
+  const ttsVoice = ttsRes.headers.get("X-Tts-Voice") ?? voice;
+  const sampleRate = Number.parseInt(ttsRes.headers.get("X-Tts-Sample-Rate") ?? "24000", 10) || 24000;
+  audio.dataset.ttsEngine = engine;
+  audio.dataset.ttsModel = model;
+  audio.dataset.ttsVoice = ttsVoice;
+
+  if (!ttsRes.ok) {
+    if (session === pcmSession) releaseAudioContextHold();
+    const detail = await ttsRes.text().catch(() => "");
+    let parsed: { error?: string; attempted?: string[]; code?: string } = {};
+    try {
+      parsed = JSON.parse(detail) as { error?: string; attempted?: string[]; code?: string };
+    } catch {
+      parsed = {};
+    }
+    const message =
+      parsed.error ||
+      `Streaming TTS failed (${ttsRes.status}). Browser TTS was not used.`;
+    console.error("[voice] /api/tts rejected", ttsRes.status, parsed.code, parsed.attempted, detail.slice(0, 400));
+    throw new Error(message);
+  }
+
+  const contentType = ttsRes.headers.get("content-type")?.split(";")[0]?.trim() || "";
+  if (contentType.includes("mpeg") || contentType.includes("mp3")) {
+    if (session === pcmSession) releaseAudioContextHold();
+    throw new Error("TTS returned MP3; this client only plays streamed PCM on AudioContext.");
+  }
+  if (!ttsRes.body) {
+    if (session === pcmSession) releaseAudioContextHold();
+    throw new Error("Streaming TTS returned no body. Browser TTS was not used.");
+  }
+
+  console.info("[voice] /api/tts engine", { engine, model, voice: ttsVoice, stream: "pcm", sampleRate });
+  try {
+    await playPcmChunkStream(audio, ttsRes.body, sampleRate, session);
+  } catch (cause) {
+    if (session === pcmSession) {
+      stopPcmSourcesOnly();
+      releaseAudioContextHold();
+    }
+    throw cause;
+  }
   return audio;
+}
+
+/** Copy stream bytes into a standalone ArrayBuffer (aligned, no shared views). */
+function uint8ToArrayBuffer(bytes: Uint8Array) {
+  const copy = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(copy).set(bytes);
+  return copy;
+}
+
+function concatArrayBuffers(a: ArrayBuffer, b: ArrayBuffer) {
+  const out = new Uint8Array(a.byteLength + b.byteLength);
+  out.set(new Uint8Array(a), 0);
+  out.set(new Uint8Array(b), a.byteLength);
+  return out.buffer;
+}
+
+/**
+ * 16-bit little-endian PCM → Float32 in [-1, 1].
+ * Uses DataView so byte order is correct even if a chunk starts on an odd offset.
+ */
+function pcm16LeArrayBufferToFloat32(buffer: ArrayBuffer) {
+  const even = buffer.byteLength - (buffer.byteLength % 2);
+  const view = new DataView(buffer, 0, even);
+  const int16 = new Int16Array(even / 2);
+  const float32 = new Float32Array(int16.length);
+  for (let i = 0; i < int16.length; i++) {
+    const sample = view.getInt16(i * 2, true);
+    int16[i] = sample;
+    float32[i] = sample / 32768;
+  }
+  return { int16, float32, leftoverBytes: buffer.byteLength - even };
+}
+
+function leftoverTail(buffer: ArrayBuffer, leftoverBytes: number) {
+  if (leftoverBytes <= 0) return new ArrayBuffer(0);
+  return buffer.slice(buffer.byteLength - leftoverBytes);
+}
+
+/** ~300 ms of 24 kHz s16le mono ≈ 14,400 bytes / 7,200 samples. */
+const PCM_PREBUFFER_SEC = 0.3;
+/** Target playback block after coalescing tiny network chunks. */
+const PCM_BLOCK_SEC = 0.12;
+
+function concatFloat32(a: Float32Array, b: Float32Array): Float32Array {
+  if (!a.length) return b.length ? b : a;
+  if (!b.length) return a;
+  const out = new Float32Array(a.length + b.length);
+  out.set(a);
+  out.set(b, a.length);
+  return out as Float32Array;
+}
+
+function takeFloat32Prefix(source: Float32Array, count: number) {
+  const n = Math.max(0, Math.min(count, source.length));
+  const prefix = source.slice(0, n) as Float32Array;
+  const rest = source.slice(n) as Float32Array;
+  return { prefix, rest };
+}
+
+function schedulePcmBuffer(
+  ctx: AudioContext,
+  float32: Float32Array,
+  sampleRate: number,
+  nextTime: number,
+  session: number,
+  audio: HTMLAudioElement,
+) {
+  if (float32.length === 0) {
+    return { source: null as AudioBufferSourceNode | null, nextTime };
+  }
+  const audioBuffer = ctx.createBuffer(1, float32.length, sampleRate);
+  audioBuffer.getChannelData(0).set(float32);
+  const source = ctx.createBufferSource();
+  source.buffer = audioBuffer;
+  source.connect(ctx.destination);
+  // Monotonic queue: never start before the previous buffer's scheduled end.
+  // If we underrun (nextTime already passed), start now — that is a gap, not overlap.
+  const startAt = nextTime > ctx.currentTime ? nextTime : ctx.currentTime;
+  pcmSources.push(source);
+  pcmLiveCount += 1;
+  source.onended = () => {
+    if (session !== pcmSession) return;
+    const index = pcmSources.indexOf(source);
+    if (index >= 0) pcmSources.splice(index, 1);
+    pcmLiveCount = Math.max(0, pcmLiveCount - 1);
+    trySettlePcmPlayback(session, audio);
+  };
+  source.start(startAt);
+  return { source, nextTime: startAt + audioBuffer.duration };
+}
+
+/**
+ * Reads /api/tts as a byte stream. Odd-byte leftovers stay in `pending`.
+ * Decoded samples are coalesced (~120 ms) and audible playback waits for
+ * ~300 ms of audio (or end of stream if the utterance is shorter).
+ */
+async function playPcmChunkStream(
+  audio: HTMLAudioElement,
+  body: ReadableStream<Uint8Array>,
+  sampleRate: number,
+  session: number,
+) {
+  const ctx = sharedAudioContext ?? resumeSharedAudioContext();
+  if (!ctx) {
+    throw new Error("Web Audio is not available for streaming playback.");
+  }
+  if (ctx.state !== "running") {
+    throw new AutoplayBlockedError();
+  }
+
+  beginPcmEndedGate();
+  const reader = body.getReader();
+  let pending = new ArrayBuffer(0);
+  let decoded: Float32Array = new Float32Array(0);
+  let nextTime = ctx.currentTime;
+  let scheduledAny = false;
+  const blockSamples = Math.max(1, Math.round(sampleRate * PCM_BLOCK_SEC));
+  const prebufferSamples = Math.max(blockSamples, Math.round(sampleRate * PCM_PREBUFFER_SEC));
+
+  await new Promise<void>((resolve, reject) => {
+    let started = false;
+
+    const ingestBytes = (chunkBuffer: ArrayBuffer) => {
+      pending = pending.byteLength ? concatArrayBuffers(pending, chunkBuffer) : chunkBuffer;
+      const { float32, leftoverBytes } = pcm16LeArrayBufferToFloat32(pending);
+      pending = leftoverTail(pending, leftoverBytes);
+      if (float32.length) {
+        const samples = new Float32Array(float32.length);
+        samples.set(float32);
+        decoded = concatFloat32(decoded, samples);
+      }
+    };
+
+    const markAudible = () => {
+      if (started) return;
+      started = true;
+      releaseAudioContextHold();
+      audio.dispatchEvent(new Event("playing"));
+      resolve();
+    };
+
+    const scheduleReadyBlocks = (flushRemainder: boolean) => {
+      if (session !== pcmSession) return;
+      if (!started) {
+        nextTime = ctx.currentTime;
+      }
+      while (decoded.length >= blockSamples) {
+        const taken = takeFloat32Prefix(decoded, blockSamples);
+        decoded = taken.rest;
+        const scheduled = schedulePcmBuffer(ctx, taken.prefix, sampleRate, nextTime, session, audio);
+        nextTime = scheduled.nextTime;
+        if (scheduled.source) {
+          scheduledAny = true;
+          markAudible();
+        }
+      }
+      if (flushRemainder && decoded.length > 0) {
+        const taken = takeFloat32Prefix(decoded, decoded.length);
+        decoded = taken.rest;
+        const scheduled = schedulePcmBuffer(ctx, taken.prefix, sampleRate, nextTime, session, audio);
+        nextTime = scheduled.nextTime;
+        if (scheduled.source) {
+          scheduledAny = true;
+          markAudible();
+        }
+      }
+    };
+
+    void (async () => {
+      try {
+        while (true) {
+          if (session !== pcmSession) {
+            resolve();
+            return;
+          }
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (!value?.byteLength) continue;
+
+          ingestBytes(uint8ToArrayBuffer(value));
+          if (!started) {
+            if (decoded.length >= prebufferSamples) scheduleReadyBlocks(false);
+          } else {
+            scheduleReadyBlocks(false);
+          }
+        }
+
+        if (session !== pcmSession) {
+          resolve();
+          return;
+        }
+
+        scheduleReadyBlocks(true);
+
+        if (!started || !scheduledAny) {
+          throw new Error("Streaming TTS returned empty PCM. Browser TTS was not used.");
+        }
+
+        pcmStreamFinished = true;
+        trySettlePcmPlayback(session, audio);
+      } catch (cause) {
+        if (session === pcmSession) {
+          pcmStreamFinished = true;
+          if (pcmLiveCount === 0) settlePcmEndedGate();
+        }
+        if (!started) reject(cause instanceof Error ? cause : new Error("Streaming playback failed"));
+        else audio.dispatchEvent(new Event("error"));
+      } finally {
+        if (!started && session === pcmSession) releaseAudioContextHold();
+        try {
+          reader.releaseLock();
+        } catch {
+          /* ignore */
+        }
+      }
+    })();
+  });
 }
 
 export async function playOpenAiTtsMpeg(
@@ -956,18 +1395,20 @@ export async function playOpenAiTtsMpeg(
   voice: OpenAiTtsVoice,
   target?: HTMLAudioElement | null,
   lang?: ReplyLang,
+  waitUntilEnded = false,
 ): Promise<HTMLAudioElement> {
-  const audio = await loadOpenAiTtsMpeg(text, voice, target, lang);
   try {
-    await audio.play();
+    const audio = await loadOpenAiTtsMpeg(text, voice, target, lang);
+    if (waitUntilEnded) await pcmPlaybackEnded;
+    return audio;
   } catch (cause) {
+    finishPcmEndedGate();
     if (isAutoplayBlocked(cause)) {
       console.error("[voice] audio.play NotAllowedError", cause);
       throw new AutoplayBlockedError();
     }
     throw cause instanceof Error ? cause : new Error("Audio playback failed");
   }
-  return audio;
 }
 
 async function speakStudioAudio(options: {
@@ -983,61 +1424,26 @@ async function speakStudioAudio(options: {
   onPlaybackEnd?: () => void;
 }) {
   const voice = studioVoiceForProfile(options.profile.id);
-  const response = await fetch(publicApiUrl("/api/tts"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      provider: options.provider,
-      ...(options.apiKey ? { apiKey: options.apiKey } : {}),
-      text: options.text,
-      voiceProfile: options.profile.id,
-      voice,
-      speed: options.speed,
-      stability: options.stability,
-    }),
-  }).catch((cause) => {
-    console.error("[voice] /api/tts network error", cause);
-    throw new Error("tts-network");
-  });
-
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    console.error("[voice] /api/tts rejected", response.status, detail.slice(0, 400));
-    throw new Error(`tts-network-${response.status}`);
-  }
-
-  const buffer = await response.arrayBuffer();
-  const blob = new Blob([buffer], { type: "audio/mpeg" });
-  if (!blob.size) {
-    throw new Error("tts-network-empty");
-  }
-  if (options.shouldCancel()) return;
-
-  const url = URL.createObjectURL(blob);
-  const audio = new Audio(url);
-  audio.setAttribute("playsinline", "true");
-  audio.preload = "auto";
-  audio.volume = 1;
-  options.audioRef.current = audio;
   options.onPlaybackStart?.();
-
-  try {
-    await audio.play();
-  } catch (cause) {
-    URL.revokeObjectURL(url);
+  const audio = await playOpenAiTtsMpeg(
+    options.text,
+    voice,
+    options.audioRef.current,
+    detectUtteranceLang(options.text),
+  );
+  audio.dataset.ttsEnded = "";
+  options.audioRef.current = audio;
+  if (options.shouldCancel()) return;
+  if (audio.dataset.ttsEnded === "1") {
     options.onPlaybackEnd?.();
-    if (isAutoplayBlocked(cause)) throw new AutoplayBlockedError();
-    throw cause instanceof Error ? cause : new Error("Audio playback failed");
+    return;
   }
-
   await new Promise<void>((resolve, reject) => {
     audio.onended = () => {
-      URL.revokeObjectURL(url);
       options.onPlaybackEnd?.();
       resolve();
     };
     audio.onerror = () => {
-      URL.revokeObjectURL(url);
       options.onPlaybackEnd?.();
       reject(new Error("Audio playback failed"));
     };

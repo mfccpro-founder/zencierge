@@ -68,6 +68,8 @@ export type PropertyRow = {
   assigned_phone_number?: string;
   avatar_system_prompt?: string;
   timezone?: string;
+  /** Set only from trusted server auth — never from client request bodies. */
+  host_id?: string | null;
 };
 
 export type ReservationRow = {
@@ -159,8 +161,11 @@ export function propertyFromRow(row: PropertyRow): Property {
   });
 }
 
-export function propertyToRow(property: Property): PropertyRow {
-  return {
+export function propertyToRow(
+  property: Property,
+  options?: { hostId?: string },
+): PropertyRow {
+  const row: PropertyRow = {
     id: property.id,
     name: property.name,
     city: property.city,
@@ -183,6 +188,12 @@ export function propertyToRow(property: Property): PropertyRow {
     avatar_system_prompt: property.avatarSystemPrompt,
     timezone: property.timezone,
   };
+  // Only attach host_id when the server passes a trusted auth id (create path).
+  // Updates omit host_id so existing ownership is never wiped or reassigned.
+  if (options?.hostId) {
+    row.host_id = options.hostId;
+  }
+  return row;
 }
 
 /** True when Supabase rejected a write because the column is not in the schema yet. */
@@ -253,16 +264,26 @@ async function selectProperties() {
 }
 
 async function ensureMiamiBeachLoft() {
+  // Never upsert over an existing prop-1 — that could wipe/ignore host_id ownership.
+  const existing = await supabase.from("properties").select("*").eq("id", "prop-1").maybeSingle();
+  if (!existing.error && existing.data) {
+    const all = await selectProperties();
+    if (!all.error && all.data?.length) return all.data as PropertyRow[];
+    return [existing.data as PropertyRow];
+  }
+
   const row = propertyToRow(miamiBeachLoft);
-  const full = await supabase.from("properties").upsert(row).select("*");
+  // Insert-only fallback for empty DBs. Do not include host_id (unknown owner).
+  // Prefer insert over upsert so a concurrent owned row cannot be overwritten.
+  const full = await supabase.from("properties").insert(row).select("*");
   if (!full.error && full.data?.length) return full.data as PropertyRow[];
 
-  const withoutTrash = await supabase.from("properties").upsert(rowWithoutTrash(row)).select("*");
+  const withoutTrash = await supabase.from("properties").insert(rowWithoutTrash(row)).select("*");
   if (!withoutTrash.error && withoutTrash.data?.length) return withoutTrash.data as PropertyRow[];
 
   const minimal = await supabase
     .from("properties")
-    .upsert({
+    .insert({
       id: "prop-1",
       name: "Miami Beach Loft",
       city: "Miami Beach",
@@ -270,6 +291,10 @@ async function ensureMiamiBeachLoft() {
     })
     .select("*");
   if (!minimal.error && minimal.data?.length) return minimal.data as PropertyRow[];
+
+  // Race: another writer created prop-1 — re-read without overwriting ownership.
+  const raced = await supabase.from("properties").select("*").eq("id", "prop-1").maybeSingle();
+  if (!raced.error && raced.data) return [raced.data as PropertyRow];
 
   return [row];
 }
@@ -377,8 +402,26 @@ export async function fetchReservationById(id: string): Promise<Reservation | nu
   return seedReservations.find((reservation) => reservation.id === id) ?? null;
 }
 
-export async function upsertProperty(property: Property) {
-  const row = propertyToRow(property);
+export type UpsertPropertyOptions =
+  | { mode: "create"; hostId: string }
+  | { mode: "update" };
+
+/**
+ * Persist a listing. Ownership (`host_id`) is set only on create from trusted
+ * server auth. Update payloads omit `host_id` so ownership cannot be reassigned
+ * or wiped by client fields.
+ */
+export async function upsertProperty(property: Property, options: UpsertPropertyOptions) {
+  if (options.mode === "create" && !options.hostId.trim()) {
+    throw new Error("host_id is required when creating a property");
+  }
+  const row =
+    options.mode === "create"
+      ? propertyToRow(property, { hostId: options.hostId.trim() })
+      : propertyToRow(property);
+  if (options.mode === "update" && "host_id" in row) {
+    delete row.host_id;
+  }
   const attempts = [
     row,
     rowWithoutAgent(row),

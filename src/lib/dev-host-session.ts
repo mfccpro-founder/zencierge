@@ -2,14 +2,22 @@ import type { User } from "@supabase/supabase-js";
 
 export const DEV_HOST_COOKIE = "zencierge_dev_host";
 
+export const MOCK_DEV_HOST_USER_ID = "00000000-0000-4000-8000-000000000001";
+
 export function allowDevHostSession() {
   return process.env.NODE_ENV !== "production";
+}
+
+/** True only for the in-process development-host mock, and never in production. */
+export function isMockDevHostUserId(userId: string | null | undefined) {
+  if (!allowDevHostSession()) return false;
+  return typeof userId === "string" && userId === MOCK_DEV_HOST_USER_ID;
 }
 
 export function mockDevHostUser(): User {
   const now = new Date().toISOString();
   return {
-    id: "00000000-0000-4000-8000-000000000001",
+    id: MOCK_DEV_HOST_USER_ID,
     aud: "authenticated",
     role: "authenticated",
     email: "dev@localhost",

@@ -3,6 +3,7 @@ import { createSquareCheckoutSession } from "@/lib/square-checkout";
 import { hasLifetimeVipAccess } from "@/lib/lifetime-vip";
 import { betaPartnerTrial, isBetaFounderPartner } from "@/lib/beta-partner";
 import { publicOriginFromRequest } from "@/lib/public-app-url";
+import { isComplimentaryWindowOpen } from "@/lib/complimentary-access-core";
 
 export const dynamic = "force-dynamic";
 
@@ -27,10 +28,42 @@ export async function POST(request: Request) {
 
   const kind = body.kind === "guest_addon" ? "guest_addon" : "host_subscription";
   if (kind === "host_subscription" && hasLifetimeVipAccess(user)) {
-    return Response.json({ ok: true, lifetimeVip: true, planId: "enterprise", planName: "Founder VIP", monthlyUsd: 0, squareSkipped: true });
+    return Response.json({
+      ok: true,
+      lifetimeVip: true,
+      planId: "enterprise",
+      planName: "Founder VIP",
+      monthlyUsd: 0,
+      squareSkipped: true,
+    });
   }
   if (kind === "host_subscription" && user && isBetaFounderPartner(user) && betaPartnerTrial(user).active) {
-    return Response.json({ ok: true, betaPartner: true, planId: "enterprise", planName: "Beta Founder Partner", monthlyUsd: 0, squareSkipped: true });
+    return Response.json({
+      ok: true,
+      betaPartner: true,
+      planId: "enterprise",
+      planName: "Beta Founder Partner",
+      monthlyUsd: 0,
+      squareSkipped: true,
+    });
+  }
+  if (kind === "host_subscription" && user) {
+    const { data: sub } = await supabase
+      .from("host_subscriptions")
+      .select("complimentary_ends_at, plan_id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (isComplimentaryWindowOpen(sub?.complimentary_ends_at as string | null | undefined)) {
+      return Response.json({
+        ok: true,
+        complimentary: true,
+        planId: sub?.plan_id ?? body.planId ?? "starter",
+        planName: "Complimentary access",
+        monthlyUsd: 0,
+        squareSkipped: true,
+        complimentaryEndsAt: sub?.complimentary_ends_at ?? null,
+      });
+    }
   }
   if (kind === "host_subscription" && user) {
     try {

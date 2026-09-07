@@ -28,6 +28,7 @@ import {
   type PropertyCity,
   type OccupancyStatus,
 } from "@/lib/dashboard-data";
+import { PropertyLocalGuidePanel } from "@/components/dashboard/property-local-guide-panel";
 import { useListings } from "@/components/dashboard/listings-provider";
 import { useSubscriptionTier } from "@/hooks/use-subscription-tier";
 import { getSupabase } from "@/lib/supabase";
@@ -1281,6 +1282,8 @@ function PropertyDetails({
           </ul>
         </div>
       </section>
+
+      <PropertyLocalGuidePanel propertyId={property.id} />
 
       <section className="space-y-2">
         <h4 className="text-xs font-semibold uppercase tracking-wide text-sky-800">

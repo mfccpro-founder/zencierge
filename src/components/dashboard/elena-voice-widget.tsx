@@ -5,15 +5,16 @@ import { ElenaAvatar } from "@/components/dashboard/elena-avatar";
 import {
   AutoplayBlockedError,
   detectReplyLang,
-  detectUtteranceLang,
   isSpeechAudioUnlocked,
   playOpenAiTtsMpeg,
-  speakWithBrowserTts,
   unlockSpeechAudio,
 } from "@/lib/human-voice";
 import { guestPressClass, withMobilePress } from "@/lib/guest-press";
 import type { Property } from "@/lib/dashboard-data";
-import { askAvatarReply } from "@/lib/ask-avatar";
+import { GoogleMapsLiveResults } from "@/components/dashboard/google-maps-live-results";
+import { HostGuideResults } from "@/components/dashboard/host-guide-results";
+import { askAvatarReply, conciergeSpokenText, asConciergeReply, type ConciergeLiveResult } from "@/lib/ask-avatar";
+import type { LocalGuidePublicResult } from "@/lib/local-guide-shared";
 import { publicApiUrl } from "@/lib/public-app-url";
 import { HOST_EMERGENCY_NUMBER } from "@/lib/receptionist-replies";
 import {
@@ -28,10 +29,13 @@ export default function ElenaVoiceWidget({ property }: { property?: Property }) 
   const [status, setStatus] = useState("Ready");
   const [muted, setMuted] = useState(false);
   const [replyText, setReplyText] = useState("");
+  const [liveResults, setLiveResults] = useState<ConciergeLiveResult[]>([]);
+  const [hostResults, setHostResults] = useState<LocalGuidePublicResult[]>([]);
   const [guestHeard, setGuestHeard] = useState("");
   const [audioPending, setAudioPending] = useState(false);
   const [isAudioReadyToPlay, setIsAudioReadyToPlay] = useState(false);
   const [audioUnlocked, setAudioUnlocked] = useState(false);
+  const [turnBusy, setTurnBusy] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const langRef = useRef<"es" | "en">("es");
   const unlockedRef = useRef(false);
@@ -40,6 +44,10 @@ export default function ElenaVoiceWidget({ property }: { property?: Property }) 
   const stopCaptureRef = useRef<(() => void) | null>(null);
   const historyRef = useRef<{ role: "user" | "assistant"; content: string }[]>([]);
   const languageHintRef = useRef<"es" | "en">("en");
+  const turnInFlightRef = useRef(false);
+  const speakingRef = useRef(false);
+  const captureArmedRef = useRef(false);
+  const captureGenRef = useRef(0);
 
   const unlockAudio = () => {
     const audio = unlockSpeechAudio(audioRef.current);
@@ -48,20 +56,33 @@ export default function ElenaVoiceWidget({ property }: { property?: Property }) 
     setAudioUnlocked(true);
   };
 
-  const speakViaBrowser = (text: string, lang: "es" | "en") => {
-    const started = speakWithBrowserTts({
-      text,
-      lang,
-      onStart: () => setStatus("Speaking..."),
-      onEnd: () => setStatus("Ready"),
-    });
-    if (!started) setStatus("Ready");
-    return started;
+  const invalidateCapture = () => {
+    captureArmedRef.current = false;
+    captureGenRef.current += 1;
+    try {
+      stopCaptureRef.current?.();
+    } catch {
+      /* already stopped */
+    }
+  };
+
+  const releaseTurn = () => {
+    speakingRef.current = false;
+    turnInFlightRef.current = false;
+    setTurnBusy(false);
+  };
+
+  const beginTurn = () => {
+    if (turnInFlightRef.current || speakingRef.current) return false;
+    turnInFlightRef.current = true;
+    setTurnBusy(true);
+    return true;
   };
 
   const speak = async (text: string, lang: "es" | "en" = "es") => {
     if (!text.trim()) return;
     langRef.current = lang;
+    speakingRef.current = true;
     pendingSpeakRef.current = { text, lang };
     setMuted(false);
     setAudioPending(false);
@@ -72,11 +93,11 @@ export default function ElenaVoiceWidget({ property }: { property?: Property }) 
       /* ignore */
     }
     try {
-      const el = await playOpenAiTtsMpeg(text, "coral", audioRef.current, lang);
+      const el = await playOpenAiTtsMpeg(text, "marin", audioRef.current, lang, true);
       audioRef.current = el;
       pendingSpeakRef.current = null;
       setIsAudioReadyToPlay(false);
-      el.onended = () => setStatus("Ready");
+      setStatus("Ready");
       return;
     } catch (cause) {
       if (cause instanceof AutoplayBlockedError) {
@@ -84,33 +105,41 @@ export default function ElenaVoiceWidget({ property }: { property?: Property }) 
         setStatus("Tap to hear Elena");
         return;
       }
+      pendingSpeakRef.current = { text, lang };
+      setStatus(cause instanceof Error ? cause.message : "Advanced OpenAI audio failed");
+    } finally {
+      speakingRef.current = false;
     }
-    if (!unlockedRef.current) {
-      setIsAudioReadyToPlay(true);
-      setStatus("Tap to start audio");
-      return;
-    }
-    if (speakViaBrowser(text, detectUtteranceLang(text))) {
-      pendingSpeakRef.current = null;
-      setIsAudioReadyToPlay(false);
-      return;
-    }
-    setIsAudioReadyToPlay(true);
-    setStatus("Tap to hear Elena");
   };
 
   const playPendingOrGreet = () => {
     unlockAudio();
     const pending = pendingSpeakRef.current;
     if (pending) {
-      void speak(pending.text, pending.lang);
+      if (!beginTurn()) return;
+      void (async () => {
+        try {
+          invalidateCapture();
+          await speak(pending.text, pending.lang);
+        } finally {
+          releaseTurn();
+        }
+      })();
       return;
     }
     if (!greetedRef.current) {
       greetedRef.current = true;
       const hello = "Hi, I'm Elena, your stay concierge. How can I help?";
       setReplyText(hello);
-      void speak(hello, "en");
+      if (!beginTurn()) return;
+      void (async () => {
+        try {
+          invalidateCapture();
+          await speak(hello, "en");
+        } finally {
+          releaseTurn();
+        }
+      })();
     }
   };
 
@@ -122,6 +151,7 @@ export default function ElenaVoiceWidget({ property }: { property?: Property }) 
   }, []);
 
   const stopVoice = () => {
+    invalidateCapture();
     try {
       audioRef.current?.pause();
     } catch {
@@ -134,14 +164,21 @@ export default function ElenaVoiceWidget({ property }: { property?: Property }) 
     } catch {
       /* ignore */
     }
-    stopCaptureRef.current?.();
+    pendingSpeakRef.current = null;
+    releaseTurn();
     setMuted(true);
     setStatus("Ready");
   };
 
   const getElenaReply = async (
     text: string,
-  ): Promise<{ reply: string; lang: "en" | "es" }> => {
+  ): Promise<{
+    displayText: string;
+    spokenText: string;
+    lang: "en" | "es";
+    liveResults?: ConciergeLiveResult[];
+    hostResults?: LocalGuidePublicResult[];
+  }> => {
     const lang = detectReplyLang(text, "auto");
     try {
       if (property) {
@@ -157,7 +194,16 @@ export default function ElenaVoiceWidget({ property }: { property?: Property }) 
             text: turn.content,
           })),
         });
-        if (reply.trim()) return { reply: reply.trim(), lang };
+        const spokenText = conciergeSpokenText(reply);
+        if (spokenText.trim()) {
+          return {
+            displayText: reply.displayText.trim(),
+            spokenText,
+            lang,
+            liveResults: reply.liveResults,
+            hostResults: reply.hostResults,
+          };
+        }
       } else {
         const res = await fetch(publicApiUrl("/api/chat"), {
           method: "POST",
@@ -170,48 +216,103 @@ export default function ElenaVoiceWidget({ property }: { property?: Property }) 
         if (res.ok) {
           const data = (await res.json()) as { reply?: string; lang?: "en" | "es" };
           if (data.reply?.trim()) {
-            return { reply: data.reply.trim(), lang: data.lang === "en" ? "en" : "es" };
+            const wrapped = asConciergeReply(data.reply.trim());
+            return {
+              displayText: wrapped.displayText,
+              spokenText: conciergeSpokenText(wrapped),
+              lang: data.lang === "en" ? "en" : "es",
+            };
           }
         }
       }
     } catch {
       /* fallback below */
     }
-    return {
-      reply:
-        lang === "en"
-          ? "Hi, I'm Elena. I'm here — tell me what you need."
-          : "Claro, soy Elena. Todo listo por aquí; dime qué necesitas y te ayudo enseguida.",
-      lang,
-    };
+    const fallback =
+      lang === "en"
+        ? "Hi, I'm Elena. I'm here — tell me what you need."
+        : "Claro, soy Elena. Todo listo por aquí; dime qué necesitas y te ayudo enseguida.";
+    return { displayText: fallback, spokenText: fallback, lang };
   };
 
-  const respondTo = async (text: string) => {
-    if (!text.trim()) return;
+  const respondTo = async (text: string, acceptedCaptureGen?: number) => {
     const heard = text.trim();
-    setInput(heard);
+    if (!heard) return;
+    if (acceptedCaptureGen !== undefined) {
+      if (!captureArmedRef.current) return;
+      if (acceptedCaptureGen !== captureGenRef.current) return;
+      if (turnInFlightRef.current || speakingRef.current) return;
+    }
+    if (turnInFlightRef.current || speakingRef.current) return;
+    if (!beginTurn()) return;
+
+    invalidateCapture();
     setGuestHeard(heard);
     setIsAudioReadyToPlay(false);
     setStatus("Processing...");
-    const { reply, lang } = await getElenaReply(text);
-    historyRef.current = [
-      ...historyRef.current.slice(-7),
-      { role: "user", content: text.trim().slice(0, 500) },
-      { role: "assistant", content: reply.slice(0, 800) },
-    ];
-    setReplyText(reply);
-    setAudioPending(true);
-    setStatus("Processing...");
-    void speak(reply, lang);
+
+    try {
+      const { displayText, spokenText, lang, liveResults: places, hostResults: hostPlaces } = await getElenaReply(heard);
+      historyRef.current = [
+        ...historyRef.current.slice(-7),
+        { role: "user", content: heard.slice(0, 500) },
+        { role: "assistant", content: displayText.slice(0, 800) },
+      ];
+      setReplyText(displayText);
+      setHostResults(hostPlaces ?? []);
+      setLiveResults(hostPlaces?.length ? [] : (places ?? []));
+      setAudioPending(true);
+      setStatus("Processing...");
+      await speak(spokenText, lang);
+    } finally {
+      releaseTurn();
+    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     unlockAudio();
-    if (!input.trim()) return;
+    if (turnInFlightRef.current || speakingRef.current || turnBusy) return;
     const text = input.trim();
+    if (!text) return;
+    if (!beginTurn()) return;
     setInput("");
-    void respondTo(text);
+    invalidateCapture();
+    void (async () => {
+      setGuestHeard(text);
+      setIsAudioReadyToPlay(false);
+      setStatus("Processing...");
+      try {
+        const { displayText, spokenText, lang, liveResults: places, hostResults: hostPlaces } = await getElenaReply(text);
+        historyRef.current = [
+          ...historyRef.current.slice(-7),
+          { role: "user", content: text.slice(0, 500) },
+          { role: "assistant", content: displayText.slice(0, 800) },
+        ];
+        setReplyText(displayText);
+        setHostResults(hostPlaces ?? []);
+        setLiveResults(hostPlaces?.length ? [] : (places ?? []));
+        setAudioPending(true);
+        setStatus("Processing...");
+        await speak(spokenText, lang);
+      } finally {
+        releaseTurn();
+      }
+    })();
+  };
+
+  const onCaptureUnlock = () => {
+    unlockAudio();
+    if (turnInFlightRef.current || speakingRef.current) return;
+    captureArmedRef.current = true;
+  };
+
+  const onCaptureTranscript = (text: string) => {
+    const gen = captureGenRef.current;
+    if (!captureArmedRef.current) return;
+    if (turnInFlightRef.current || speakingRef.current || turnBusy) return;
+    if (gen !== captureGenRef.current) return;
+    void respondTo(text, gen);
   };
 
   return (
@@ -240,14 +341,23 @@ export default function ElenaVoiceWidget({ property }: { property?: Property }) 
       ) : null}
 
       <ElenaCaptureProvider
-        onUnlock={unlockAudio}
-        onTranscript={(text) => void respondTo(text)}
+        onUnlock={onCaptureUnlock}
+        onTranscript={onCaptureTranscript}
         onFallbackSpeak={() => {
+          captureArmedRef.current = false;
           unlockAudio();
           const line =
             "Hi, I'm Elena. This page is on HTTP, so the microphone is blocked. Type your question and I will answer out loud.";
           setReplyText(line);
-          void speak(line, "en");
+          if (!beginTurn()) return;
+          void (async () => {
+            try {
+              invalidateCapture();
+              await speak(line, "en");
+            } finally {
+              releaseTurn();
+            }
+          })();
         }}
         stopCaptureRef={stopCaptureRef}
         languageHintRef={languageHintRef}
@@ -271,7 +381,8 @@ export default function ElenaVoiceWidget({ property }: { property?: Property }) 
           <ElenaCaptureMic />
           <button
             type="submit"
-            className={`${guestPressClass} flex-1 rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400 sm:flex-none`}
+            disabled={turnBusy}
+            className={`${guestPressClass} flex-1 rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400 sm:flex-none disabled:opacity-40 disabled:pointer-events-none`}
           >
             Send
           </button>
@@ -303,6 +414,8 @@ export default function ElenaVoiceWidget({ property }: { property?: Property }) 
           {replyText}
         </div>
       ) : null}
+      {hostResults.length ? <HostGuideResults results={hostResults} /> : null}
+      {liveResults.length ? <GoogleMapsLiveResults results={liveResults} /> : null}
 
       {isAudioReadyToPlay ? (
         <button

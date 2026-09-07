@@ -23,13 +23,55 @@ export function isValidSupabaseUrl(url = SUPABASE_URL) {
   return /^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/i.test(url);
 }
 
-export function isValidSupabaseAnonKey(key = SUPABASE_ANON_KEY) {
+const PLACEHOLDER_KEY_VALUES = new Set([
+  "placeholder-anon-key",
+  "your-anon-key",
+  "your-service-role-key",
+]);
+
+const MODERN_PUBLISHABLE_RE = /^sb_publishable_[A-Za-z0-9_-]{24,}$/;
+const MODERN_SECRET_RE = /^sb_secret_[A-Za-z0-9_-]{24,}$/;
+
+function isContaminatedKey(key: string) {
+  return key !== key.trim() || /[\s]/.test(key);
+}
+
+/** Legacy anon/service JWT (`eyJ` header, three segments). */
+export function isValidSupabaseLegacyJwt(key: string) {
+  if (typeof key !== "string" || !key || isContaminatedKey(key) || PLACEHOLDER_KEY_VALUES.has(key)) {
+    return false;
+  }
   const parts = key.split(".");
   return key.startsWith("eyJ") && parts.length === 3 && parts.every((part) => part.length > 8);
 }
 
+export function isValidSupabasePublishableKey(key: string) {
+  if (typeof key !== "string" || !key || isContaminatedKey(key) || PLACEHOLDER_KEY_VALUES.has(key)) {
+    return false;
+  }
+  return MODERN_PUBLISHABLE_RE.test(key);
+}
+
+export function isValidSupabaseSecretKey(key: string) {
+  if (typeof key !== "string" || !key || isContaminatedKey(key) || PLACEHOLDER_KEY_VALUES.has(key)) {
+    return false;
+  }
+  return MODERN_SECRET_RE.test(key);
+}
+
+/** Browser / anon / publishable credentials only. */
+export function isValidSupabaseAnonKey(key = SUPABASE_ANON_KEY) {
+  return isValidSupabaseLegacyJwt(key) || isValidSupabasePublishableKey(key);
+}
+
+/** Server-only service_role / secret credentials. Never interchangeable with public keys. */
+export function isValidSupabaseServiceRoleKey(key: string) {
+  return isValidSupabaseLegacyJwt(key) || isValidSupabaseSecretKey(key);
+}
+
+/** Service-role / secret validator (not the public anon key). */
 export function isValidSupabaseJwt(key: string) {
-  return isValidSupabaseAnonKey(key);
+  return isValidSupabaseServiceRoleKey(key);
 }
 
 export function isSupabaseCredentialError(message: string) {
@@ -52,7 +94,7 @@ export function supabaseEnvIssue(): string | null {
     return "NEXT_PUBLIC_SUPABASE_URL must look like https://your-project.supabase.co";
   }
   if (!isValidSupabaseAnonKey()) {
-    return "NEXT_PUBLIC_SUPABASE_ANON_KEY is not a valid JWT (it must start with eyJ). Copy the anon/public key from Supabase → Project Settings → API.";
+    return "NEXT_PUBLIC_SUPABASE_ANON_KEY must be a legacy JWT or a modern sb_publishable_ key from Supabase → Project Settings → API.";
   }
   return null;
 }

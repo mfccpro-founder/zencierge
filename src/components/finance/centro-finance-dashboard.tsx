@@ -13,6 +13,7 @@ import {
   CalendarClock,
 } from "lucide-react";
 import { getDemoFinancePayload } from "@/lib/finance-demo";
+import { playOpenAiTtsMpeg, unlockSpeechAudio } from "@/lib/human-voice";
 import type {
   AlertLevel,
   CreditUtilizationCard,
@@ -40,30 +41,8 @@ function utilBarColor(percent: number, alert = false) {
 }
 
 async function speakBriefing(text: string, audio: HTMLAudioElement) {
-  try {
-    const res = await fetch("/api/tts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: text.slice(0, 4000), language: "es", voice: "coral", speed: 0.96 }),
-    });
-    if (res.ok) {
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      audio.src = url;
-      await audio.play();
-      return;
-    }
-  } catch {
-    /* browser TTS fallback */
-  }
-  window.speechSynthesis.cancel();
-  await new Promise<void>((resolve) => {
-    const utter = new SpeechSynthesisUtterance(text);
-    utter.lang = "es-US";
-    utter.onend = () => resolve();
-    utter.onerror = () => resolve();
-    window.speechSynthesis.speak(utter);
-  });
+  unlockSpeechAudio(audio);
+  await playOpenAiTtsMpeg(text.slice(0, 4000), "coral", audio, "es");
 }
 
 export function CentroFinanceDashboard() {
@@ -141,8 +120,9 @@ export function CentroFinanceDashboard() {
     }
     try {
       await speakBriefing(briefing.summaryText, audio);
-    } catch {
-      /* ignore */
+    } catch (cause) {
+      console.error("[finance] advanced audio failed", cause);
+      setListening(false);
     } finally {
       if (audio.paused) setListening(false);
     }

@@ -1,13 +1,26 @@
-import type { Property, PropertyCity } from "@/lib/dashboard-data";
+import type { Property } from "@/lib/dashboard-data";
 import type { LanguageMode, ReplyLang } from "@/lib/human-voice";
 import {
+  accessVerificationReply,
   detectGuestIntent,
-  groceryFromHandbook,
+  extractGuestUtterance,
+  isAccessSecretIntent,
+  isNearbyPlaceIntent,
   localPlaceHint,
   normalizeGuestText,
   relevantHandbookSnippet,
   replyLangFor,
+  type NearbyPlaceKind,
 } from "@/lib/receptionist-intent";
+
+export const CONNECTION_CHECK_REPLY = {
+  en: "Yes, I can hear you. How can I help?",
+  es: "Sí, puedo escucharte. ¿Cómo puedo ayudarte?",
+} as const;
+
+export function connectionCheckReply(lang: ReplyLang) {
+  return lang === "es" ? CONNECTION_CHECK_REPLY.es : CONNECTION_CHECK_REPLY.en;
+}
 
 export type HoursMode = "always" | "night";
 
@@ -79,12 +92,25 @@ export function answerGuestQuestion({
   emergencyNumber?: string;
   history?: ChatHistoryTurn[];
 }) {
-  const lang: ReplyLang = replyLangFor(question, language);
-  const property = matchProperty(question, listings, fallback);
+  const guestText = extractGuestUtterance(question);
+  const lang: ReplyLang = replyLangFor(guestText, language);
+  const property = matchProperty(guestText, listings, fallback);
   const night = nightNote(hours, lang);
   const name = property.name;
   const agent = property.assignedAvatarName?.trim() || "Elena";
-  const intent = detectGuestIntent(question);
+  const intent = detectGuestIntent(guestText);
+
+  if (intent === "connection_check") {
+    return connectionCheckReply(lang);
+  }
+
+  if (isNearbyPlaceIntent(intent)) {
+    return `${localPlaceHint(property, intent as NearbyPlaceKind, lang)}${night}`;
+  }
+
+  if (isAccessSecretIntent(intent)) {
+    return `${accessVerificationReply(lang)}${night}`;
+  }
 
   if (intent === "emergency") {
     if (lang === "es") {
@@ -93,19 +119,7 @@ export function answerGuestQuestion({
     return `I'm really sorry you're dealing with that. I'm connecting you to the host, at ${emergencyNumber}, now. Please don't force the lock, or touch any plumbing.${night}`;
   }
 
-  if (intent === "grocery") {
-    const grocery = groceryFromHandbook(property, lang);
-    if (lang === "es") return `${grocery}${night}`;
-    return `${grocery}${night}`;
-  }
-
-  if (intent === "pharmacy") {
-    const passage = relevantHandbookSnippet(question, property.handbook);
-    const hint = passage || localPlaceHint(property, "pharmacy", lang);
-    return `${hint}${night}`;
-  }
-
-  const normalizedQuestion = question.trim();
+  const normalizedQuestion = guestText.trim();
   if (/^\s*(gracias|thank you|thanks|thx)\b/i.test(normalizedQuestion)) {
     return lang === "es"
       ? `De nada, aquí estoy para lo que necesites.${night}`
@@ -116,22 +130,12 @@ export function answerGuestQuestion({
   const isFollowUp = isShortFollowUpQuestion(normalizedQuestion);
   const hasRestaurantCtx = hasRestaurantContext(history);
   if (cue || (isFollowUp && hasRestaurantCtx)) {
-    const priorCue = detectRestaurantCue(lastAssistantContent(history));
-    return `${restaurantRecommendationReply(property, cue ?? priorCue ?? "casual", lang)}${night}`;
+    return `${localPlaceHint(property, "restaurant", lang)}${night}`;
   }
   if (isFollowUp) {
     return lang === "es"
       ? `Claro. ¿Qué detalle quieres que confirme?${night}`
       : `Of course. What detail would you like me to confirm?${night}`;
-  }
-
-  if (intent === "restaurant") {
-    const cue = detectRestaurantCue(question);
-    return `${restaurantRecommendationReply(property, cue ?? "casual", lang)}${night}`;
-  }
-
-  if (intent === "nearby") {
-    return `${localPlaceHint(property, "nearby", lang)}${night}`;
   }
 
   if (intent === "greeting") {
@@ -146,29 +150,9 @@ export function answerGuestQuestion({
       : `Hi. I'm ${agent}, your concierge at ${name}. How can I help?${night}`;
   }
 
-  if (intent === "wifi") {
-    if (lang === "es") {
-      return `Claro. En ${name}, la red Wi-Fi es ${property.wifiNetwork}. Y la contraseña es ${property.wifiPassword}.${night}`;
-    }
-    return `Sure. At ${name}, the Wi-Fi network is ${property.wifiNetwork}. And the password is ${property.wifiPassword}.${night}`;
-  }
-
   if (intent === "parking") {
-    const gate =
-      property.gateCode && property.gateCode !== "—"
-        ? lang === "es"
-          ? ` El código del portón es ${property.gateCode}.`
-          : ` The gate code is ${property.gateCode}.`
-        : "";
-    if (lang === "es") return `En ${name}, el estacionamiento es: ${property.parking}.${gate}${night}`;
-    return `At ${name}, parking is: ${property.parking}.${gate}${night}`;
-  }
-
-  if (intent === "door") {
-    if (lang === "es") {
-      return `El código de acceso de ${name} es ${property.doorCode}. Es ${property.smartlock}.${night}`;
-    }
-    return `The access code for ${name} is ${property.doorCode}. That's the ${property.smartlock}.${night}`;
+    if (lang === "es") return `En ${name}, el estacionamiento es: ${property.parking}.${night}`;
+    return `At ${name}, parking is: ${property.parking}.${night}`;
   }
 
   if (intent === "checkin") {
@@ -184,7 +168,7 @@ export function answerGuestQuestion({
       if (lang === "es") return `Sobre la basura en ${name}: ${trash}.${night}`;
       return `For trash at ${name}: ${trash}.${night}`;
     }
-    const snippet = relevantHandbookSnippet(question, property.handbook);
+    const snippet = relevantHandbookSnippet(guestText, property.handbook);
     if (snippet) {
       if (lang === "es") return `Sobre la basura en ${name}. ${snippet}${night}`;
       return `About trash at ${name}. ${snippet}${night}`;
@@ -196,9 +180,7 @@ export function answerGuestQuestion({
   }
 
   if (intent === "rules") {
-    const snippet =
-      relevantHandbookSnippet(question, property.handbook) ||
-      relevantHandbookSnippet("quiet hours silencio reglas", property.handbook);
+    const snippet = relevantHandbookSnippet(guestText, property.handbook);
     if (lang === "es") {
       return snippet
         ? `Sobre las reglas de ${name}. ${snippet}${night}`
@@ -209,7 +191,7 @@ export function answerGuestQuestion({
       : `Tell me if it's noise, trash, or guests and I'll read the handbook rule.${night}`;
   }
 
-  const snippet = relevantHandbookSnippet(question, property.handbook);
+  const snippet = relevantHandbookSnippet(guestText, property.handbook);
   if (snippet) {
     if (lang === "es") {
       return `Esto es lo más cercano en el handbook de ${name}. ${snippet}${night}`;
@@ -238,60 +220,3 @@ function hasRestaurantContext(history: ChatHistoryTurn[]): boolean {
   if (!prior) return false;
   return /\b(restaurante|restaurant)\b/i.test(prior) || Boolean(detectRestaurantCue(prior));
 }
-
-function restaurantRecommendationReply(property: Property, cue: RestaurantCue, lang: ReplyLang): string {
-  const zone = RESTAURANT_RECS[property.city] ?? RESTAURANT_RECS["Miami Beach"];
-  const pick = zone[cue];
-  const esHead = {
-    casual: "para algo casual de la zona",
-    beach: "para comer frente a la playa",
-    seafood: "para mariscos",
-    italian: "para italiano",
-    breakfast: "para desayuno",
-  }[cue];
-  const enHead = {
-    casual: "for something casual nearby",
-    beach: "for beachfront dining",
-    seafood: "for seafood",
-    italian: "for Italian",
-    breakfast: "for breakfast",
-  }[cue];
-  if (lang === "es") {
-    return `Claro, ${esHead}: ${pick.es} Si prefieres otra casual, dime "casual", "playa", "italiano", "mariscos" o "desayuno".`;
-  }
-  return `Sure, ${enHead}: ${pick.en} If you'd like a different feel, say "casual", "beach", "italian", "seafood", or "breakfast".`;
-}
-
-type RestaurantPick = { es: string; en: string };
-
-/** Concrete local picks per property zone (casual + beachfront/oceanfront splits). */
-const RESTAURANT_RECS: Record<PropertyCity, Record<RestaurantCue, RestaurantPick>> = {
-  "Miami Beach": {
-    casual: { es: "La Sandwicherie (sándwiches 24 h) y Bodega Taquería (tacos) están a unas cuadras por Collins y Ocean.", en: "La Sandwicherie (24h sandwiches) and Bodega Taquería (tacos) are a few blocks away by Collins and Ocean." },
-    beach: { es: "The Clevelander en Ocean Drive tiene mesas casi sobre la arena; Nikki Beach es lounge frente al mar.", en: "The Clevelander on Ocean Drive has tables by the sand; Nikki Beach is an oceanfront lounge." },
-    seafood: { es: "Joe's Stone Crab en Washington Ave es el clásico de mariscos; reserva con tiempo su cangrejo de piedra.", en: "Joe's Stone Crab on Washington Ave is the seafood classic; book ahead for its stone crab." },
-    italian: { es: "Macaluso's en Ocean Drive sirve pizza y pasta italiana a pasos de la playa.", en: "Macaluso's on Ocean Drive serves Italian pizza and pasta steps from the beach." },
-    breakfast: { es: "Front Porch Café en Ocean & 14th es el desayuno clásico: huevos y pancakes desde temprano.", en: "Front Porch Café at Ocean & 14th is the classic breakfast: eggs and pancakes from early." },
-  },
-  Brickell: {
-    casual: { es: "Los tacos mexicanos y las cazuelas de Brickell City Centre son casuales y quedan muy cerca.", en: "Mexican tacos and small plates at Brickell City Centre are casual and close." },
-    beach: { es: "No hay playa caminando en Brickell, pero los restaurantes del río Miami tienen terraza con vista a los yates.", en: "No walkable beach in Brickell, but the Miami River spots have yacht-view terraces." },
-    seafood: { es: "El ceviche y los mariscos peruanos de CVI.CHE quedan cerca del centro financiero.", en: "CVI.CHE does Peruvian ceviche and seafood by the financial district." },
-    italian: { es: "Pasta y pizza italiana en las trattorias de Brickell City Centre; opciones ítalo-japonesas cerca del río.", en: "Fresh pasta and pizza at Brickell City Centre's Italian trattorias, or Italo-Japanese fusion near the river." },
-    breakfast: { es: "Pura Vida en Brickell es el desayuno práctico: bowls, café y sándwiches.", en: "Pura Vida in Brickell is the practical breakfast: bowls, coffee, and sandwiches." },
-  },
-  "Fort Lauderdale": {
-    casual: { es: "Tacos y brunch casual en Las Olas son la opción local cerca de la playa.", en: "Tacos and casual brunch on Las Olas are the local pick by the beach." },
-    beach: { es: "Casablanca Café on the Beach está directamente sobre la arena en Fort Lauderdale Beach.", en: "Casablanca Café on the Beach sits right on the sand at Fort Lauderdale Beach." },
-    seafood: { es: "Coconuts, sobre el Intracoastal, es el clásico de mariscos y pescado fresco.", en: "Coconuts, on the Intracoastal, is the seafood-and-fresh-fish classic." },
-    italian: { es: "Louie Bossi en Las Olas hace pasta fresca y pizza, con terraza.", en: "Louie Bossi on Las Olas does fresh pasta and pizza on a terrace." },
-    breakfast: { es: "The Floridian en Las Olas desayuna todo el día — un clásico local.", en: "The Floridian on Las Olas serves breakfast all day — a local classic." },
-  },
-  "Sunny Isles": {
-    casual: { es: "En Collins Ave hay pizzerías y cafés casuales muy cerca de la playa.", en: "Collins Ave has casual pizzerias and cafés right by the beach." },
-    beach: { es: "Los restaurantes de los hoteles de Collins Ave tienen terraza frente al mar; pide mesa con vista.", en: "Collins Ave hotel restaurants have oceanfront terraces — ask for a view." },
-    seafood: { es: "La barra de mariscos frente al mar en el Beach House Hotel es buena para pescado fresco.", en: "The oceanfront seafood bar at the Beach House Hotel is good for fresh fish." },
-    italian: { es: "Trattorias italian en Collins Ave con pizza napolitana a pasos de la arena.", en: "Collins Ave Italian trattorias dish up Neapolitan pizza steps from the sand." },
-    breakfast: { es: "Los buffets de desayuno de los hoteles de playa son la opción clásica frente al mar.", en: "The beach hotels' breakfast buffets are the classic oceanfront pick." },
-  },
-};

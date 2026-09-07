@@ -1,5 +1,6 @@
 import { createSupabaseAdminClient } from "@/lib/supabase-admin";
-import { parsePlanId, ZENCIERGE_PLANS, type ZenciergePlanId } from "@/lib/zencierge-plans";
+import { isComplimentaryWindowOpen } from "@/lib/complimentary-access-core";
+import { isTrialWindowOpen, parsePlanId, ZENCIERGE_PLANS, type ZenciergePlanId } from "@/lib/zencierge-plans";
 
 export type PaymentState = "al_dia" | "moroso" | "cancelado" | "sin_suscripcion";
 
@@ -17,6 +18,14 @@ export type AdminSubscriberRow = {
   nextChargeAt: string | null;
   squareCustomerId: string | null;
   squareSubscriptionId: string | null;
+  isLifetimeFree: boolean;
+  complimentaryActive: boolean;
+  complimentaryStartsAt: string | null;
+  complimentaryEndsAt: string | null;
+  complimentaryGrantedBy: string | null;
+  trialActive: boolean;
+  trialStartsAt: string | null;
+  trialEndsAt: string | null;
   failedPayments: { id: string; at: string; amountUsd: number }[];
   alerts: { tag: "Failed Charge (Last 30d)" | "Overdue" | "Due within 72h" | "Data Warning"; message: string }[];
 };
@@ -32,6 +41,8 @@ export type AdminBillingSnapshot = {
     morosos: number;
     cancelados: number;
     sinSuscripcion: number;
+    complimentary: number;
+    trials: number;
     failedPayments30d: number;
   };
 };
@@ -98,7 +109,16 @@ async function loadSubscriptionPayments(admin: AdminClient): Promise<LoadedPayme
 export async function getAdminBillingSnapshot(): Promise<AdminBillingSnapshot> {
   const now = new Date();
   const generatedAt = now.toISOString();
-  const emptyMetrics = { mrr: 0, alDia: 0, morosos: 0, cancelados: 0, sinSuscripcion: 0, failedPayments30d: 0 };
+  const emptyMetrics = {
+    mrr: 0,
+    alDia: 0,
+    morosos: 0,
+    cancelados: 0,
+    sinSuscripcion: 0,
+    complimentary: 0,
+    trials: 0,
+    failedPayments30d: 0,
+  };
 
   let admin;
   try {
@@ -167,8 +187,6 @@ export async function getAdminBillingSnapshot(): Promise<AdminBillingSnapshot> {
         .map((value) => (typeof value === "string" ? value.trim() : ""))
         .find((value) => value.length > 0) ?? null;
     const sub = subsByUser.get(user.id);
-    const planId = parsePlanId(sub?.plan_id) ?? "starter";
-    const plan = ZENCIERGE_PLANS[planId];
     const nextChargeAt = sub?.current_period_end ? String(sub.current_period_end) : null;
     const paymentState = paymentStateFromRow(sub?.status as string | undefined, nextChargeAt, now);
     const userPayments = paymentsByUser.get(user.id) ?? [];
@@ -210,6 +228,20 @@ export async function getAdminBillingSnapshot(): Promise<AdminBillingSnapshot> {
       });
     }
 
+    const complimentaryEndsAt = sub?.complimentary_ends_at ? String(sub.complimentary_ends_at) : null;
+    const complimentaryActive = isComplimentaryWindowOpen(complimentaryEndsAt, now);
+    const isLifetimeFree = sub?.is_lifetime_free === true;
+    const trialEndsAt = typeof meta.trial_ends_at === "string" ? meta.trial_ends_at : null;
+    const trialStartsAt = typeof meta.trial_started_at === "string" ? meta.trial_started_at : null;
+    const trialActive =
+      isTrialWindowOpen(trialEndsAt, now) &&
+      !complimentaryActive &&
+      !isLifetimeFree &&
+      paymentState !== "al_dia";
+    const planId =
+      parsePlanId(sub?.plan_id) ?? parsePlanId(meta.plan) ?? ("starter" as ZenciergePlanId);
+    const plan = ZENCIERGE_PLANS[planId];
+
     return {
       userId: user.id,
       email: (sub?.email as string | undefined) ?? user.email ?? "(no email)",
@@ -218,12 +250,20 @@ export async function getAdminBillingSnapshot(): Promise<AdminBillingSnapshot> {
       planId,
       planName: plan.name,
       monthlyUsd: plan.monthlyUsd,
-      rawStatus: String(sub?.status ?? "inactive"),
+      rawStatus: String(sub?.status ?? meta.subscription_status ?? "inactive"),
       paymentState,
       lastPaymentAt: sub?.last_payment_at ? String(sub.last_payment_at) : (userPayments[0]?.at ?? null),
       nextChargeAt,
       squareCustomerId: sub?.square_customer_id ? String(sub.square_customer_id) : null,
       squareSubscriptionId: sub?.square_subscription_id ? String(sub.square_subscription_id) : null,
+      isLifetimeFree,
+      complimentaryActive,
+      complimentaryStartsAt: sub?.complimentary_starts_at ? String(sub.complimentary_starts_at) : null,
+      complimentaryEndsAt,
+      complimentaryGrantedBy: sub?.complimentary_granted_by ? String(sub.complimentary_granted_by) : null,
+      trialActive,
+      trialStartsAt,
+      trialEndsAt,
       failedPayments,
       alerts,
     };
@@ -232,7 +272,14 @@ export async function getAdminBillingSnapshot(): Promise<AdminBillingSnapshot> {
   const stateOrder: Record<PaymentState, number> = { moroso: 0, cancelado: 1, sin_suscripcion: 2, al_dia: 3 };
   rows.sort((a, b) => stateOrder[a.paymentState] - stateOrder[b.paymentState] || a.email.localeCompare(b.email));
 
-  const activeRows = rows.filter((row) => row.paymentState === "al_dia");
+  // Paying MRR excludes complimentary, lifetime-free, and active public trials.
+  const payingRows = rows.filter(
+    (row) =>
+      row.paymentState === "al_dia" &&
+      !row.complimentaryActive &&
+      !row.isLifetimeFree &&
+      !row.trialActive,
+  );
   const failed30d = rows.reduce(
     (count, row) =>
       count + row.failedPayments.filter((pay) => now.getTime() - new Date(pay.at).getTime() < 30 * MS_DAY).length,
@@ -245,11 +292,13 @@ export async function getAdminBillingSnapshot(): Promise<AdminBillingSnapshot> {
     error: paymentsLoad.error ?? subsResult.error?.message ?? null,
     subscribers: rows,
     metrics: {
-      mrr: activeRows.reduce((sum, row) => sum + row.monthlyUsd, 0),
-      alDia: activeRows.length,
+      mrr: payingRows.reduce((sum, row) => sum + row.monthlyUsd, 0),
+      alDia: payingRows.length,
       morosos: rows.filter((row) => row.paymentState === "moroso").length,
       cancelados: rows.filter((row) => row.paymentState === "cancelado").length,
       sinSuscripcion: rows.filter((row) => row.paymentState === "sin_suscripcion").length,
+      complimentary: rows.filter((row) => row.complimentaryActive).length,
+      trials: rows.filter((row) => row.trialActive).length,
       failedPayments30d: failed30d,
     },
   };

@@ -94,10 +94,16 @@ export function trialEndsAtIso(from = new Date()) {
   return end.toISOString();
 }
 
-export function isTrialWindowOpen(trialEndsAt: unknown) {
+export function isTrialWindowOpen(trialEndsAt: unknown, now = new Date()) {
   if (typeof trialEndsAt !== "string" || !trialEndsAt.trim()) return false;
   const end = Date.parse(trialEndsAt);
-  return Number.isFinite(end) && end > Date.now();
+  return Number.isFinite(end) && end > now.getTime();
+}
+
+export function trialDaysRemaining(trialEndsAt: unknown, now = new Date()) {
+  if (!isTrialWindowOpen(trialEndsAt, now)) return 0;
+  const end = Date.parse(String(trialEndsAt));
+  return Math.max(0, Math.ceil((end - now.getTime()) / 86_400_000));
 }
 
 export function buildTrialMetadata(planId: ZenciergePlanId, extra: Record<string, unknown> = {}) {
@@ -114,11 +120,23 @@ export function buildTrialMetadata(planId: ZenciergePlanId, extra: Record<string
 export function isHostAccessGranted(input: {
   subscriptionStatus?: string | null;
   metadata?: Record<string, unknown> | null;
+  complimentaryEndsAt?: string | null;
+  isLifetimeFree?: boolean | null;
+  lifetimeVip?: boolean | null;
 }) {
   const meta = input.metadata ?? {};
   const status = String(input.subscriptionStatus ?? meta.subscription_status ?? "");
+  if (input.lifetimeVip === true) return true;
+  if (input.isLifetimeFree === true) return true;
   if (isPaidSubscriptionStatus(status)) return true;
+  if (isComplimentaryEndsOpen(input.complimentaryEndsAt)) return true;
+  // Public 14-day trial: server-side window only. Never treat bare status "trial" as permanent.
   if (isTrialWindowOpen(meta.trial_ends_at)) return true;
-  if (status === "trial") return true;
   return false;
+}
+
+function isComplimentaryEndsOpen(endsAt: string | null | undefined) {
+  if (typeof endsAt !== "string" || !endsAt.trim()) return false;
+  const end = Date.parse(endsAt);
+  return Number.isFinite(end) && end > Date.now();
 }

@@ -96,6 +96,11 @@ create table if not exists public.host_subscriptions (
 
 alter table public.host_subscriptions add column if not exists is_lifetime_free boolean not null default false;
 
+alter table public.host_subscriptions add column if not exists complimentary_starts_at timestamptz;
+alter table public.host_subscriptions add column if not exists complimentary_ends_at timestamptz;
+alter table public.host_subscriptions add column if not exists complimentary_granted_by uuid references auth.users (id) on delete set null;
+alter table public.host_subscriptions add column if not exists complimentary_granted_at timestamptz;
+
 create table if not exists public.subscription_payments (
   id uuid primary key default gen_random_uuid(),
   user_id uuid references auth.users (id) on delete set null,

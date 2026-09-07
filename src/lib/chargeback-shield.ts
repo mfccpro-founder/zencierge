@@ -46,10 +46,20 @@ function signatureHash(reservationId: string) {
   return `sig_${hash.toString(16).padStart(8, "0")}`;
 }
 
-function maskCode(code: string) {
+function maskCode(code: unknown): string {
+  if (typeof code !== "string") return "****";
   const trimmed = code.trim();
-  if (trimmed.length < 3) return "****";
+  if (!trimmed || trimmed.length < 3) return "****";
   return `${trimmed.slice(0, 1)}•••${trimmed.slice(-1)}`;
+}
+
+function reservationNotes(reservation: Reservation): string {
+  const notes = (reservation as { aiNotes?: unknown }).aiNotes;
+  return typeof notes === "string" ? notes : "";
+}
+
+function asText(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value : fallback;
 }
 
 function coverageOf(parts: { ok: boolean }[]): { coverage: ShieldCoverage; coveragePct: number } {
@@ -67,10 +77,21 @@ export function compileChargebackDossiers(
   const propertyById = new Map(properties.map((property) => [property.id, property]));
 
   return [...reservations]
-    .sort((a, b) => b.checkIn.localeCompare(a.checkIn))
+    .filter((row): row is Reservation => Boolean(row) && typeof row === "object")
+    .sort((a, b) => asText(b.checkIn).localeCompare(asText(a.checkIn)))
     .map((reservation) => {
-      const property = propertyById.get(reservation.propertyId);
-      const propertyName = property?.name ?? reservation.propertyId;
+      const reservationId = asText(reservation.id);
+      const propertyId = asText(reservation.propertyId);
+      const guest = asText(reservation.guest);
+      const phone = asText(reservation.phone);
+      const platform = asText(reservation.platform);
+      const checkIn = asText(reservation.checkIn);
+      const checkOut = asText(reservation.checkOut);
+      const checkInTime = asText(reservation.checkInTime);
+      const checkOutTime = asText(reservation.checkOutTime);
+      const property = propertyById.get(propertyId);
+      const propertyName = asText(property?.name, propertyId);
+      const smartlock = asText(property?.smartlock);
       const checkedIn = reservation.status === "staying" || reservation.status === "departed" || reservation.status === "arriving";
       const departed = reservation.status === "departed";
       const upcoming = reservation.status === "upcoming";
@@ -85,44 +106,44 @@ export function compileChargebackDossiers(
           ]
         : [
             {
-              at: `${reservation.checkIn} ${reservation.checkInTime}`,
+              at: `${checkIn} ${checkInTime}`,
               title: "House rules accepted",
               detail:
                 "Guest acknowledged: no parties, quiet hours 10:00 PM–8:00 AM, licensed STR / anti-squatting, $250 hold, lock codes not to be shared.",
             },
             {
-              at: `${reservation.checkIn} ${reservation.checkInTime}`,
+              at: `${checkIn} ${checkInTime}`,
               title: "Digital signature on file",
-              detail: `Typed/drawn signature captured at guest portal. Record ${signatureHash(reservation.id)}. Identity lock for this reservation.`,
+              detail: `Typed/drawn signature captured at guest portal. Record ${signatureHash(reservationId)}. Identity lock for this reservation.`,
             },
           ];
 
-      const brand = property ? lockBrandLabel(property.smartlock) : "Smart lock";
-      const vendor = property ? inferLockVendor(property.smartlock) : "yale";
+      const brand = property ? lockBrandLabel(smartlock) : "Smart lock";
+      const vendor = property ? inferLockVendor(smartlock) : "yale";
       const lockLogs: ShieldLogLine[] = [
         {
-          at: `${reservation.checkIn} 09:00 AM`,
+          at: `${checkIn} 09:00 AM`,
           title: "Guest PIN issued",
           detail: `${brand} (${vendor}) provisioned access code ${maskCode(reservation.accessCode)} for this booking window only.`,
         },
       ];
       if (checkedIn && !upcoming) {
         lockLogs.push({
-          at: `${reservation.checkIn} ${reservation.checkInTime}`,
+          at: `${checkIn} ${checkInTime}`,
           title: "First unlock / check-in",
           detail: `Seam audit: door unlocked with reservation PIN. Property ${propertyName}.`,
         });
       }
       if (reservation.status === "staying") {
         lockLogs.push({
-          at: `${reservation.checkIn} 10:14 PM`,
+          at: `${checkIn} 10:14 PM`,
           title: "In-stay access",
           detail: "Secondary unlock logged (same PIN). No shared-code events detected.",
         });
       }
       if (departed) {
         lockLogs.push({
-          at: `${reservation.checkOut} ${reservation.checkOutTime}`,
+          at: `${checkOut} ${checkOutTime}`,
           title: "PIN revoked at checkout",
           detail: "Seam revoked the guest credential. Subsequent unlocks require a new code.",
         });
@@ -130,7 +151,7 @@ export function compileChargebackDossiers(
 
       const matchedCalls = calls.filter(
         (call) =>
-          call.guest.toLowerCase() === reservation.guest.toLowerCase() ||
+          call.guest.toLowerCase() === guest.toLowerCase() ||
           call.property.toLowerCase() === propertyName.toLowerCase(),
       );
       const communications: ShieldLogLine[] = matchedCalls.map((call) => ({
@@ -138,11 +159,12 @@ export function compileChargebackDossiers(
         title: `Voice · ${call.status.replaceAll("_", " ")}`,
         detail: `${call.summary} Duration ${call.duration}. Transcript turns: ${call.transcript.length}.`,
       }));
-      if (reservation.aiNotes.trim()) {
+      const aiNotes = reservationNotes(reservation).trim();
+      if (aiNotes) {
         communications.push({
           at: "Elena session notes",
           title: "Voice assistant record",
-          detail: reservation.aiNotes.trim(),
+          detail: aiNotes,
         });
       }
       if (communications.length === 0) {
@@ -156,7 +178,7 @@ export function compileChargebackDossiers(
       const housekeeping: ShieldLogLine[] = [];
       if (!upcoming) {
         housekeeping.push({
-          at: `${reservation.checkIn} 11:40 AM`,
+          at: `${checkIn} 11:40 AM`,
           title: "Pre-arrival / post-previous-guest inspection",
           detail: "Housekeeping uploaded checkout-condition photos with UTC stamp. Ready-for-check-in recorded.",
         });
@@ -165,7 +187,7 @@ export function compileChargebackDossiers(
         housekeeping.push({
           at:
             departed
-              ? `${reservation.checkOut} 12:20 PM`
+              ? `${checkOut} 12:20 PM`
               : "In stay",
           title: departed ? "Turnover complete" : "Mid-stay condition log",
           detail: departed
@@ -189,20 +211,20 @@ export function compileChargebackDossiers(
       ]);
 
       return {
-        id: `cb-${reservation.id}`,
-        reservationId: reservation.id,
-        propertyId: reservation.propertyId,
+        id: `cb-${reservationId}`,
+        reservationId,
+        propertyId,
         propertyName,
-        guest: reservation.guest,
-        phone: reservation.phone,
-        platform: reservation.platform,
-        checkIn: `${reservation.checkIn} · ${reservation.checkInTime}`,
-        checkOut: `${reservation.checkOut} · ${reservation.checkOutTime}`,
+        guest,
+        phone,
+        platform,
+        checkIn: `${checkIn} · ${checkInTime}`,
+        checkOut: `${checkOut} · ${checkOutTime}`,
         nights: reservation.nights,
         stayStatus: reservation.status,
         coverage,
         coveragePct,
-        exhibitId: exhibitId(reservation.id),
+        exhibitId: exhibitId(reservationId),
         signatures,
         lockLogs,
         communications,

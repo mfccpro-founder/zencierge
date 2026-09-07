@@ -7,25 +7,41 @@ import { AiReceptionistStudio } from "@/components/dashboard/ai-receptionist-stu
 import { GuestQrCard } from "@/components/dashboard/guest-qr-card";
 import type { ReceptionistPhase } from "@/components/dashboard/receptionist-avatar";
 import type { Property } from "@/lib/dashboard-data";
-import { askAvatarReply } from "@/lib/ask-avatar";
+import { askAvatarReply, conciergeSpokenText, type ConciergeLiveResult } from "@/lib/ask-avatar";
+import { GoogleMapsLiveResults } from "@/components/dashboard/google-maps-live-results";
+import { HostGuideResults } from "@/components/dashboard/host-guide-results";
+import type { LocalGuidePublicResult } from "@/lib/local-guide-shared";
 import { localTimeLabel, phonesMatch, voiceIdFromAvatarName } from "@/lib/property-agent";
 import { useHeygenRepeatAvatar } from "@/components/dashboard/use-heygen-repeat";
 import {
   VOICE_PROFILES,
+  acquireMicrophoneStream,
+  describeGetUserMediaFailure,
   detectUtteranceLang,
-  getSpeechRecognitionCtor,
   getVoiceProfile,
   keepAudioChannelAlive,
+  HOSPITALITY_TTS_SPEED,
+  isSharedPcmPlaybackActive,
+  playOpenAiTtsMpeg,
   resumePersistentAudio,
-  speakWithBrowserTts,
-  speechRecognitionLang,
+  startPushToTalkFromStream,
   stopHumanVoice,
+  transcribePushToTalkBlob,
   unlockSpeechAudio,
   type LanguageMode,
+  type PushToTalkSession,
   type ReplyLang,
   type VoiceProfile,
   type VoiceProfileId,
 } from "@/lib/human-voice";
+import {
+  attachTestCallVad,
+  shouldTranscribeForStopReason,
+  TEST_CALL_VAD,
+  testCallAfterSpeechAction,
+  testCallShouldResumeListening,
+  type RecordingStopReason,
+} from "@/lib/test-call-vad";
 
 type HoursMode = "always" | "night";
 type FloridaLine = "305" | "954";
@@ -44,25 +60,171 @@ const FLORIDA_LINES: Record<FloridaLine, { number: string; area: string }> = {
 const AUTO_GREETING =
   "Hello! Welcome to Zencierge. ¡Hola! Bienvenido a Zencierge. How can I help you today? ¿En qué puedo ayudarte?";
 
-type SpeechResultList = ArrayLike<{ isFinal: boolean } & ArrayLike<{ transcript: string }>>;
+const LISTEN_CLIP_MS = 6000;
+const LISTEN_RESUME_GAP_MS = 400;
+const TEST_CALL_LIMIT_MS = 60_000;
 
-type SpeechRec = {
-  lang: string;
-  interimResults: boolean;
-  continuous: boolean;
-  onresult: ((event: { resultIndex: number; results: SpeechResultList }) => void) | null;
-  onerror: ((event: { error?: string }) => void) | null;
-  onend: (() => void) | null;
-  start: () => void;
-  stop: () => void;
+const VOICE_HEALTH_DEV = process.env.NODE_ENV !== "production";
+
+type CallPhase = "idle" | "listening" | "thinking" | "speaking" | "ended";
+
+export type TestCallAutoEndReason =
+  | "response_completed"
+  | "no_speech"
+  | "transcribe_failed"
+  | "mic_failed"
+  | "safety_timeout";
+
+export {
+  testCallAfterSpeechAction,
+  testCallShouldResumeListening,
+} from "@/lib/test-call-vad";
+
+type VoiceHealthEvent = { ms: number; name: string };
+
+type VoiceHealthReport = {
+  runNumber: number;
+  languageMode: "auto" | "en" | "es";
+  startCallEntered: boolean;
+  callStartingAccepted: boolean;
+  audioUnlockSucceeded: boolean;
+  audioUnlockErrorName: string;
+  micProbeStarted: boolean;
+  micProbeSucceeded: boolean;
+  micProbeErrorName: string;
+  probeTrackCount: number | null;
+  probeTracksStopped: boolean;
+  greetingTtsStarted: boolean;
+  greetingTtsCompleted: boolean;
+  greetingTtsFailed: boolean;
+  greetingTtsErrorName: string;
+  afterSpeakingFinishedCalled: boolean;
+  listenResumeRequested: boolean;
+  wantMicAtResume: boolean | null;
+  callActiveAtResume: boolean | null;
+  phaseAtResume: CallPhase | "";
+  pcmActiveAtResume: boolean | null;
+  secondMicAcquireStarted: boolean;
+  secondMicAcquireSucceeded: boolean;
+  secondMicAcquireErrorName: string;
+  listenTrackCount: number | null;
+  listenTrackReadyState: string;
+  listenTrackEnabled: boolean | null;
+  listenTrackMuted: boolean | null;
+  recorderAssigned: boolean;
+  recorderMimeType: string;
+  recorderStopRequested: boolean;
+  recorderOnStopCount: number;
+  blobBytes: number | null;
+  phaseAtOnStop: CallPhase | "";
+  listenGenerationMatched: boolean | null;
+  transcribeAttempted: boolean;
+  transcribeReturnedNonempty: boolean | null;
+  transcribeFailed: boolean;
+  transcribeErrorName: string;
+  safetyTimerFired: boolean;
+  oneTurnMode: boolean;
+  guestTurnAccepted: boolean;
+  autoEndRequested: boolean;
+  autoEndReason: TestCallAutoEndReason | "";
+  cleanupCompleted: boolean;
+  finalPhase: CallPhase | "";
+  vadAvailable: boolean | null;
+  vadStarted: boolean;
+  speechDetected: boolean;
+  speechDetectedAtMs: number | null;
+  silenceDetected: boolean;
+  silenceDurationMs: number | null;
+  recordingStopReason: RecordingStopReason | "";
+  recordingDurationMs: number | null;
+  vadCleanupCompleted: boolean;
+  currentPhase: CallPhase | "";
+  currentWantMic: boolean | null;
+  currentCallActive: boolean | null;
+  events: VoiceHealthEvent[];
 };
 
-function recognitionLangFor(mode: LanguageMode, lastDetected: ReplyLang): string {
-  return speechRecognitionLang(mode, lastDetected);
+function emptyVoiceHealthReport(runNumber: number, languageMode: "auto" | "en" | "es"): VoiceHealthReport {
+  return {
+    runNumber,
+    languageMode,
+    startCallEntered: false,
+    callStartingAccepted: false,
+    audioUnlockSucceeded: false,
+    audioUnlockErrorName: "",
+    micProbeStarted: false,
+    micProbeSucceeded: false,
+    micProbeErrorName: "",
+    probeTrackCount: null,
+    probeTracksStopped: false,
+    greetingTtsStarted: false,
+    greetingTtsCompleted: false,
+    greetingTtsFailed: false,
+    greetingTtsErrorName: "",
+    afterSpeakingFinishedCalled: false,
+    listenResumeRequested: false,
+    wantMicAtResume: null,
+    callActiveAtResume: null,
+    phaseAtResume: "",
+    pcmActiveAtResume: null,
+    secondMicAcquireStarted: false,
+    secondMicAcquireSucceeded: false,
+    secondMicAcquireErrorName: "",
+    listenTrackCount: null,
+    listenTrackReadyState: "",
+    listenTrackEnabled: null,
+    listenTrackMuted: null,
+    recorderAssigned: false,
+    recorderMimeType: "",
+    recorderStopRequested: false,
+    recorderOnStopCount: 0,
+    blobBytes: null,
+    phaseAtOnStop: "",
+    listenGenerationMatched: null,
+    transcribeAttempted: false,
+    transcribeReturnedNonempty: null,
+    transcribeFailed: false,
+    transcribeErrorName: "",
+    safetyTimerFired: false,
+    oneTurnMode: true,
+    guestTurnAccepted: false,
+    autoEndRequested: false,
+    autoEndReason: "",
+    cleanupCompleted: false,
+    finalPhase: "",
+    vadAvailable: null,
+    vadStarted: false,
+    speechDetected: false,
+    speechDetectedAtMs: null,
+    silenceDetected: false,
+    silenceDurationMs: null,
+    recordingStopReason: "",
+    recordingDurationMs: null,
+    vadCleanupCompleted: false,
+    currentPhase: "idle",
+    currentWantMic: null,
+    currentCallActive: null,
+    events: [],
+  };
+}
+
+function sanitizedErrorName(cause: unknown) {
+  if (cause instanceof DOMException && cause.name) return cause.name.slice(0, 80);
+  if (cause instanceof Error && cause.name) return cause.name.slice(0, 80);
+  return "Error";
+}
+
+function voiceHealthNow() {
+  return typeof performance !== "undefined" ? performance.now() : 0;
+}
+
+function voiceHealthElapsedMs(startedAt: number) {
+  if (!startedAt) return 0;
+  return Math.max(0, Math.round(voiceHealthNow() - startedAt));
 }
 
 const LANGUAGE_MIRROR_INSTRUCTION =
-  "Answer strictly in the language used by the guest in their last message (if they speak English, reply in English; if Spanish, reply in Spanish).";
+  "Automatically detect the language of the guest's last message and answer only in that language (Spanish if they spoke Spanish, English if they spoke English). Never reply in the other language.";
 
 function detectGuestLang(text: string): ReplyLang {
   return detectUtteranceLang(text);
@@ -75,7 +237,7 @@ export function VoiceConciergeView() {
   const { properties } = useListings();
   const [voiceId, setVoiceId] = useState<VoiceProfileId>("elena");
   const [language, setLanguage] = useState<LanguageMode>("auto");
-  const [speed, setSpeed] = useState(0.96);
+  const [speed, setSpeed] = useState(HOSPITALITY_TTS_SPEED);
   const [stability, setStability] = useState(68);
   const [floridaLine, setFloridaLine] = useState<FloridaLine>("305");
   const [emergencyNumber, setEmergencyNumber] = useState("+1 (954) 275-3544");
@@ -89,6 +251,8 @@ export function VoiceConciergeView() {
   const [streamReady, setStreamReady] = useState(false);
   const [draft, setDraft] = useState("");
   const [lines, setLines] = useState<SimLine[]>([]);
+  const [livePlaces, setLivePlaces] = useState<ConciergeLiveResult[]>([]);
+  const [hostPlaces, setHostPlaces] = useState<LocalGuidePublicResult[]>([]);
   const [partialAi, setPartialAi] = useState("");
   const [partialGuest, setPartialGuest] = useState("");
   const [elevenKey, setElevenKey] = useState("");
@@ -98,6 +262,18 @@ export function VoiceConciergeView() {
   const [engineLabel, setEngineLabel] = useState("Studio TTS");
   const [tapToListen, setTapToListen] = useState(false);
   const [responding, setResponding] = useState(false);
+  const [voiceHealth, setVoiceHealth] = useState<VoiceHealthReport>(() => emptyVoiceHealthReport(0, "auto"));
+  const [voiceHealthCopyFallback, setVoiceHealthCopyFallback] = useState("");
+  const [voiceHealthCopyStatus, setVoiceHealthCopyStatus] = useState("");
+  const voiceHealthStartRef = useRef(0);
+  const voiceHealthRunRef = useRef(0);
+  const voiceHealthGreetingRef = useRef(false);
+  const testCallActiveRef = useRef(false);
+  const testCallGuestTurnAcceptedRef = useRef(false);
+  const testCallLimitTimerRef = useRef(0);
+  const endCallInFlightRef = useRef(false);
+  const vadCleanupRef = useRef<(() => void) | null>(null);
+  const recordingStopReasonRef = useRef<RecordingStopReason | "">("");
 
   const profile = getVoiceProfile(voiceId);
   const selectedProperty =
@@ -112,14 +288,16 @@ export function VoiceConciergeView() {
   const callActiveRef = useRef(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const unlockedRef = useRef(false);
-  const speedRef = useRef(0.96);
+  const speedRef = useRef(HOSPITALITY_TTS_SPEED);
   const heygen = useHeygenRepeatAvatar();
   const abortRef = useRef<AbortController | null>(null);
   const safetyRef = useRef(0);
   const audioWatchdogRef = useRef(0);
   const playbackStartedRef = useRef(false);
   const heygenSpeakingRef = useRef(false);
-  const recRef = useRef<SpeechRec | null>(null);
+  const recRef = useRef<PushToTalkSession | null>(null);
+  const listenClipTimerRef = useRef(0);
+  const listenGenRef = useRef(0);
   const wantMicRef = useRef(false);
   const startListeningRef = useRef<() => void>(() => {});
   const languageRef = useRef<LanguageMode>(language);
@@ -130,10 +308,71 @@ export function VoiceConciergeView() {
   const speakingRef = useRef(false);
   const respondingRef = useRef(false);
   const thinkingRef = useRef(false);
+  const callPhaseRef = useRef<CallPhase>("idle");
+  const callStartingRef = useRef(false);
+  const listenResumeTimerRef = useRef(0);
+  const stopListeningRef = useRef<() => void>(() => {});
+  const resumeListeningRef = useRef<() => void>(() => {});
+  const applyCallPhaseRef = useRef<(next: CallPhase) => void>(() => {});
 
   const nextId = () => {
     idRef.current += 1;
     return `sim-${idRef.current}`;
+  };
+
+  const applyCallPhase = (next: CallPhase) => {
+    callPhaseRef.current = next;
+    speakingRef.current = next === "speaking";
+    thinkingRef.current = next === "thinking";
+    respondingRef.current = next === "thinking" || next === "speaking";
+    setListening(next === "listening");
+    setThinking(next === "thinking");
+    setSpeaking(next === "speaking");
+    setResponding(next === "thinking" || next === "speaking");
+  };
+  applyCallPhaseRef.current = applyCallPhase;
+
+  const pushVoiceHealth = (name: string, patch?: Partial<VoiceHealthReport>) => {
+    if (!VOICE_HEALTH_DEV) return;
+    const ms = voiceHealthElapsedMs(voiceHealthStartRef.current);
+    setVoiceHealth((prev) => ({
+      ...prev,
+      ...patch,
+      recorderOnStopCount:
+        name === "recorderOnStop" ? prev.recorderOnStopCount + 1 : (patch?.recorderOnStopCount ?? prev.recorderOnStopCount),
+      currentPhase: callPhaseRef.current,
+      currentWantMic: wantMicRef.current,
+      currentCallActive: callActiveRef.current,
+      events: [...prev.events, { ms, name }].slice(-100),
+    }));
+  };
+
+  const resetVoiceHealth = (languageMode: "auto" | "en" | "es") => {
+    voiceHealthRunRef.current += 1;
+    voiceHealthStartRef.current = voiceHealthNow();
+    voiceHealthGreetingRef.current = false;
+    setVoiceHealthCopyFallback("");
+    setVoiceHealthCopyStatus("");
+    setVoiceHealth(emptyVoiceHealthReport(voiceHealthRunRef.current, languageMode));
+  };
+
+  const cleanupVad = () => {
+    const fn = vadCleanupRef.current;
+    vadCleanupRef.current = null;
+    if (!fn) return;
+    try {
+      fn();
+    } catch {
+      /* already disconnected */
+    }
+    pushVoiceHealth("vadCleanupCompleted", { vadCleanupCompleted: true });
+  };
+
+  const clearListenResumeTimer = () => {
+    if (listenResumeTimerRef.current) {
+      window.clearTimeout(listenResumeTimerRef.current);
+      listenResumeTimerRef.current = 0;
+    }
   };
 
   useEffect(() => {
@@ -154,9 +393,12 @@ export function VoiceConciergeView() {
     languageRef.current = language;
     if (language !== "auto") sessionLangRef.current = language;
     if (!wantMicRef.current || !callActiveRef.current) return;
-    if (speakingRef.current || thinkingRef.current) return;
-    stopListening();
-    window.setTimeout(() => startListeningRef.current(), 80);
+    if (testCallActiveRef.current) return;
+    if (callPhaseRef.current === "ended" || callPhaseRef.current === "speaking" || callPhaseRef.current === "thinking") {
+      return;
+    }
+    stopListeningRef.current();
+    window.setTimeout(() => resumeListeningRef.current(), 80);
   }, [language]);
 
   useEffect(() => {
@@ -171,24 +413,21 @@ export function VoiceConciergeView() {
     thinkingRef.current = thinking;
   }, [thinking]);
 
-  // Global safety net: if anything hangs (network, audio element without
-  // onended, TTS failure), always release isResponding/isSpeaking and hand
-  // the mic back so the call button never stays stuck.
   useEffect(() => {
     if (!responding) return;
     const timer = window.setTimeout(() => {
-      console.error("[voice] global safety timer — releasing stuck response state");
-      speakingRef.current = false;
-      respondingRef.current = false;
-      thinkingRef.current = false;
-      setSpeaking(false);
-      setResponding(false);
-      setThinking(false);
+      if (testCallActiveRef.current) return;
+      console.error("[voice] global safety timer — cancelling stuck turn; microphone stays off");
+      pushVoiceHealth("safetyTimerFired", { safetyTimerFired: true });
+      genRef.current += 1;
+      abortRef.current?.abort();
+      abortRef.current = null;
+      stopListeningRef.current();
+      stopHumanVoice(audioRef);
+      void heygen.interrupt();
+      if (callPhaseRef.current !== "ended") applyCallPhaseRef.current("idle");
       setPartialAi("");
       setTapToListen(false);
-      if (wantMicRef.current && callActiveRef.current) {
-        startListeningRef.current();
-      }
     }, 25000);
     return () => window.clearTimeout(timer);
   }, [responding]);
@@ -207,18 +446,38 @@ export function VoiceConciergeView() {
   useEffect(() => {
     return () => {
       wantMicRef.current = false;
+      callPhaseRef.current = "ended";
+      callStartingRef.current = false;
+      listenGenRef.current += 1;
+      if (listenResumeTimerRef.current) {
+        window.clearTimeout(listenResumeTimerRef.current);
+        listenResumeTimerRef.current = 0;
+      }
+      if (listenClipTimerRef.current) {
+        window.clearTimeout(listenClipTimerRef.current);
+        listenClipTimerRef.current = 0;
+      }
+      if (testCallLimitTimerRef.current) {
+        window.clearTimeout(testCallLimitTimerRef.current);
+        testCallLimitTimerRef.current = 0;
+      }
       try {
-        recRef.current?.stop();
+        recRef.current?.cancel();
       } catch {
         /* already stopped */
       }
       recRef.current = null;
+      try {
+        vadCleanupRef.current?.();
+      } catch {
+        /* already disconnected */
+      }
+      vadCleanupRef.current = null;
       stopHumanVoice(audioRef);
     };
   }, []);
 
   useEffect(() => {
-    const wasSpeaking = heygenSpeakingRef.current;
     heygenSpeakingRef.current = heygen.speaking;
     if (heygen.speaking) {
       playbackStartedRef.current = true;
@@ -226,13 +485,6 @@ export function VoiceConciergeView() {
         window.clearTimeout(safetyRef.current);
         safetyRef.current = 0;
       }
-      setResponding(false);
-      setSpeaking(true);
-      return;
-    }
-    if (wasSpeaking) {
-      setSpeaking(false);
-      setResponding(false);
     }
   }, [heygen.speaking]);
 
@@ -250,7 +502,7 @@ export function VoiceConciergeView() {
     );
   }
 
-  const phase: ReceptionistPhase = thinking || responding
+  const phase: ReceptionistPhase = thinking
     ? "thinking"
     : listening
       ? "listening"
@@ -264,13 +516,74 @@ export function VoiceConciergeView() {
   };
 
   const stopListening = () => {
+    cleanupVad();
+    listenGenRef.current += 1;
+    clearListenResumeTimer();
+    if (listenClipTimerRef.current) {
+      window.clearTimeout(listenClipTimerRef.current);
+      listenClipTimerRef.current = 0;
+    }
     try {
-      recRef.current?.stop();
+      recRef.current?.cancel();
     } catch {
       /* already stopped */
     }
     recRef.current = null;
     setListening(false);
+  };
+  stopListeningRef.current = stopListening;
+
+  const clearTestCallLimitTimer = () => {
+    if (testCallLimitTimerRef.current) {
+      window.clearTimeout(testCallLimitTimerRef.current);
+      testCallLimitTimerRef.current = 0;
+    }
+  };
+
+  const resumeListeningIfAllowed = () => {
+    pushVoiceHealth("listenResumeRequested", {
+      listenResumeRequested: true,
+      wantMicAtResume: wantMicRef.current,
+      callActiveAtResume: callActiveRef.current,
+      phaseAtResume: callPhaseRef.current,
+      pcmActiveAtResume: isSharedPcmPlaybackActive(),
+    });
+    if (
+      !testCallShouldResumeListening({
+        oneTurnMode: testCallActiveRef.current,
+        callEnded: callPhaseRef.current === "ended",
+        wantMic: wantMicRef.current,
+        callActive: callActiveRef.current,
+        guestTurnAccepted: testCallGuestTurnAcceptedRef.current,
+        phase: callPhaseRef.current,
+        pcmActive: isSharedPcmPlaybackActive(),
+      })
+    ) {
+      return;
+    }
+    startListeningRef.current();
+  };
+  resumeListeningRef.current = resumeListeningIfAllowed;
+
+  const afterSpeakingFinished = () => {
+    pushVoiceHealth("afterSpeakingFinishedCalled", { afterSpeakingFinishedCalled: true });
+    const action = testCallAfterSpeechAction({
+      oneTurnMode: testCallActiveRef.current,
+      guestTurnAccepted: testCallGuestTurnAcceptedRef.current,
+      phaseEnded: callPhaseRef.current === "ended",
+      pcmActive: isSharedPcmPlaybackActive(),
+    });
+    if (action === "none") return;
+    if (action === "end_call") {
+      endCall({ status: "Call ended.", autoEndReason: "response_completed" });
+      return;
+    }
+    applyCallPhase("idle");
+    clearListenResumeTimer();
+    listenResumeTimerRef.current = window.setTimeout(() => {
+      listenResumeTimerRef.current = 0;
+      resumeListeningIfAllowed();
+    }, LISTEN_RESUME_GAP_MS);
   };
 
   const clearSafety = () => {
@@ -285,16 +598,9 @@ export function VoiceConciergeView() {
   };
 
   const releaseAndListen = () => {
-    speakingRef.current = false;
-    respondingRef.current = false;
-    thinkingRef.current = false;
-    setSpeaking(false);
-    setResponding(false);
-    setThinking(false);
-    setTapToListen(false);
-    if (wantMicRef.current && callActiveRef.current) {
-      startListeningRef.current();
-    }
+    if (callPhaseRef.current === "ended") return;
+    applyCallPhase("idle");
+    afterSpeakingFinished();
   };
 
   const cancelSpeech = () => {
@@ -303,35 +609,53 @@ export function VoiceConciergeView() {
     abortRef.current = null;
     clearSafety();
     playbackStartedRef.current = false;
-    speakingRef.current = false;
-    respondingRef.current = false;
-    thinkingRef.current = false;
+    callStartingRef.current = false;
     stopHumanVoice(audioRef);
     void heygen.interrupt();
-    setSpeaking(false);
     setPreviewing(null);
     setPartialAi("");
     setTapToListen(false);
-    setResponding(false);
-    setThinking(false);
-    if (wantMicRef.current && callActiveRef.current) {
-      window.setTimeout(() => startListeningRef.current(), 200);
-    }
+    if (callPhaseRef.current === "ended") return;
+    applyCallPhase("idle");
   };
 
-  const endCall = () => {
+  const endCall = (options?: { status?: string; autoEndReason?: TestCallAutoEndReason }) => {
+    if (endCallInFlightRef.current) return;
+    if (callPhaseRef.current === "ended" && !callActiveRef.current && !callStartingRef.current) return;
+    endCallInFlightRef.current = true;
+    if (options?.autoEndReason) {
+      pushVoiceHealth("autoEndRequested", {
+        autoEndRequested: true,
+        autoEndReason: options.autoEndReason,
+      });
+    }
+    clearTestCallLimitTimer();
+    applyCallPhase("ended");
     wantMicRef.current = false;
+    callActiveRef.current = false;
+    testCallActiveRef.current = false;
+    testCallGuestTurnAcceptedRef.current = false;
+    callStartingRef.current = false;
+    voiceHealthGreetingRef.current = false;
+    clearListenResumeTimer();
     stopListening();
     cancelSpeech();
     void heygen.stop();
-    setThinking(false);
     setPartialGuest("");
     setCallActive(false);
     setStreamReady(false);
     setLines((current) => [
       ...current,
-      { id: nextId(), speaker: "system", text: "Call ended." },
+      { id: nextId(), speaker: "system", text: options?.status ?? "Call ended." },
     ]);
+    pushVoiceHealth("cleanupCompleted", {
+      cleanupCompleted: true,
+      finalPhase: "ended",
+      currentPhase: "ended",
+      currentWantMic: false,
+      currentCallActive: false,
+    });
+    endCallInFlightRef.current = false;
   };
 
   const applySpeed = (value: number) => {
@@ -359,8 +683,8 @@ export function VoiceConciergeView() {
     audio.volume = 1;
     audio.onended = () => {
       keepAudioChannelAlive(audio);
-      setSpeaking(false);
-      if (wantMicRef.current && callActiveRef.current) startListeningRef.current();
+      setTapToListen(false);
+      afterSpeakingFinished();
     };
     try {
       await resumePersistentAudio(audio);
@@ -370,30 +694,23 @@ export function VoiceConciergeView() {
     }
   };
 
-  const fallbackBrowserTts = (text: string) =>
-    new Promise<void>((resolve) => {
-      const started = speakWithBrowserTts({
-        text,
-        lang: detectUtteranceLang(text),
-        onStart: () => {
-          speakingRef.current = true;
-          setSpeaking(true);
-        },
-        onEnd: () => {
-          speakingRef.current = false;
-          setSpeaking(false);
-          resolve();
-        },
-      });
-      if (!started) resolve();
-    });
+  const speakAdvancedAudio = async (text: string) => {
+    const lang = detectUtteranceLang(text);
+    const el = await playOpenAiTtsMpeg(text, "marin", audioRef.current, lang, true);
+    audioRef.current = el;
+  };
 
   const speak = async (text: string) => {
-    respondingRef.current = true;
-    speakingRef.current = true;
+    if (callPhaseRef.current === "ended") return;
+    const greetingSpeak = voiceHealthGreetingRef.current;
+    if (greetingSpeak) {
+      voiceHealthGreetingRef.current = false;
+      pushVoiceHealth("greetingTtsStarted", { greetingTtsStarted: true });
+    }
     stopListening();
-    setResponding(true);
-    setSpeaking(true);
+    applyCallPhase("speaking");
+    const speakGen = genRef.current;
+    let greetingFailed = false;
 
     try {
       if (heygen.ready) {
@@ -402,6 +719,10 @@ export function VoiceConciergeView() {
           await new Promise<void>((resolve) => {
             const startedAt = Date.now();
             const tick = () => {
+              if (callPhaseRef.current === "ended") {
+                resolve();
+                return;
+              }
               if (!heygenSpeakingRef.current && Date.now() - startedAt > 400) {
                 resolve();
                 return;
@@ -417,48 +738,41 @@ export function VoiceConciergeView() {
           return;
         }
       }
-      await fallbackBrowserTts(text);
+      await speakAdvancedAudio(text);
     } catch (cause) {
+      if (greetingSpeak) {
+        greetingFailed = true;
+        pushVoiceHealth("greetingTtsFailed", {
+          greetingTtsFailed: true,
+          greetingTtsErrorName: sanitizedErrorName(cause),
+        });
+      }
       console.error("[voice] speak failed", cause);
       setLines((current) => [
         ...current,
         { id: nextId(), speaker: "system", text: "Voice playback unavailable — reply is in the transcript." },
       ]);
     } finally {
-      respondingRef.current = false;
-      thinkingRef.current = false;
-      speakingRef.current = false;
-      setResponding(false);
-      setThinking(false);
-      setSpeaking(false);
-      if (wantMicRef.current && callActiveRef.current) {
-        startListeningRef.current();
+      if (greetingSpeak && !greetingFailed) {
+        pushVoiceHealth("greetingTtsCompleted", { greetingTtsCompleted: true });
       }
+      if (speakGen !== genRef.current) return;
+      if (isSharedPcmPlaybackActive()) return;
+      afterSpeakingFinished();
     }
   };
 
-  const streamReply = async (text: string) => {
+  const streamReply = async (displayText: string, spokenText = displayText) => {
+    if (callPhaseRef.current === "ended") return;
     genRef.current += 1;
-    respondingRef.current = true;
-    thinkingRef.current = false;
     stopListening();
+    applyCallPhase("speaking");
     setPartialAi("");
-    setLines((current) => [...current, { id: nextId(), speaker: "ai", text }]);
-    setResponding(true);
+    setLines((current) => [...current, { id: nextId(), speaker: "ai", text: displayText }]);
     try {
-      await speak(text);
+      await speak(spokenText);
     } catch (cause) {
       console.error("[voice] Studio TTS failed", cause);
-    } finally {
-      respondingRef.current = false;
-      thinkingRef.current = false;
-      speakingRef.current = false;
-      setResponding(false);
-      setSpeaking(false);
-      setThinking(false);
-      if (wantMicRef.current && callActiveRef.current) {
-        startListeningRef.current();
-      }
     }
   };
 
@@ -482,11 +796,17 @@ export function VoiceConciergeView() {
   const handleGuestUtterance = (raw: string) => {
     const text = raw.trim();
     if (!text || !selectedProperty) return;
+    if (callPhaseRef.current === "thinking" || callPhaseRef.current === "speaking") return;
+    if (testCallActiveRef.current) {
+      testCallGuestTurnAcceptedRef.current = true;
+      wantMicRef.current = false;
+      pushVoiceHealth("guestTurnAccepted", { guestTurnAccepted: true });
+    }
     ensureVoiceSession();
     callActiveRef.current = true;
+    if (callPhaseRef.current === "ended") applyCallPhase("idle");
     stopListening();
-    thinkingRef.current = true;
-    respondingRef.current = true;
+    applyCallPhase("thinking");
     setPartialGuest("");
     setDraft("");
     setLines((current) => [...current, { id: nextId(), speaker: "guest", text }]);
@@ -506,8 +826,6 @@ export function VoiceConciergeView() {
     abortRef.current?.abort();
     const abort = new AbortController();
     abortRef.current = abort;
-    setThinking(true);
-    setResponding(true);
     const started = performance.now();
     const question = `${LANGUAGE_MIRROR_INSTRUCTION}\n\nGuest: ${text}`;
 
@@ -529,11 +847,11 @@ export function VoiceConciergeView() {
           history,
           signal: abort.signal,
         });
-        if (!callActiveRef.current || abort.signal.aborted) return;
+        if (callPhaseRef.current === "ended" || abort.signal.aborted) return;
         setLatencyMs(Math.round(performance.now() - started));
-        thinkingRef.current = false;
-        setThinking(false);
-        await streamReply(reply);
+        setHostPlaces(reply.hostResults ?? []);
+        setLivePlaces(reply.hostResults?.length ? [] : (reply.liveResults ?? []));
+        await streamReply(reply.displayText, conciergeSpokenText(reply));
       } catch (cause) {
         if (abort.signal.aborted) return;
         console.error("[voice] avatar reply failed", cause);
@@ -545,100 +863,234 @@ export function VoiceConciergeView() {
             text: "Elena could not reply just now. Try again or type your question.",
           },
         ]);
-      } finally {
-        thinkingRef.current = false;
-        respondingRef.current = false;
-        speakingRef.current = false;
-        setThinking(false);
-        setResponding(false);
-        setSpeaking(false);
-        if (wantMicRef.current && callActiveRef.current && !abort.signal.aborted) {
-          startListeningRef.current();
+        if (testCallActiveRef.current) {
+          endCall({ status: "Call ended.", autoEndReason: "response_completed" });
+          return;
         }
+        if (callPhaseRef.current === "thinking") afterSpeakingFinished();
       }
     })();
   };
 
   const startListening = () => {
+    if (callPhaseRef.current === "ended") return;
     if (!wantMicRef.current || !callActiveRef.current) return;
-    if (speakingRef.current || thinkingRef.current) return;
+    if (callPhaseRef.current === "speaking" || callPhaseRef.current === "thinking") return;
+    if (isSharedPcmPlaybackActive()) return;
     if (recRef.current) return;
+    if (testCallGuestTurnAcceptedRef.current) return;
 
-    const Ctor = getSpeechRecognitionCtor();
-    if (!Ctor) {
-      setLines((current) => [
-        ...current,
-        {
-          id: nextId(),
-          speaker: "system",
-          text: "Live mic is not available in this browser. Use Chrome and allow the microphone, or type a question.",
-        },
-      ]);
-      return;
-    }
-
-    const recognition = new Ctor();
-    recognition.lang = recognitionLangFor(languageRef.current, currentTurnLangRef.current);
-    recognition.interimResults = true;
-    recognition.continuous = true;
-    recognition.onresult = (event) => {
-      let interim = "";
-      let finalText = "";
-      for (let index = event.resultIndex; index < event.results.length; index += 1) {
-        const result = event.results[index];
-        const piece = result?.[0]?.transcript ?? "";
-        if (result?.isFinal) finalText += piece;
-        else interim += piece;
-      }
-      // Live transcript: show exactly what the mic is hearing while listening.
-      if (interim || finalText) setPartialGuest(interim || finalText);
-      if (finalText.trim()) {
-        setPartialGuest("");
-        handleGuestUtterance(finalText);
-      }
-    };
-    recognition.onerror = (event) => {
-      const code = event?.error;
-      // 'no-speech' is benign: user stayed silent — do NOT kill the listener,
-      // just ignore and let onend restart the session.
-      if (code === "no-speech" || code === "aborted") {
-        return;
-      }
-      if (code === "not-allowed" || code === "service-not-allowed") {
-        wantMicRef.current = false;
-        setLines((current) => [
-          ...current,
-          {
-            id: nextId(),
-            speaker: "system",
-            text: "Microphone blocked by the browser. Allow mic access and try again, or type a question.",
-          },
-        ]);
-      }
-      setListening(false);
-      setPartialGuest("");
-    };
-    recognition.onend = () => {
-      recRef.current = null;
-      setListening(false);
+    void (async () => {
+      if (callPhaseRef.current === "ended") return;
       if (!wantMicRef.current || !callActiveRef.current) return;
-      if (speakingRef.current || thinkingRef.current) return;
-      window.setTimeout(() => startListeningRef.current(), 250);
-    };
-    recRef.current = recognition;
-    try {
-      recognition.start();
-      setListening(true);
-    } catch {
-      recRef.current = null;
-      setListening(false);
-      window.setTimeout(() => startListeningRef.current(), 400);
-    }
+      if (callPhaseRef.current === "speaking" || callPhaseRef.current === "thinking") return;
+      if (isSharedPcmPlaybackActive()) return;
+      if (recRef.current) return;
+      if (testCallGuestTurnAcceptedRef.current) return;
+
+      applyCallPhase("listening");
+      const gen = ++listenGenRef.current;
+      try {
+        pushVoiceHealth("secondMicAcquireStarted", { secondMicAcquireStarted: true });
+        const stream = await acquireMicrophoneStream();
+        const listenTrack = stream.getAudioTracks()[0] ?? stream.getTracks()[0];
+        pushVoiceHealth("secondMicAcquireSucceeded", {
+          secondMicAcquireSucceeded: true,
+          listenTrackCount: stream.getTracks().length,
+          listenTrackReadyState: listenTrack?.readyState ?? "",
+          listenTrackEnabled: listenTrack ? listenTrack.enabled : null,
+          listenTrackMuted: listenTrack ? listenTrack.muted : null,
+        });
+        if (
+          gen !== listenGenRef.current ||
+          callPhaseRef.current !== "listening" ||
+          !wantMicRef.current ||
+          !callActiveRef.current
+        ) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+
+        const session = startPushToTalkFromStream(stream, {
+          onStop: (blob) => {
+            recRef.current = null;
+            cleanupVad();
+            if (listenClipTimerRef.current) {
+              window.clearTimeout(listenClipTimerRef.current);
+              listenClipTimerRef.current = 0;
+            }
+            const matched = gen === listenGenRef.current;
+            const stopReason = recordingStopReasonRef.current;
+            pushVoiceHealth("recorderOnStop", {
+              blobBytes: blob.size,
+              phaseAtOnStop: callPhaseRef.current,
+              listenGenerationMatched: matched,
+              recorderMimeType: (blob.type || "").slice(0, 80),
+              recordingStopReason: stopReason,
+            });
+            void (async () => {
+              if (gen !== listenGenRef.current) return;
+              if (callPhaseRef.current === "ended") return;
+              if (callPhaseRef.current !== "listening") return;
+              if (!callActiveRef.current || !wantMicRef.current) return;
+              if (stopReason === "no_speech" || (stopReason && !shouldTranscribeForStopReason(stopReason))) {
+                if (testCallActiveRef.current) {
+                  endCall({ status: "No speech detected — test ended", autoEndReason: "no_speech" });
+                }
+                return;
+              }
+              try {
+                const mode = languageRef.current;
+                const lang = mode === "es" || mode === "en" ? mode : undefined;
+                pushVoiceHealth("transcribeAttempted", { transcribeAttempted: true });
+                const text = await transcribePushToTalkBlob(blob, lang);
+                pushVoiceHealth("transcribeReturnedNonempty", {
+                  transcribeReturnedNonempty: Boolean(text),
+                });
+                if (gen !== listenGenRef.current) return;
+                if (callPhaseRef.current !== "listening") return;
+                if (!callActiveRef.current || !wantMicRef.current) return;
+                if (text) {
+                  handleGuestUtterance(text);
+                  return;
+                }
+              } catch (cause) {
+                pushVoiceHealth("transcribeFailed", {
+                  transcribeFailed: true,
+                  transcribeErrorName: sanitizedErrorName(cause),
+                });
+                console.error("[voice] transcribe failed", cause);
+                if (testCallActiveRef.current) {
+                  endCall({ status: "No speech detected — test ended", autoEndReason: "transcribe_failed" });
+                  return;
+                }
+                const message =
+                  cause instanceof Error
+                    ? cause.message
+                    : "Could not transcribe speech. Try again, or type a question.";
+                setLines((current) => [
+                  ...current,
+                  { id: nextId(), speaker: "system", text: message },
+                ]);
+              }
+              if (testCallActiveRef.current) {
+                endCall({ status: "No speech detected — test ended", autoEndReason: "no_speech" });
+                return;
+              }
+              resumeListeningIfAllowed();
+            })();
+          },
+        });
+        recRef.current = session;
+        pushVoiceHealth("recorderAssigned", { recorderAssigned: true });
+        recordingStopReasonRef.current = "";
+        cleanupVad();
+        if (testCallActiveRef.current) {
+          const vad = attachTestCallVad(stream, {
+            generation: gen,
+            isCurrent: () =>
+              gen === listenGenRef.current &&
+              callPhaseRef.current === "listening" &&
+              testCallActiveRef.current &&
+              Boolean(recRef.current),
+            onSpeechDetected: () => {
+              if (gen !== listenGenRef.current) return;
+              pushVoiceHealth("speechDetected", {
+                speechDetected: true,
+                speechDetectedAtMs: voiceHealthElapsedMs(voiceHealthStartRef.current),
+              });
+            },
+            onDecision: (reason, meta) => {
+              if (gen !== listenGenRef.current) return;
+              recordingStopReasonRef.current = reason;
+              pushVoiceHealth("recordingStopReason", {
+                recordingStopReason: reason,
+                recordingDurationMs: meta.recordingDurationMs,
+                silenceDetected: reason === "end_of_speech",
+                silenceDurationMs: meta.silenceDurationMs || null,
+              });
+              if (reason === "no_speech") {
+                try {
+                  recRef.current?.cancel();
+                } catch {
+                  /* ignore */
+                }
+                recRef.current = null;
+                endCall({ status: "No speech detected — test ended", autoEndReason: "no_speech" });
+                return;
+              }
+              try {
+                recRef.current?.stop();
+              } catch {
+                /* already stopped */
+              }
+            },
+          });
+          if (vad) {
+            vadCleanupRef.current = vad.cleanup;
+            pushVoiceHealth("vadStarted", { vadAvailable: true, vadStarted: true });
+          } else {
+            pushVoiceHealth("vadUnavailable", { vadAvailable: false, vadStarted: false });
+            recordingStopReasonRef.current = "fixed_timer_fallback";
+            listenClipTimerRef.current = window.setTimeout(() => {
+              listenClipTimerRef.current = 0;
+              recordingStopReasonRef.current = "fixed_timer_fallback";
+              pushVoiceHealth("recorderStopRequested", {
+                recorderStopRequested: true,
+                recordingStopReason: "fixed_timer_fallback",
+              });
+              try {
+                recRef.current?.stop();
+              } catch {
+                /* already stopped */
+              }
+            }, TEST_CALL_VAD.fallbackClipMs);
+          }
+        } else {
+          listenClipTimerRef.current = window.setTimeout(() => {
+            listenClipTimerRef.current = 0;
+            pushVoiceHealth("recorderStopRequested", { recorderStopRequested: true });
+            try {
+              recRef.current?.stop();
+            } catch {
+              /* already stopped */
+            }
+          }, LISTEN_CLIP_MS);
+        }
+      } catch (cause) {
+        pushVoiceHealth("secondMicAcquireFailed", {
+          secondMicAcquireSucceeded: false,
+          secondMicAcquireErrorName: sanitizedErrorName(cause),
+        });
+        console.error("[voice] microphone start failed", cause);
+        wantMicRef.current = false;
+        if (testCallActiveRef.current) {
+          endCall({ status: "No speech detected — test ended", autoEndReason: "mic_failed" });
+        } else if ((callPhaseRef.current as CallPhase) !== "ended") {
+          applyCallPhase("idle");
+        }
+        const { message } = describeGetUserMediaFailure(cause);
+        setLines((current) => [...current, { id: nextId(), speaker: "system", text: message }]);
+      }
+    })();
   };
   startListeningRef.current = startListening;
 
   const startCall = () => {
+    if (callStartingRef.current || callActiveRef.current) {
+      pushVoiceHealth("startCallEntered", { startCallEntered: true, callStartingAccepted: false });
+      return;
+    }
+    resetVoiceHealth(language === "en" || language === "es" ? language : "auto");
+    pushVoiceHealth("startCallEntered", { startCallEntered: true });
+    pushVoiceHealth("callStartingAccepted", { callStartingAccepted: true, oneTurnMode: true });
+    callStartingRef.current = true;
+    endCallInFlightRef.current = false;
+    testCallActiveRef.current = true;
+    testCallGuestTurnAcceptedRef.current = false;
     ensureAudioUnlocked();
+    pushVoiceHealth("audioUnlockSucceeded", { audioUnlockSucceeded: true });
+    applyCallPhase("idle");
     wantMicRef.current = true;
     callActiveRef.current = true;
     sessionLangRef.current = language === "auto" ? "auto" : language;
@@ -659,23 +1111,47 @@ export function VoiceConciergeView() {
         text: `Connected · ${lineNumber} · ${selectedProperty.name} · ${profile.name} · ${selectedProperty.timezone}`,
       },
     ]);
+    clearTestCallLimitTimer();
+    testCallLimitTimerRef.current = window.setTimeout(() => {
+      testCallLimitTimerRef.current = 0;
+      if (!testCallActiveRef.current && !callActiveRef.current) return;
+      pushVoiceHealth("safetyTimerFired", { safetyTimerFired: true });
+      endCall({ status: "Test ended automatically", autoEndReason: "safety_timeout" });
+    }, TEST_CALL_LIMIT_MS);
 
     void (async () => {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        stream.getTracks().forEach((track) => track.stop());
+        try {
+          pushVoiceHealth("micProbeStarted", { micProbeStarted: true });
+          const stream = await acquireMicrophoneStream();
+          const probeTracks = stream.getTracks();
+          pushVoiceHealth("micProbeSucceeded", {
+            micProbeSucceeded: true,
+            probeTrackCount: probeTracks.length,
+          });
+          probeTracks.forEach((track) => track.stop());
+          pushVoiceHealth("probeTracksStopped", { probeTracksStopped: true });
+        } catch (cause) {
+          pushVoiceHealth("micProbeFailed", {
+            micProbeSucceeded: false,
+            micProbeErrorName: sanitizedErrorName(cause),
+          });
+          console.error("[voice] microphone permission denied", cause);
+          wantMicRef.current = false;
+          const { message } = describeGetUserMediaFailure(cause);
+          setLines((current) => [...current, { id: nextId(), speaker: "system", text: message }]);
+          endCall({ status: "No speech detected — test ended", autoEndReason: "mic_failed" });
+          return;
+        }
+        if (!callActiveRef.current || callPhaseRef.current === "ended") return;
+        voiceHealthGreetingRef.current = true;
+        void streamReply(greeting);
       } catch (cause) {
-        console.error("[voice] microphone permission denied", cause);
-        setLines((current) => [
-          ...current,
-          {
-            id: nextId(),
-            speaker: "system",
-            text: "Microphone permission is required for live listening. You can still type a question.",
-          },
-        ]);
+        console.error("[voice] Test Call failed", cause);
+        endCall({ status: "No speech detected — test ended", autoEndReason: "mic_failed" });
+      } finally {
+        callStartingRef.current = false;
       }
-      void streamReply(greeting);
     })();
   };
 
@@ -697,16 +1173,20 @@ export function VoiceConciergeView() {
 
   const toggleListen = () => {
     ensureAudioUnlocked();
-    if (listening) {
+    if (listening || callPhaseRef.current === "listening") {
       wantMicRef.current = false;
       stopListening();
+      if (callPhaseRef.current !== "ended") applyCallPhase("idle");
       return;
     }
-    if (speaking || responding || heygen.speaking) cancelSpeech();
+    if (callPhaseRef.current === "speaking" || callPhaseRef.current === "thinking" || heygen.speaking) {
+      cancelSpeech();
+    }
     ensureVoiceSession();
     callActiveRef.current = true;
+    if (callPhaseRef.current === "ended") applyCallPhase("idle");
     wantMicRef.current = true;
-    startListening();
+    resumeListeningIfAllowed();
   };
 
   return (
@@ -745,6 +1225,16 @@ export function VoiceConciergeView() {
             Tap to listen
           </button>
         ) : null}
+        {hostPlaces.length ? (
+          <div className="mb-3">
+            <HostGuideResults results={hostPlaces} />
+          </div>
+        ) : null}
+        {livePlaces.length ? (
+          <div className="mb-3">
+            <GoogleMapsLiveResults results={livePlaces} />
+          </div>
+        ) : null}
         <AiReceptionistStudio
           phase={phase}
           voiceName={profile.name}
@@ -770,7 +1260,7 @@ export function VoiceConciergeView() {
           draft={draft}
           onDraftChange={setDraft}
           onSimulateCall={startCall}
-          onEndCall={endCall}
+          onEndCall={() => endCall()}
           onSend={handleGuestUtterance}
           onListen={toggleListen}
           onStopSpeech={cancelSpeech}
@@ -780,15 +1270,33 @@ export function VoiceConciergeView() {
           videoRef={heygen.videoRef}
           videoReady={heygen.ready}
         />
+        {VOICE_HEALTH_DEV ? (
+          <VoiceHealthCheckPanel
+            report={voiceHealth}
+            fallbackJson={voiceHealthCopyFallback}
+            copyStatus={voiceHealthCopyStatus}
+            onCopy={async () => {
+              const json = JSON.stringify(voiceHealth, null, 2);
+              try {
+                await navigator.clipboard.writeText(json);
+                setVoiceHealthCopyFallback("");
+                setVoiceHealthCopyStatus("Copied.");
+              } catch {
+                setVoiceHealthCopyFallback(json);
+                setVoiceHealthCopyStatus("Clipboard blocked. Copy from the box below.");
+              }
+            }}
+            onReset={() => {
+              resetVoiceHealth(language === "en" || language === "es" ? language : "auto");
+              setVoiceHealthCopyStatus("Diagnostics reset.");
+            }}
+          />
+        ) : null}
       </div>
       </div>
 
       <div id="guest-qr" className="scroll-mt-28">
-      <GuestQrCard
-        property={selectedProperty}
-        aiPhone={lineNumber}
-        emergencyNumber={emergencyNumber}
-      />
+      <GuestQrCard property={selectedProperty} />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
@@ -893,8 +1401,8 @@ export function VoiceConciergeView() {
                 </button>
               </div>
               <p className="text-[11px] leading-relaxed text-slate-600">
-                Audio is generated as MP3 by /api/tts (OpenAI gpt-4o-mini-tts with a hospitality
-                speaking style, falling back to tts-1-hd). Keys in .env.local or pasted here.
+                Audio is generated by /api/tts as a live PCM stream (gpt-4o-mini-tts, marin).
+                Playback starts with the first audio chunk. Keys in .env.local or pasted here.
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
@@ -1064,6 +1572,101 @@ function SliderField({
         className="w-full accent-sky-600"
       />
     </div>
+  );
+}
+
+function VoiceHealthCheckPanel({
+  report,
+  fallbackJson,
+  copyStatus,
+  onCopy,
+  onReset,
+}: {
+  report: VoiceHealthReport;
+  fallbackJson: string;
+  copyStatus: string;
+  onCopy: () => void | Promise<void>;
+  onReset: () => void;
+}) {
+  const micProbe = report.micProbeErrorName
+    ? "Failed"
+    : report.micProbeSucceeded
+      ? "Passed"
+      : report.micProbeStarted
+        ? "Pending"
+        : "Pending";
+  const listeningStream = report.secondMicAcquireErrorName
+    ? "Failed"
+    : report.secondMicAcquireSucceeded
+      ? "Started"
+      : "Not started";
+  const recorder = report.recorderOnStopCount > 0
+    ? "Stopped"
+    : report.recorderAssigned
+      ? "Recording"
+      : "Not started";
+  const transcription = report.transcribeFailed
+    ? "Failed"
+    : report.transcribeReturnedNonempty === true
+      ? "Returned"
+      : report.transcribeAttempted && report.transcribeReturnedNonempty === false
+        ? "Empty"
+        : report.transcribeAttempted
+          ? "Attempted"
+          : "Not attempted";
+
+  return (
+    <section className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-[12px] text-amber-950">
+      <h3 className="text-xs font-semibold uppercase tracking-wide">Voice Health Check (dev only)</h3>
+      <p className="mt-1 text-[11px] text-amber-900">
+        After one Test Call, copy this report. It has no transcript, audio, or listing details.
+      </p>
+      <ul className="mt-2 grid grid-cols-1 gap-1 sm:grid-cols-2">
+        <li>Current phase: {report.currentPhase || "idle"}</li>
+        <li>Mic probe: {micProbe}</li>
+        <li>Listening stream: {listeningStream}</li>
+        <li>Recorder: {recorder}</li>
+        <li>Audio bytes: {report.blobBytes == null ? "—" : String(report.blobBytes)}</li>
+        <li>Transcription: {transcription}</li>
+        <li>Safety timer: {report.safetyTimerFired ? "Fired" : "Not fired"}</li>
+        <li>Run: {report.runNumber} · language: {report.languageMode}</li>
+      </ul>
+      <ol className="mt-2 max-h-36 list-decimal space-y-0.5 overflow-y-auto pl-4 text-[11px] text-slate-800">
+        {report.events.length ? (
+          report.events.map((item, index) => (
+            <li key={`${item.ms}-${item.name}-${index}`}>
+              +{item.ms}ms {item.name}
+            </li>
+          ))
+        ) : (
+          <li>No events yet. Press Test Call with Elena.</li>
+        )}
+      </ol>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <button
+          type="button"
+          className="rounded-lg bg-amber-800 px-3 py-1.5 text-[11px] font-semibold text-white"
+          onClick={() => void onCopy()}
+        >
+          Copy diagnostics
+        </button>
+        <button
+          type="button"
+          className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-amber-950"
+          onClick={onReset}
+        >
+          Reset diagnostics
+        </button>
+      </div>
+      {copyStatus ? <p className="mt-1 text-[11px] text-amber-900">{copyStatus}</p> : null}
+      {fallbackJson ? (
+        <textarea
+          readOnly
+          value={fallbackJson}
+          className="mt-2 h-32 w-full rounded-lg border border-amber-200 bg-white p-2 font-mono text-[10px] text-slate-800"
+        />
+      ) : null}
+    </section>
   );
 }
 

@@ -249,3 +249,197 @@ a.host-nav-item[data-current="true"] {
   color: #fff !important;
   box-shadow: none !important;
 }
+
+/* ── Founder Back Office ops theme — light sky-blue (Host Dashboard untouched) ── */
+.founder-ops {
+  --fo-bg: #eaf6ff;
+  --fo-surface: #ffffff;
+  --fo-surface-2: #f5fbff;
+  --fo-header: #d9eeff;
+  --fo-border: #b8ddf5;
+  --fo-border-strong: #9ecdea;
+  --fo-text: #12324a;
+  --fo-muted: #5e7d93;
+  --fo-accent: #2f80ed;
+  color-scheme: light;
+  position: relative;
+  isolation: isolate;
+  background-color: #eaf6ff;
+  color: var(--fo-text);
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+/*
+ * iOS Safari paints html/body with global --background:#07080c (bg-background).
+ * :has(.founder-ops) is unreliable here (Tailwind utility layers / timing /
+ * overscroll). Explicit .founder-ops-page class is stamped by FounderOpsShell.
+ */
+html.founder-ops-page,
+body.founder-ops-page {
+  background: #eaf6ff !important;
+  background-color: #eaf6ff !important;
+  color: #12324a !important;
+}
+
+/* Fixed full-viewport sky paint — covers overscroll + safe-area gaps on iPhone */
+.founder-ops-viewport-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-color: #eaf6ff;
+  background-image:
+    radial-gradient(1000px 520px at 8% -8%, rgb(47 128 237 / 0.1), transparent 55%),
+    radial-gradient(800px 420px at 92% 0%, rgb(56 189 248 / 0.12), transparent 50%);
+}
+
+.founder-ops-header {
+  position: relative;
+  z-index: 1;
+  background: rgb(217 238 255 / 0.95);
+  border-color: var(--fo-border) !important;
+  backdrop-filter: blur(10px);
+}
+
+.founder-ops-mark {
+  border: 1px solid rgb(47 128 237 / 0.35);
+  background: rgb(47 128 237 / 0.1);
+  color: #2f80ed;
+}
+
+/* Remap utilities so existing slate/white cards pick up sky-blue ops chrome */
+.founder-ops .bg-white {
+  background-color: var(--fo-surface) !important;
+}
+.founder-ops .bg-slate-50 {
+  background-color: var(--fo-surface-2) !important;
+}
+.founder-ops .bg-slate-100 {
+  background-color: #eaf6ff !important;
+}
+.founder-ops .hover\:bg-slate-50:hover,
+.founder-ops .hover\:bg-white:hover {
+  background-color: #eaf6ff !important;
+}
+.founder-ops .active\:bg-slate-50:active {
+  background-color: #d9eeff !important;
+}
+
+.founder-ops .text-slate-900 {
+  color: var(--fo-text) !important;
+}
+.founder-ops .text-slate-800 {
+  color: #1a405c !important;
+}
+.founder-ops .text-slate-700 {
+  color: #2a516b !important;
+}
+.founder-ops .text-slate-600 {
+  color: var(--fo-muted) !important;
+}
+.founder-ops .text-slate-500 {
+  color: #7a96a8 !important;
+}
+.founder-ops .hover\:text-slate-900:hover {
+  color: #0b2438 !important;
+}
+
+.founder-ops .border-slate-100 {
+  border-color: #d7eefb !important;
+}
+.founder-ops .border-slate-200 {
+  border-color: var(--fo-border) !important;
+}
+.founder-ops .border-slate-300 {
+  border-color: var(--fo-border-strong) !important;
+}
+.founder-ops .border-slate-400 {
+  border-color: #7eb6d8 !important;
+}
+.founder-ops .divide-slate-200 > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--fo-border) !important;
+}
+
+.founder-ops .shadow-sm {
+  box-shadow: 0 1px 2px rgb(18 50 74 / 0.06), 0 0 0 1px rgb(184 221 245 / 0.45) !important;
+}
+
+/* Keep semantic status hues readable on light sky chrome */
+.founder-ops .bg-emerald-50 {
+  background-color: #ecfdf5 !important;
+}
+.founder-ops .text-emerald-700,
+.founder-ops .text-emerald-800,
+.founder-ops .text-emerald-900 {
+  color: #047857 !important;
+}
+.founder-ops .border-emerald-200 {
+  border-color: #a7f3d0 !important;
+}
+
+.founder-ops .bg-amber-50 {
+  background-color: #fffbeb !important;
+}
+.founder-ops .text-amber-800,
+.founder-ops .text-amber-900,
+.founder-ops .text-amber-950 {
+  color: #92400e !important;
+}
+.founder-ops .border-amber-200 {
+  border-color: #fde68a !important;
+}
+
+.founder-ops .bg-rose-50 {
+  background-color: #fff1f2 !important;
+}
+.founder-ops .text-rose-800,
+.founder-ops .text-rose-900,
+.founder-ops .text-rose-950 {
+  color: #9f1239 !important;
+}
+.founder-ops .border-rose-200 {
+  border-color: #fecdd3 !important;
+}
+
+.founder-ops .bg-sky-50 {
+  background-color: #eaf6ff !important;
+}
+.founder-ops .text-sky-800,
+.founder-ops .text-sky-900 {
+  color: #075985 !important;
+}
+.founder-ops .border-sky-200 {
+  border-color: var(--fo-border) !important;
+}
+
+.founder-ops input,
+.founder-ops select,
+.founder-ops textarea {
+  color-scheme: light;
+}
+.founder-ops input:not([type="checkbox"]):not([type="radio"]),
+.founder-ops select,
+.founder-ops textarea {
+  background-color: #ffffff;
+  border-color: var(--fo-border-strong);
+  color: var(--fo-text);
+}
+.founder-ops input::placeholder,
+.founder-ops textarea::placeholder {
+  color: #7a96a8;
+}
+
+.founder-ops table {
+  color: var(--fo-text);
+}
+.founder-ops thead {
+  color: var(--fo-muted);
+}
+.founder-ops code {
+  background-color: #eaf6ff !important;
+  color: #1a405c !important;
+}
+

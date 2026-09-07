@@ -16,7 +16,13 @@ function staysOnPublicSurface(path: string) {
 
 function safeNextPath(value: string | null) {
   if (!value) return "/dashboard";
-  if (value.startsWith("/admin") || value.startsWith("/dashboard")) return value;
+  if (
+    value.startsWith("/admin") ||
+    value.startsWith("/backoffice") ||
+    value.startsWith("/dashboard")
+  ) {
+    return value;
+  }
   return "/dashboard";
 }
 
@@ -26,7 +32,12 @@ export async function middleware(request: NextRequest) {
   // Guest pages are public. Skip Supabase auth here so a hung getUser()
   // cannot freeze /guest/[id] on mobile or through a tunnel.
   if (path.startsWith("/guest") || path.startsWith("/housekeeping")) {
-    return NextResponse.next({ request });
+    const response = NextResponse.next({ request });
+    if (path.startsWith("/guest") || path.startsWith("/housekeeping/p")) {
+      response.headers.set("Cache-Control", "no-store");
+      response.headers.set("Referrer-Policy", "no-referrer");
+    }
+    return response;
   }
 
   const { user, supabaseResponse } = await updateAuthSession(request);
@@ -36,7 +47,8 @@ export async function middleware(request: NextRequest) {
     return supabaseResponse;
   }
 
-  const isHostApp = path.startsWith("/dashboard") || path.startsWith("/admin");
+  const isFounderSurface = path.startsWith("/admin") || path.startsWith("/backoffice");
+  const isHostApp = path.startsWith("/dashboard") || isFounderSurface;
   const isAuthPage = path === "/login";
 
   if (isHostApp && !user) {
@@ -46,7 +58,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(login);
   }
 
-  if (path.startsWith("/admin") && user && !isSuperAdmin(user)) {
+  if (isFounderSurface && user && !isSuperAdmin(user)) {
     const hostHome = request.nextUrl.clone();
     hostHome.pathname = "/dashboard";
     hostHome.search = "";
@@ -75,7 +87,10 @@ export const config = {
     "/housekeeping/:path*",
     "/verify/:path*",
     "/dashboard/:path*",
+    "/admin",
     "/admin/:path*",
+    "/backoffice",
+    "/backoffice/:path*",
     "/login",
     "/signup",
   ],

@@ -11,6 +11,15 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { createAuthBrowserClient } from "@/lib/supabase-auth-browser";
 import { hostFullName, writeStoredHostProfileName } from "@/lib/host-display-name";
 import { isDevPreviewUser, readPendingSignup } from "@/lib/pending-signup";
+import {
+  HOST_ISABELA_AUTO_VOICE_KEY,
+  HOST_LANGUAGE_STORAGE_KEY,
+  parseHostBriefingLanguage,
+  readIsabelaAutoVoicePreference,
+  writeIsabelaAutoVoicePreference,
+  writeStoredHostBriefingLanguage,
+  type VoiceBriefingLanguage,
+} from "@/lib/smart-voice-briefing";
 import { TeamCleanersAccessPanel } from "@/components/dashboard/team-cleaners-access";
 import { HostBillingSummary } from "@/components/dashboard/host-billing-summary";
 
@@ -33,6 +42,8 @@ const STORAGE = {
   email: "zencierge.hub.email",
   emergency: "zencierge.hostEmergency",
   timezone: "zencierge.hub.timezone",
+  language: HOST_LANGUAGE_STORAGE_KEY,
+  isabelaAutoVoice: HOST_ISABELA_AUTO_VOICE_KEY,
   currency: "zencierge.hub.currency",
   neighborSms: "zencierge.hub.alertNeighborSms",
   hkSms: "zencierge.hub.alertHkSms",
@@ -72,6 +83,11 @@ function SettingsViewInner() {
   const [email, setEmail] = useState("");
   const [emergency, setEmergency] = useState("+1 (954) 275-3544");
   const [timezone, setTimezone] = useState("America/New_York");
+  const [language, setLanguage] = useState<VoiceBriefingLanguage>(() =>
+    typeof window === "undefined"
+      ? "en"
+      : parseHostBriefingLanguage(window.localStorage.getItem(HOST_LANGUAGE_STORAGE_KEY)),
+  );
   const [currency, setCurrency] = useState("USD");
   const [profileBusy, setProfileBusy] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
@@ -80,6 +96,7 @@ function SettingsViewInner() {
   const [hkSms, setHkSms] = useState(true);
   const [damageAlert, setDamageAlert] = useState(true);
   const [voiceEscalation, setVoiceEscalation] = useState(true);
+  const [isabelaAutoVoice, setIsabelaAutoVoice] = useState(true);
 
   const [lockVendor, setLockVendor] = useState<LockVendor>("yale");
   const [autoPin, setAutoPin] = useState(true);
@@ -110,6 +127,7 @@ function SettingsViewInner() {
     setHkSms(window.localStorage.getItem(STORAGE.hkSms) !== "0");
     setDamageAlert(window.localStorage.getItem(STORAGE.damage) !== "0");
     setVoiceEscalation(window.localStorage.getItem(STORAGE.voiceEscalation) !== "0");
+    setIsabelaAutoVoice(readIsabelaAutoVoicePreference() !== "disabled");
     const lock = window.localStorage.getItem(STORAGE.lockVendor);
     if (lock === "august" || lock === "yale" || lock === "schlage") setLockVendor(lock);
     setAutoPin(window.localStorage.getItem(STORAGE.autoPin) !== "0");
@@ -141,6 +159,7 @@ function SettingsViewInner() {
     window.localStorage.setItem(STORAGE.email, email.trim());
     window.localStorage.setItem(STORAGE.emergency, emergency.trim());
     window.localStorage.setItem(STORAGE.timezone, timezone);
+    writeStoredHostBriefingLanguage(language);
     window.localStorage.setItem(STORAGE.currency, currency);
     writeStoredHostProfileName(name);
     setFullName(name);
@@ -191,6 +210,7 @@ function SettingsViewInner() {
     window.localStorage.setItem(STORAGE.hkSms, hkSms ? "1" : "0");
     window.localStorage.setItem(STORAGE.damage, damageAlert ? "1" : "0");
     window.localStorage.setItem(STORAGE.voiceEscalation, voiceEscalation ? "1" : "0");
+    writeIsabelaAutoVoicePreference(isabelaAutoVoice ? "enabled" : "disabled");
     flashSaved();
   };
 
@@ -250,6 +270,16 @@ function SettingsViewInner() {
                 <option value="America/Los_Angeles">Pacific Time — US & Canada</option>
               </select>
             </Field>
+            <Field label="Dashboard language / Idioma">
+              <select
+                className={field}
+                value={language}
+                onChange={(event) => setLanguage(parseHostBriefingLanguage(event.target.value))}
+              >
+                <option value="en">English</option>
+                <option value="es">Español</option>
+              </select>
+            </Field>
             <Field label="Currency">
               <select className={field} value={currency} onChange={(event) => setCurrency(event.target.value)}>
                 <option value="USD">USD — US Dollar</option>
@@ -296,6 +326,12 @@ function SettingsViewInner() {
               description="Ring the emergency phone when Elena detects a leak, lockout, or safety event."
               checked={voiceEscalation}
               onChange={setVoiceEscalation}
+            />
+            <ToggleRow
+              title="Isabela auto-speak on dashboard open"
+              description="When enabled, Isabela greets you with the Smart Login Briefing when Overview loads (browser permitting)."
+              checked={isabelaAutoVoice}
+              onChange={setIsabelaAutoVoice}
             />
           </div>
           <SaveButton label="Save Changes" onClick={saveAlerts} />

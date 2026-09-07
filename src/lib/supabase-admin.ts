@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { isValidSupabaseJwt, isValidSupabaseUrl, SUPABASE_URL } from "@/lib/supabase-config";
+import { isValidSupabaseServiceRoleKey, isValidSupabaseUrl, SUPABASE_URL } from "@/lib/supabase-config";
 
 export function getSupabaseServiceRoleKey() {
   return (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || "").trim();
@@ -7,7 +7,7 @@ export function getSupabaseServiceRoleKey() {
 
 export function tryCreateSupabaseAdminClient() {
   const key = getSupabaseServiceRoleKey();
-  if (!isValidSupabaseUrl() || !isValidSupabaseJwt(key)) return null;
+  if (!isValidSupabaseUrl() || !isValidSupabaseServiceRoleKey(key)) return null;
   return createClient(SUPABASE_URL, key, {
     auth: { persistSession: false, autoRefreshToken: false },
   });

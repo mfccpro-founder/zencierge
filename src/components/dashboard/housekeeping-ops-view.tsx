@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { HousekeepingPanel } from "@/components/dashboard/housekeeping-panel";
+import { HousekeepingProofLinkCard } from "@/components/dashboard/housekeeping-proof-link-card";
 import { HousekeepingReportsHistory } from "@/components/dashboard/housekeeping-reports-history";
 import { SupplyTrackingView } from "@/components/dashboard/supply-tracking-view";
 import { TeamCleanersAccessPanel } from "@/components/dashboard/team-cleaners-access";
@@ -43,7 +44,12 @@ function HousekeepingOpsInner() {
       {active === "supplies" ? <SupplyTrackingView /> : null}
       {active === "team" ? <TeamCleanersAccessPanel /> : null}
       {active === "reports" ? <HousekeepingReportsHistory /> : null}
-      {active === "inspections" ? <HousekeepingPanel /> : null}
+      {active === "inspections" ? (
+        <>
+          <HousekeepingProofLinkCard />
+          <HousekeepingPanel />
+        </>
+      ) : null}
     </div>
   );
 }

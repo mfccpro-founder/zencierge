@@ -3,18 +3,73 @@ import { detectReplyLang, type LanguageMode, type ReplyLang } from "@/lib/human-
 
 export type GuestIntent =
   | "emergency"
+  | "connection_check"
   | "grocery"
   | "pharmacy"
   | "restaurant"
+  | "hospital"
+  | "gas"
   | "nearby"
   | "greeting"
   | "wifi"
   | "parking"
   | "door"
+  | "access"
   | "checkin"
   | "trash"
   | "rules"
   | "open";
+
+export type NearbyPlaceKind = "pharmacy" | "grocery" | "restaurant" | "hospital" | "gas" | "nearby";
+
+const STOPWORDS = new Set([
+  "what",
+  "whats",
+  "where",
+  "wheres",
+  "when",
+  "which",
+  "with",
+  "from",
+  "this",
+  "that",
+  "have",
+  "there",
+  "here",
+  "please",
+  "could",
+  "would",
+  "about",
+  "your",
+  "the",
+  "and",
+  "for",
+  "you",
+  "can",
+  "how",
+  "does",
+  "guest",
+  "automatically",
+  "detect",
+  "language",
+  "spanish",
+  "english",
+  "answer",
+  "only",
+  "message",
+  "never",
+  "reply",
+  "other",
+]);
+
+export function extractGuestUtterance(question: string): string {
+  const marker = "\n\nGuest: ";
+  const idx = question.lastIndexOf(marker);
+  if (idx !== -1) return question.slice(idx + marker.length).trim();
+  const guestIdx = question.indexOf("Guest: ");
+  if (guestIdx !== -1) return question.slice(guestIdx + 7).trim();
+  return question.trim();
+}
 
 export function normalizeGuestText(text: string) {
   return text
@@ -27,13 +82,24 @@ export function normalizeGuestText(text: string) {
     .trim();
 }
 
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export function hasWholeWord(haystack: string, needle: string) {
+  const h = normalizeGuestText(haystack);
+  const n = normalizeGuestText(needle);
+  if (!n) return false;
+  if (n.includes(" ")) return h.includes(n);
+  return new RegExp(`(?:^|[^a-z0-9])${escapeRegExp(n)}(?:$|[^a-z0-9])`).test(h);
+}
+
 function padded(text: string) {
   return ` ${text} `;
 }
 
-function hasAny(haystack: string, needles: string[]) {
-  const hay = normalizeGuestText(haystack);
-  return needles.some((needle) => hay.includes(normalizeGuestText(needle)));
+function hasAnyWhole(haystack: string, needles: string[]) {
+  return needles.some((needle) => hasWholeWord(haystack, needle));
 }
 
 const GROCERY_HINTS = [
@@ -44,8 +110,6 @@ const GROCERY_HINTS = [
   "publix",
   "tienda",
   "tiendas",
-  "comprar",
-  "compras",
   "alimentos",
   "whole foods",
   "trader joe",
@@ -66,45 +130,28 @@ const PHARMACY_HINTS = [
 const RESTAURANT_HINTS = [
   "restaurante",
   "restaurant",
-  "comer",
   "cenar",
   "almorzar",
-  "desayunar",
   "dinner",
   "lunch",
-  "breakfast",
   "comida",
-  "cafe",
-  "café",
-  "bar",
-  "casual",
-  "playa",
-  "beach",
-  "mariscos",
-  "seafood",
-  "italiano",
-  "italian",
-  "pizza",
-  "pasta",
-  "desayuno",
-  "brunch",
-  "tacos",
 ];
 
-const NEARBY_HINTS = ["cerca", "cercano", "nearby", "around here", "aqui cerca", "aquí cerca", "walking distance"];
+const HOSPITAL_HINTS = ["hospital", "er", "emergency room", "urgent care", "clinica", "clinic"];
+
+const GAS_HINTS = ["gas station", "gasolinera", "petrol", "fuel", "gasolin"];
+
+const NEARBY_HINTS = ["cerca", "cercano", "nearby", "around here", "aqui cerca", "walking distance"];
 
 const WIFI_HINTS = [
   "wifi",
   "wi-fi",
   "wi fi",
   "internet",
-  "contrasena",
-  "password",
   "clave de internet",
   "clave wifi",
   "clave del wifi",
   "nombre de red",
-  "network",
 ];
 
 const DOOR_HINTS = [
@@ -114,14 +161,22 @@ const DOOR_HINTS = [
   "smartlock",
   "keypad",
   "cerradura",
-  "entrar",
-  "acceso",
   "llave",
-  "puerta",
-  "codigo",
 ];
 
-const PARKING_HINTS = ["estacionamiento", "estacionar", "parking", "parquear", "aparcar", "garage", "porton", "gate code"];
+const ACCESS_HINTS = [
+  "lockbox",
+  "alarm code",
+  "alarm",
+  "gate code",
+  "codigo del porton",
+  "password",
+  "contrasena",
+  "access code",
+  "codigo de acceso",
+];
+
+const PARKING_HINTS = ["estacionamiento", "estacionar", "parking", "parquear", "aparcar", "garage"];
 
 const CHECKIN_HINTS = [
   "check in",
@@ -152,33 +207,98 @@ const RULES_HINTS = ["reglas", "regla de la casa", "silencio", "quiet hours", "f
 
 const EMERGENCY_HINTS = ["fuga", "inundacion", "leak", "flood", "lockout", "cerradura rota", "water leak"];
 
+/** Full-utterance connection checks only — not substring matches. */
+const CONNECTION_CHECK_PHRASES = new Set([
+  "can you hear me",
+  "do you hear me",
+  "are you able to hear me",
+  "are you there",
+  "me escuchas",
+  "me puedes escuchar",
+  "puedes escucharme",
+  "puedes oirme",
+  "me oyes",
+  "estas ahi",
+]);
+
+export function isConnectionCheckUtterance(raw: string): boolean {
+  let q = normalizeGuestText(extractGuestUtterance(raw));
+  q = q.replace(/^(hello|hi|hey|hola)\s+/, "");
+  q = q.replace(/\s+(please|por favor)$/, "");
+  return CONNECTION_CHECK_PHRASES.has(q);
+}
+
 export function detectGuestIntent(raw: string): GuestIntent {
-  const q = normalizeGuestText(raw);
+  const q = normalizeGuestText(extractGuestUtterance(raw));
   const blob = padded(q);
 
-  if (hasAny(q, EMERGENCY_HINTS)) return "emergency";
-  if (PHARMACY_HINTS.some((hint) => q.includes(hint))) return "pharmacy";
-  if (GROCERY_HINTS.some((hint) => q.includes(hint))) return "grocery";
-  if (RESTAURANT_HINTS.some((hint) => q.includes(hint))) return "restaurant";
-  if (NEARBY_HINTS.some((hint) => q.includes(hint))) return "nearby";
+  if (isConnectionCheckUtterance(raw)) return "connection_check";
+  if (hasAnyWhole(q, EMERGENCY_HINTS)) return "emergency";
+  if (hasAnyWhole(q, PHARMACY_HINTS)) return "pharmacy";
+  if (hasAnyWhole(q, HOSPITAL_HINTS)) return "hospital";
+  if (hasAnyWhole(q, GAS_HINTS) || q.includes("gas station")) return "gas";
+  if (hasAnyWhole(q, GROCERY_HINTS)) return "grocery";
+  if (hasAnyWhole(q, RESTAURANT_HINTS) || /\b(restaurant|restaurante)\b/.test(q)) return "restaurant";
+  if (hasAnyWhole(q, NEARBY_HINTS)) return "nearby";
+
+  if (hasAnyWhole(q, ACCESS_HINTS) || /\b(wifi|wi-fi|internet).*\b(password|contrasena|clave)\b/.test(q)) {
+    if (hasAnyWhole(q, WIFI_HINTS) || q.includes("wifi") || q.includes("wi fi") || q.includes("internet")) return "wifi";
+    if (hasAnyWhole(q, DOOR_HINTS) || q.includes("door") || q.includes("puerta")) return "door";
+    return "access";
+  }
 
   const wantsDoorClave =
-    q.includes("clave") && (q.includes("puerta") || q.includes("entrar") || q.includes("cerradura") || q.includes("acceso"));
+    q.includes("clave") &&
+    (q.includes("puerta") || q.includes("entrar") || q.includes("cerradura") || q.includes("acceso"));
   if (wantsDoorClave) return "door";
 
-  if (WIFI_HINTS.some((hint) => q.includes(hint)) || blob.includes(" red ") || q.includes("clave")) return "wifi";
-  if (PARKING_HINTS.some((hint) => q.includes(hint)) || q.includes("estacion")) return "parking";
-  if (DOOR_HINTS.some((hint) => q.includes(hint))) return "door";
-  if (CHECKIN_HINTS.some((hint) => q.includes(hint)) || q.includes("entrada") || q.includes("salida")) {
+  if (hasAnyWhole(q, WIFI_HINTS) || blob.includes(" red ")) return "wifi";
+  if (hasAnyWhole(q, PARKING_HINTS) || q.includes("estacion")) return "parking";
+  if (hasAnyWhole(q, DOOR_HINTS) || q.includes("door code")) return "door";
+  if (
+    hasAnyWhole(q, CHECKIN_HINTS) ||
+    q.includes("check-out") ||
+    q.includes("check-in") ||
+    q.includes("entrada") ||
+    q.includes("salida")
+  ) {
     if (q.includes("supermercado") || q.includes("tienda")) return "grocery";
     return "checkin";
   }
-  if (TRASH_HINTS.some((hint) => q.includes(hint))) return "trash";
-  if (RULES_HINTS.some((hint) => q.includes(hint))) return "rules";
+  if (hasAnyWhole(q, TRASH_HINTS)) return "trash";
+  if (hasAnyWhole(q, RULES_HINTS)) return "rules";
   if (/^(hola|hello|hi|hey|buenas|buenos dias|good morning|good evening)(\s.*)?$/.test(q) && q.split(" ").length <= 4) {
     return "greeting";
   }
   return "open";
+}
+
+export function isNearbyPlaceIntent(intent: GuestIntent): intent is NearbyPlaceKind {
+  return (
+    intent === "pharmacy" ||
+    intent === "grocery" ||
+    intent === "restaurant" ||
+    intent === "hospital" ||
+    intent === "gas" ||
+    intent === "nearby"
+  );
+}
+
+export function isAccessSecretIntent(intent: GuestIntent) {
+  return intent === "wifi" || intent === "door" || intent === "access";
+}
+
+export function containsAccessSecret(text: string) {
+  const n = normalizeGuestText(text);
+  if (
+    /\b(password|passwd|contrasena|wifi password|door code|gate code|lockbox|alarm code|access code|codigo de acceso|codigo de la puerta|clave wifi|clave del wifi)\b/.test(
+      n,
+    )
+  ) {
+    return true;
+  }
+  if (/\b\d{3,6}\s*#/.test(text)) return true;
+  return false;
 }
 
 export function extractHandbookPassages(handbook: string, needles: string[]) {
@@ -186,76 +306,63 @@ export function extractHandbookPassages(handbook: string, needles: string[]) {
   if (!text) return "";
   const parts = text.split(/(?<=[.!?])\s+/);
   const hits = parts.filter((part) => {
-    const n = normalizeGuestText(part);
-    return needles.some((needle) => n.includes(normalizeGuestText(needle)));
+    if (containsAccessSecret(part)) return false;
+    return needles.some((needle) => hasWholeWord(part, needle));
   });
-  return hits.join(" ").trim();
+  return hits.slice(0, 1).join(" ").trim();
 }
 
-const GROCERY_HANDBOOK_NEEDLES = [
-  "grocery",
-  "publix",
-  "supermarket",
-  "tienda",
-  "collins",
-  "walk",
-  "camin",
-  "store",
-  "market",
-  "food",
-  "minuto",
-];
+export function localPlaceHint(property: Property, kind: NearbyPlaceKind, lang: ReplyLang) {
+  const city = property.city;
+  const place =
+    kind === "pharmacy"
+      ? lang === "es"
+        ? "farmacia"
+        : "pharmacy"
+      : kind === "grocery"
+        ? lang === "es"
+          ? "supermercado"
+          : "grocery"
+        : kind === "restaurant"
+          ? lang === "es"
+            ? "restaurante"
+            : "restaurant"
+          : kind === "hospital"
+            ? lang === "es"
+              ? "hospital o urgencias"
+              : "hospital or urgent care"
+            : kind === "gas"
+              ? lang === "es"
+                ? "gasolinera"
+                : "gas station"
+              : lang === "es"
+                ? "sitio cercano"
+                : "nearby place";
 
-export function groceryFromHandbook(property: Property, lang: ReplyLang) {
-  const passage = extractHandbookPassages(property.handbook, GROCERY_HANDBOOK_NEEDLES);
-  if (passage) return passage;
-  return localPlaceHint(property, "grocery", lang);
-}
-
-export function localPlaceHint(
-  property: Property,
-  kind: "grocery" | "pharmacy" | "restaurant" | "nearby",
-  lang: ReplyLang,
-) {
-  const where = `${property.address}, ${property.city}`;
-  if (kind === "pharmacy") {
-    return lang === "es"
-      ? `Desde ${where} busca un CVS o Walgreens en Maps. En ${property.city} suele haber uno a pocos minutos a pie o en auto corto.`
-      : `From ${where}, search Maps for a CVS or Walgreens. In ${property.city} there is usually one a short walk or a few minutes' drive.`;
+  if (lang === "es") {
+    return `Aun no tengo busqueda en vivo de lugares cercanos para ${place} en ${city}. Abre Maps en ${city} para ver opciones actuales; no puedo nombrar un negocio concreto ni una distancia.`;
   }
-  if (kind === "restaurant") {
-    return lang === "es"
-      ? `Estás en ${where}. Abre Maps y busca restaurantes cerca. En ${property.city} hay varias opciones a poca distancia; dime si quieres algo casual, playa o más formal.`
-      : `You're at ${where}. Open Maps for restaurants nearby. ${property.city} has plenty within a short walk or drive. Tell me if you want casual, beachy, or nicer.`;
-  }
-  if (kind === "nearby") {
-    return lang === "es"
-      ? `La propiedad está en ${where}. Dime si buscas farmacia, supermercado o restaurante y te oriento desde esa dirección.`
-      : `The listing is at ${where}. Tell me if you need a pharmacy, grocery, or restaurant and I'll point you from that address.`;
-  }
-  if (property.city === "Miami Beach" || property.city === "Sunny Isles") {
-    return lang === "es"
-      ? `Cerca de ${where} lo más práctico es un Publix sobre Collins Ave. Ábrelo en Maps desde esa dirección; suele ser un tramo corto a pie o en auto.`
-      : `Near ${where}, Publix on Collins Ave is the practical grocery. Open Maps from that address; it's usually a short walk or drive.`;
-  }
-  if (property.city === "Brickell") {
-    return lang === "es"
-      ? `Desde ${where} el Publix de Brickell queda a pocos minutos. Búscalo en Maps; también hay mercados en Brickell City Centre.`
-      : `From ${where}, Publix in Brickell is a few minutes away on Maps. Brickell City Centre also has markets.`;
-  }
-  return lang === "es"
-    ? `Desde ${where} busca un Publix o un supermercado en Maps; en Fort Lauderdale suele haber uno a pocos minutos en auto.`
-    : `From ${where}, search Maps for Publix or a grocery; in Fort Lauderdale it's usually a short drive.`;
+  return `I don't have live nearby-place lookup yet for a ${place} in ${city}. Open Maps in ${city} for current options; I can't name a specific business or distance from here.`;
 }
 
 export function relevantHandbookSnippet(question: string, handbook: string) {
-  const qWords = normalizeGuestText(question)
+  const guest = extractGuestUtterance(question);
+  const qWords = normalizeGuestText(guest)
     .split(" ")
-    .filter((word) => word.length >= 4);
+    .filter((word) => word.length >= 4 && !STOPWORDS.has(word));
   if (!qWords.length || !handbook.trim()) return "";
-  return extractHandbookPassages(handbook, qWords);
+  const passage = extractHandbookPassages(handbook, qWords);
+  if (!passage || containsAccessSecret(passage)) return "";
+  return passage;
 }
 
 export function replyLangFor(question: string, mode: LanguageMode): ReplyLang {
-  return detectReplyLang(question, mode);
+  return detectReplyLang(extractGuestUtterance(question), mode);
+}
+
+export function accessVerificationReply(lang: ReplyLang) {
+  if (lang === "es") {
+    return "Puedo compartir claves y contrasenas solo despues de verificar la reserva. Esta llamada de estudio no esta verificada, asi que no puedo dar ese dato.";
+  }
+  return "I can share access codes and passwords only after your reservation is verified. This studio call isn't verified, so I can't give that value.";
 }

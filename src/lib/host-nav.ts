@@ -1,6 +1,8 @@
 export type HostNavMatch = "exact" | "prefix";
 
 export type HostNavItem = {
+  /** Stable id for guide content and tests. Distinct per query-tab route. */
+  id: string;
   href: string;
   label: string;
   match: HostNavMatch;
@@ -23,63 +25,82 @@ export const HOST_NAV_SECTIONS: HostNavSection[] = [
     id: "command",
     label: "Command Center",
     items: [
-      { href: "/dashboard", label: "Overview", match: "exact" },
-      { href: "/dashboard/calendar", label: "Calendar", match: "prefix" },
+      { id: "overview", href: "/dashboard", label: "Overview", match: "exact" },
+      { id: "calendar", href: "/dashboard/calendar", label: "Calendar", match: "prefix" },
     ],
   },
   {
     id: "financials",
     label: "Financials",
     items: [
-      { href: "/dashboard/financials", label: "Payouts & NOI", match: "prefix" },
-      { href: "/dashboard/chargeback-shield", label: "Chargeback Shield", match: "prefix", nested: true },
-      { href: "/dashboard/dispute-dossier", label: "Dispute Dossier", match: "prefix", nested: true },
+      { id: "payouts-noi", href: "/dashboard/financials", label: "Payouts & NOI", match: "prefix" },
+      { id: "chargeback-shield", href: "/dashboard/chargeback-shield", label: "Chargeback Shield", match: "prefix", nested: true },
+      { id: "dispute-dossier", href: "/dashboard/dispute-dossier", label: "Dispute Dossier", match: "prefix", nested: true },
     ],
   },
   {
     id: "properties",
     label: "Properties & Smart Locks",
     items: [
-      { href: "/dashboard/properties", label: "Properties & access", match: "prefix" },
+      { id: "properties-access", href: "/dashboard/properties", label: "Properties & access", match: "prefix" },
     ],
   },
   {
     id: "elena",
     label: "AI Assistant",
     items: [
-      { href: "/dashboard/voice-agent", label: "Elena Voice", match: "prefix" },
-      { href: "/dashboard/voice-agent?tab=guest-qr", label: "Guest QR", match: "prefix", tab: "guest-qr" },
+      { id: "elena-voice", href: "/dashboard/voice-agent", label: "Elena Voice", match: "prefix" },
+      { id: "guest-qr", href: "/dashboard/voice-agent?tab=guest-qr", label: "Guest QR", match: "prefix", tab: "guest-qr" },
     ],
   },
   {
     id: "operations",
     label: "Operations",
     items: [
-      { href: "/dashboard/housekeeping", label: "Housekeeping", match: "prefix" },
-      { href: "/dashboard/housekeeping?tab=reports", label: "Photo reports", match: "prefix", tab: "reports" },
-      { href: "/dashboard/housekeeping?tab=supplies", label: "Supplies", match: "prefix", tab: "supplies" },
-      { href: "/dashboard/housekeeping?tab=team", label: "Team & Cleaners Access", match: "prefix", tab: "team" },
-      { href: "/dashboard/neighbor-shield", label: "NeighborShield Emergencies", match: "prefix" },
-      { href: "/dashboard/guest-dna", label: "Guest DNA", match: "prefix" },
+      { id: "housekeeping", href: "/dashboard/housekeeping", label: "Housekeeping", match: "prefix" },
+      { id: "photo-reports", href: "/dashboard/housekeeping?tab=reports", label: "Photo reports", match: "prefix", tab: "reports" },
+      { id: "supplies", href: "/dashboard/housekeeping?tab=supplies", label: "Supplies", match: "prefix", tab: "supplies" },
+      { id: "team-cleaners", href: "/dashboard/housekeeping?tab=team", label: "Team & Cleaners Access", match: "prefix", tab: "team" },
+      { id: "neighbor-shield", href: "/dashboard/neighbor-shield", label: "NeighborShield Emergencies", match: "prefix" },
+      { id: "guest-dna", href: "/dashboard/guest-dna", label: "Guest DNA", match: "prefix" },
     ],
   },
   {
     id: "legal",
     label: "Legal",
     items: [
-      { href: "/dashboard/laws", label: "Airbnb Regulations & Laws", match: "prefix" },
-      { href: "/dashboard/guide", label: "User Guide", match: "prefix" },
+      { id: "laws", href: "/dashboard/laws", label: "Airbnb Regulations & Laws", match: "prefix" },
     ],
+  },
+  {
+    id: "guide",
+    label: "User Guide",
+    standalone: true,
+    items: [{ id: "user-guide", href: "/dashboard/guide", label: "User Guide", match: "prefix" }],
   },
   {
     id: "settings",
     label: "Settings",
     standalone: true,
-    items: [{ href: "/dashboard/settings", label: "Settings", match: "exact" }],
+    items: [{ id: "settings", href: "/dashboard/settings", label: "Settings", match: "exact" }],
   },
 ];
 
 export const SETTINGS_PATH = "/dashboard/settings";
+export const USER_GUIDE_PATH = "/dashboard/guide";
+
+export function flattenHostNavItems() {
+  return HOST_NAV_SECTIONS.flatMap((section) => section.items);
+}
+
+export function isUserGuideNavItem(item: HostNavItem) {
+  return item.id === "user-guide" || normalizePathname(new URL(item.href, "https://zencierge.local").pathname) === USER_GUIDE_PATH;
+}
+
+/** Routed sidebar items documented in the User Guide (excludes the Guide itself). */
+export function guideableHostNavItems() {
+  return flattenHostNavItems().filter((item) => !isUserGuideNavItem(item));
+}
 
 /** Strip query/hash and a trailing slash so `/dashboard/settings/` does not leak into prefix checks. */
 export function normalizePathname(pathname: string) {

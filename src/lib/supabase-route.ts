@@ -4,6 +4,13 @@ import { SUPABASE_ANON_KEY, SUPABASE_URL, supabaseEnvIssue } from "@/lib/supabas
 import { hasDevHostCookie, mockDevHostUser } from "@/lib/dev-host-session";
 import { hostUserFromPending, parsePendingHostCookie, PENDING_HOST_COOKIE } from "@/lib/pending-signup";
 
+export type HostAuthSource = "supabase-auth" | "dev-fallback";
+
+/** Provenance from the branch that produced the host, not from UUID shape. */
+export function hostAuthSourceFromBranch(branch: "pending" | "dev-host-cookie" | "supabase-get-user"): HostAuthSource {
+  return branch === "supabase-get-user" ? "supabase-auth" : "dev-fallback";
+}
+
 export async function createSupabaseRouteClient() {
   const cookieStore = await cookies();
   return createServerClient(
@@ -26,16 +33,26 @@ export async function createSupabaseRouteClient() {
   );
 }
 
-export async function requireHostUser() {
+export async function requireHostAuthContext() {
   const cookieStore = await cookies();
   const pending = parsePendingHostCookie(cookieStore.get(PENDING_HOST_COOKIE)?.value);
   if (pending) {
     const supabase = await createSupabaseRouteClient();
-    return { user: hostUserFromPending(pending), supabase, error: null };
+    return {
+      user: hostUserFromPending(pending),
+      supabase,
+      error: null,
+      source: hostAuthSourceFromBranch("pending"),
+    };
   }
   if (hasDevHostCookie(cookieStore)) {
     const supabase = await createSupabaseRouteClient();
-    return { user: mockDevHostUser(), supabase, error: null };
+    return {
+      user: mockDevHostUser(),
+      supabase,
+      error: null,
+      source: hostAuthSourceFromBranch("dev-host-cookie"),
+    };
   }
 
   const supabase = await createSupabaseRouteClient();
@@ -44,10 +61,30 @@ export async function requireHostUser() {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) {
-      return { user: null, supabase, error: Response.json({ error: "Unauthorized" }, { status: 401 }) };
+      return {
+        user: null,
+        supabase,
+        error: Response.json({ error: "Unauthorized" }, { status: 401 }),
+        source: null,
+      };
     }
-    return { user, supabase, error: null };
+    return {
+      user,
+      supabase,
+      error: null,
+      source: hostAuthSourceFromBranch("supabase-get-user"),
+    };
   } catch {
-    return { user: null, supabase, error: Response.json({ error: "Unauthorized" }, { status: 401 }) };
+    return {
+      user: null,
+      supabase,
+      error: Response.json({ error: "Unauthorized" }, { status: 401 }),
+      source: null,
+    };
   }
+}
+
+/** Existing callers keep { user, supabase, error }. `source` is additive. */
+export async function requireHostUser() {
+  return requireHostAuthContext();
 }

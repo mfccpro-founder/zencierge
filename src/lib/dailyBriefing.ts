@@ -1,30 +1,14 @@
 import type { User } from "@prisma/client";
 import { getUserFinanceContext } from "@/lib/financialMetrics";
 import type { AlertLevel, DailyBriefing, FinancialOverview } from "@/lib/finance-types";
+import { hostLocalClock, resolveVoiceBriefingBlock, voiceBriefingGreeting } from "@/lib/smart-voice-briefing";
 
 export type { AlertLevel, DailyBriefing };
 
-function hourInZone(timeZone: string, now: Date) {
-  const hourRaw = new Intl.DateTimeFormat("en-US", {
-    hour: "numeric",
-    hourCycle: "h23",
-    timeZone,
-  }).format(now);
-  const hour = Number.parseInt(hourRaw, 10);
-  if (!Number.isFinite(hour)) return now.getHours();
-  return hour === 24 ? 0 : hour;
-}
-
 function greetingFor(name: string, language: "es" | "en", timeZone: string, now: Date) {
-  const hour = hourInZone(timeZone, now);
-  if (language === "es") {
-    if (hour < 12) return `Buenos días, ${name}.`;
-    if (hour < 19) return `Buenas tardes, ${name}.`;
-    return `Buenas noches, ${name}.`;
-  }
-  if (hour < 12) return `Good morning, ${name}.`;
-  if (hour < 17) return `Good afternoon, ${name}.`;
-  return `Good evening, ${name}.`;
+  const clock = hostLocalClock(timeZone, now);
+  const block = resolveVoiceBriefingBlock(clock.hour, clock.minute);
+  return voiceBriefingGreeting(block.id, language, name);
 }
 
 function usd(amount: number) {
