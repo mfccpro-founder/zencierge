@@ -127,8 +127,8 @@ export async function applySubscriptionWebhook(input: SubscriptionWebhookInput) 
 }
 
 export function normalizeWebhookType(raw: string | undefined): SubscriptionWebhookEvent | null {
-  const type = (raw ?? "").toLowerCase();
-  if (type === "payment.succeeded" || type === "payment.created" || type === "invoice.paid") {
+  const type = (raw ?? "").trim().toLowerCase();
+  if (type === "payment.succeeded" || type === "invoice.paid") {
     return "payment.succeeded";
   }
   if (type === "payment.failed" || type === "invoice.payment_failed") {
