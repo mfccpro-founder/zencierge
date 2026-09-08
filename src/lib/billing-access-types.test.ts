@@ -157,7 +157,18 @@ function runBillingAccessTypesTests() {
     join(root, "src/app/api/backoffice/customers/[id]/complimentary/route.ts"),
     "utf8",
   );
-  assert(route.includes("isSuperAdmin"), "only SuperAdmin can grant complimentary");
+  assert(
+    route.includes("isFounderBillingOperator"),
+    "complimentary access uses strict Founder Billing authorization",
+  );
+  assert(
+    route.includes("source: auth.source"),
+    "complimentary access verifies authenticated-session provenance",
+  );
+  assert(
+    !route.includes("isSuperAdmin"),
+    "complimentary access does not fall back to broad superadmin authorization",
+  );
 
   const panel = readFileSync(
     join(root, "src/components/admin/backoffice-complimentary-panel.tsx"),

@@ -1,5 +1,5 @@
 import { requireHostUser } from "@/lib/supabase-route";
-import { isSuperAdmin } from "@/lib/admin-auth";
+import { isFounderBillingOperator } from "@/lib/founder-billing-auth";
 import {
   applyComplimentaryAccess,
   loadHostSubscriptionComp,
@@ -13,7 +13,12 @@ export const dynamic = "force-dynamic";
 async function requireFounder() {
   const auth = await requireHostUser();
   if (auth.error) return { error: auth.error as Response };
-  if (!auth.user || !isSuperAdmin(auth.user)) {
+  if (
+    !isFounderBillingOperator({
+      user: auth.user,
+      source: auth.source,
+    })
+  ) {
     return { error: Response.json({ error: "Forbidden" }, { status: 403 }) };
   }
   return { user: auth.user };

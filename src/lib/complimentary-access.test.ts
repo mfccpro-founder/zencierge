@@ -87,7 +87,18 @@ function runComplimentaryBlock3Tests() {
     join(root, "src/app/api/backoffice/customers/[id]/complimentary/route.ts"),
     "utf8",
   );
-  assert(route.includes("isSuperAdmin"), "write API requires SuperAdmin");
+  assert(
+    route.includes("isFounderBillingOperator"),
+    "Billing access API uses strict Founder Billing authorization",
+  );
+  assert(
+    route.includes("source: auth.source"),
+    "Billing access API checks authenticated-session provenance",
+  );
+  assert(
+    !route.includes("isSuperAdmin"),
+    "Billing access API does not use broad user-metadata-compatible authorization",
+  );
   assert(route.includes("applyComplimentaryAccess"), "write API uses server mutation");
   assert(route.includes('status: 403'), "non-founder forbidden");
 
