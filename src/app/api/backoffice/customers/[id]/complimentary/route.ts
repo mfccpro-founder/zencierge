@@ -1,5 +1,6 @@
 import { requireHostUser } from "@/lib/supabase-route";
 import { isFounderBillingOperator } from "@/lib/founder-billing-auth";
+import { validateFounderBillingMutationRequest } from "@/lib/founder-billing-request-security";
 import {
   applyComplimentaryAccess,
   loadHostSubscriptionComp,
@@ -45,6 +46,19 @@ export async function POST(
 ) {
   const gate = await requireFounder();
   if ("error" in gate) return gate.error;
+
+  const requestSecurity = validateFounderBillingMutationRequest({
+    requestUrl: request.url,
+    origin: request.headers.get("origin"),
+    contentType: request.headers.get("content-type"),
+    secFetchSite: request.headers.get("sec-fetch-site"),
+  });
+  if (!requestSecurity.ok) {
+    return Response.json(
+      { error: requestSecurity.error },
+      { status: requestSecurity.status },
+    );
+  }
 
   const { id } = await context.params;
   let body: Record<string, unknown>;
