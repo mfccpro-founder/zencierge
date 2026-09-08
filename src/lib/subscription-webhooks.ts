@@ -40,6 +40,54 @@ export type SubscriptionPaymentRow = {
   created_at: string;
 };
 
+export type ValidatedSubscriptionWebhookPayment =
+  | {
+      ok: true;
+      paymentId: string;
+      amountUsd: number;
+    }
+  | {
+      ok: false;
+      error: "Invalid payment event";
+    };
+
+/**
+ * Payment events must carry provider-issued identity and measured money.
+ * Never synthesize either field from event time or catalog pricing.
+ */
+export function validateSubscriptionWebhookPayment(
+  input: SubscriptionWebhookInput,
+): ValidatedSubscriptionWebhookPayment | null {
+  if (
+    input.type !== "payment.succeeded" &&
+    input.type !== "payment.failed"
+  ) {
+    return null;
+  }
+
+  const paymentId =
+    typeof input.paymentId === "string" ? input.paymentId.trim() : "";
+  const amountUsd = input.amountUsd;
+
+  if (
+    !paymentId ||
+    typeof amountUsd !== "number" ||
+    !Number.isFinite(amountUsd) ||
+    amountUsd <= 0
+  ) {
+    return {
+      ok: false,
+      error: "Invalid payment event",
+    };
+  }
+
+  return {
+    ok: true,
+    paymentId,
+    amountUsd,
+  };
+}
+
 function periodEndFromNow() {
   const end = new Date();
   end.setUTCMonth(end.getUTCMonth() + 1);
@@ -60,25 +108,33 @@ async function resolveUserId(
 }
 
 export async function applySubscriptionWebhook(input: SubscriptionWebhookInput) {
+  const validatedPayment = validateSubscriptionWebhookPayment(input);
+  if (validatedPayment && !validatedPayment.ok) {
+    throw new Error(validatedPayment.error);
+  }
+
   const admin = createSupabaseAdminClient();
   const at = input.occurredAt ?? new Date().toISOString();
-  const amountUsd = Number(input.amountUsd ?? 0);
+  const amountUsd = validatedPayment?.amountUsd ?? Number(input.amountUsd ?? 0);
   const planId = parsePlanId(input.planId) ?? (amountUsd > 0 ? planFromUsdAmount(amountUsd) : "starter");
   const monthlyUsd = ZENCIERGE_PLANS[planId].monthlyUsd;
   const userId = await resolveUserId(admin, input.userId, input.email);
   const email = input.email?.trim().toLowerCase() || null;
 
   if (input.type === "payment.succeeded" || input.type === "payment.failed") {
+    if (!validatedPayment) {
+      throw new Error("Invalid payment event");
+    }
     const status = input.type === "payment.succeeded" ? "succeeded" : "failed";
     const paymentRow = {
       user_id: userId,
       host_email: email,
-      amount_usd: amountUsd || monthlyUsd,
+      amount_usd: validatedPayment.amountUsd,
       currency: "USD",
       plan_id: planId,
       status,
       provider_event: input.type,
-      provider_payment_id: input.paymentId ?? `${input.type}-${at}`,
+      provider_payment_id: validatedPayment.paymentId,
     };
     const { error: payError } = await admin.from("subscription_payments").upsert(paymentRow, {
       onConflict: "provider_payment_id",
@@ -87,7 +143,7 @@ export async function applySubscriptionWebhook(input: SubscriptionWebhookInput) 
 
     recordSquareCharge({
       at,
-      amountUsd: amountUsd || monthlyUsd,
+      amountUsd: validatedPayment.amountUsd,
       status: status === "succeeded" ? "SUCCESS" : "FAILED",
       email: email ?? undefined,
       planId,
