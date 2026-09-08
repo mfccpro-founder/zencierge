@@ -59,7 +59,6 @@ function runBackOfficeBlock1Tests() {
   assert(nav.includes("/backoffice/payroll-expenses"), "nav includes Payroll & Expenses");
   assert(nav.includes("/backoffice/profit"), "nav includes Profit");
   assert(nav.includes("/backoffice/system"), "nav includes System");
-  assert(nav.includes("Coming next") || nav.includes("Soon"), "unfinished sections marked");
 
   const navOrder = [
     nav.indexOf('href: "/backoffice"'),

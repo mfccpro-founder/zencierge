@@ -66,7 +66,12 @@ function unavailableConfig(): SquareWebhookConfig {
 }
 
 export function squareWebhookConfig(
-  env: SquareWebhookEnvironment = process.env,
+  env: SquareWebhookEnvironment = {
+    SQUARE_WEBHOOK_SIGNATURE_KEY:
+      process.env.SQUARE_WEBHOOK_SIGNATURE_KEY,
+    SQUARE_WEBHOOK_NOTIFICATION_URL:
+      process.env.SQUARE_WEBHOOK_NOTIFICATION_URL,
+  },
 ): SquareWebhookConfig {
   const signatureKey = env.SQUARE_WEBHOOK_SIGNATURE_KEY?.trim() ?? "";
   const notificationUrl =

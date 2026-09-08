@@ -4,7 +4,7 @@ export function lanIpv4Addresses(): string[] {
   const found: string[] = [];
   for (const addrs of Object.values(os.networkInterfaces())) {
     for (const addr of addrs ?? []) {
-      const ipv4 = addr.family === "IPv4" || addr.family === 4;
+      const ipv4 = addr.family === "IPv4";
       if (!ipv4 || addr.internal) continue;
       found.push(addr.address);
     }

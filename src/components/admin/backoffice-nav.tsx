@@ -46,11 +46,6 @@ export function BackOfficeNav() {
             }`}
           >
             {link.label}
-            {link.status === "soon" ? (
-              <span className="ml-1 text-[10px] font-medium uppercase tracking-wide text-[#7A96A8]">
-                Soon
-              </span>
-            ) : null}
           </Link>
         );
       })}

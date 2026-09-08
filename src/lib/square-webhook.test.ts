@@ -14,11 +14,11 @@ function assert(condition: boolean, message: string) {
   if (!condition) throw new Error(message);
 }
 
-const CONFIG: SquareWebhookConfig = {
+const CONFIG = {
   ready: true,
   signatureKey: "test-signature-key",
   notificationUrl: "https://example.com/api/webhooks/square",
-};
+} satisfies SquareWebhookConfig;
 
 function paymentBody(
   status: string,
