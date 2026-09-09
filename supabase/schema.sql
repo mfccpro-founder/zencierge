@@ -76,15 +76,15 @@ create policy "anon all reservations"
   using (true)
   with check (true);
 
--- Host SaaS billing ($29 / $79 / $199). Webhooks use the service role key.
+-- Host SaaS billing plans: Starter $49 / Pro $99 / Portfolio $149 / Agency $199. Webhooks use the service role key.
 create table if not exists public.host_subscriptions (
   user_id uuid primary key references auth.users (id) on delete cascade,
   email text,
   plan_id text not null default 'starter'
-    check (plan_id in ('starter', 'pro', 'agency')),
+    check (plan_id in ('starter', 'pro', 'portfolio', 'agency')),
   status text not null default 'inactive'
     check (status in ('active', 'past_due', 'canceled', 'inactive', 'trial')),
-  monthly_usd numeric(10, 2) not null default 29,
+  monthly_usd numeric(10, 2) not null default 49,
   is_lifetime_free boolean not null default false,
   square_customer_id text,
   square_subscription_id text,

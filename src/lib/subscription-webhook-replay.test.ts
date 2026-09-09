@@ -7,6 +7,8 @@ function assert(condition: boolean, message: string) {
 
 const EXPECTED_MIGRATION =
   "20260908120000_subscription_webhook_replay.sql";
+const EXPECTED_PREVIOUS_MIGRATION =
+  "20260907001500_system_health_alert_state.sql";
 const CONTRACT_START =
   "-- BEGIN subscription webhook replay contract";
 const CONTRACT_END =
@@ -58,14 +60,17 @@ function runSubscriptionWebhookReplayTests() {
     ).length === 1,
     "replay migration timestamp is unique",
   );
+  const replayMigrationIndex =
+    migrationNames.indexOf(EXPECTED_MIGRATION);
+
   assert(
-    Number(EXPECTED_MIGRATION.slice(0, 14)) >
-      Math.max(
-        ...migrationNames
-          .filter((name) => name !== EXPECTED_MIGRATION)
-          .map((name) => Number(name.slice(0, 14))),
-      ),
-    "replay migration follows every existing migration",
+    replayMigrationIndex > 0,
+    "replay migration has a previous migration",
+  );
+  assert(
+    migrationNames[replayMigrationIndex - 1] ===
+      EXPECTED_PREVIOUS_MIGRATION,
+    "replay migration follows its expected historical predecessor",
   );
 
   const migrationContract = extractContract(migrationSql);
