@@ -45,8 +45,8 @@ export type ProviderSubscriptionWebhookAtomicArgs = {
   p_payload_sha256: string;
   p_user_id: string | null;
   p_email: string | null;
-  p_plan_id: ZenciergePlanId;
-  p_monthly_usd: number;
+  p_plan_id: ZenciergePlanId | null;
+  p_monthly_usd: number | null;
   p_amount_usd: number | null;
   p_payment_id: string | null;
   p_square_customer_id: string | null;
@@ -60,7 +60,7 @@ export type ProviderSubscriptionWebhookAtomicResult = {
   replayed: boolean;
   skipped_subscription: boolean;
   resolved_user_id: string | null;
-  resolved_plan_id: ZenciergePlanId;
+  resolved_plan_id: ZenciergePlanId | null;
   subscription_status: "active" | "past_due" | "canceled";
 };
 
@@ -94,7 +94,7 @@ export type ProviderSubscriptionWebhookResult = {
   replayed: boolean;
   skippedSubscription: boolean;
   userId: string | null;
-  planId: ZenciergePlanId;
+  planId: ZenciergePlanId | null;
   status: "active" | "past_due" | "canceled";
 };
 
@@ -240,7 +240,7 @@ function parseProviderAtomicResult(
   data: unknown,
   expected: {
     userId: string | null;
-    planId: ZenciergePlanId;
+    planId: ZenciergePlanId | null;
     status: "active" | "past_due" | "canceled";
   },
 ): ProviderSubscriptionWebhookAtomicResult | null {
@@ -267,16 +267,37 @@ function parseProviderAtomicResult(
         : undefined;
   if (resolvedUserId === undefined) return null;
   if (resolvedUserId !== expected.userId) return null;
-  if (row.skipped_subscription !== (expected.userId === null)) return null;
-  if (row.resolved_plan_id !== expected.planId) return null;
   if (row.subscription_status !== expected.status) return null;
+
+  const resolvedPlanId =
+    row.resolved_plan_id === null
+      ? null
+      : parsePlanId(row.resolved_plan_id);
+  if (
+    row.resolved_plan_id !== null &&
+    resolvedPlanId === null
+  ) {
+    return null;
+  }
+
+  if (expected.status === "canceled") {
+    if (row.skipped_subscription) {
+      if (resolvedPlanId !== null) return null;
+    } else if (resolvedUserId === null || resolvedPlanId === null) {
+      return null;
+    }
+  } else {
+    if (expected.planId === null) return null;
+    if (row.skipped_subscription !== (expected.userId === null)) return null;
+    if (resolvedPlanId !== expected.planId) return null;
+  }
 
   return {
     processed,
     replayed,
     skipped_subscription: row.skipped_subscription,
     resolved_user_id: resolvedUserId,
-    resolved_plan_id: expected.planId,
+    resolved_plan_id: resolvedPlanId,
     subscription_status: expected.status,
   };
 }
@@ -412,19 +433,26 @@ export async function applyProviderSubscriptionWebhook(
     email,
   });
 
-  const resolvedPlan = dependencies.resolvePlan({
-    planId: input.planId,
-    amountUsd: amountUsd ?? 0,
-  });
-  const planId = parsePlanId(resolvedPlan.planId);
-  const monthlyUsd = resolvedPlan.monthlyUsd;
+  let planId: ZenciergePlanId | null = null;
+  let monthlyUsd: number | null = null;
   if (
-    !planId ||
-    typeof monthlyUsd !== "number" ||
-    !Number.isFinite(monthlyUsd) ||
-    monthlyUsd <= 0
+    input.type !== "subscription.canceled" ||
+    providerPlanId !== null
   ) {
-    throw new Error("Invalid provider webhook plan");
+    const resolvedPlan = dependencies.resolvePlan({
+      planId: input.planId,
+      amountUsd: amountUsd ?? 0,
+    });
+    planId = parsePlanId(resolvedPlan.planId);
+    monthlyUsd = resolvedPlan.monthlyUsd;
+    if (
+      !planId ||
+      typeof monthlyUsd !== "number" ||
+      !Number.isFinite(monthlyUsd) ||
+      monthlyUsd <= 0
+    ) {
+      throw new Error("Invalid provider webhook plan");
+    }
   }
 
   const fingerprint = subscriptionWebhookFingerprint({
@@ -469,7 +497,7 @@ export async function applyProviderSubscriptionWebhook(
     throw new Error("Invalid subscription webhook RPC result");
   }
 
-  if (result.processed && validatedPayment) {
+  if (result.processed && validatedPayment && planId) {
     const sideEffectAt = occurredAt ?? dependencies.now().toISOString();
 
     dependencies.recordCharge({

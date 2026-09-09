@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
@@ -9,20 +10,31 @@ const EXPECTED_MIGRATION =
   "20260908120000_subscription_webhook_replay.sql";
 const EXPECTED_PREVIOUS_MIGRATION =
   "20260907001500_system_health_alert_state.sql";
+const EXPECTED_NORMALIZED_SHA256 =
+  "3cabf8c583dd7d7f694e65a1e756ecc432a59f0ae2892a0d3a16e32fe558cf7d";
 const CONTRACT_START =
   "-- BEGIN subscription webhook replay contract";
 const CONTRACT_END =
   "-- END subscription webhook replay contract";
+
+function normalizeLineEndings(value: string) {
+  return value.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
+function normalizedSha256(value: string) {
+  return createHash("sha256")
+    .update(normalizeLineEndings(value), "utf8")
+    .digest("hex");
+}
 
 function extractContract(sql: string) {
   const start = sql.indexOf(CONTRACT_START);
   const end = sql.indexOf(CONTRACT_END);
   assert(start >= 0, "replay contract start marker exists");
   assert(end > start, "replay contract end marker exists");
-  return sql
-    .slice(start, end + CONTRACT_END.length)
-    .replace(/\r\n/g, "\n")
-    .trim();
+  return normalizeLineEndings(
+    sql.slice(start, end + CONTRACT_END.length),
+  ).trim();
 }
 
 function functionBody(sql: string) {
@@ -45,10 +57,6 @@ function runSubscriptionWebhookReplayTests() {
     .sort();
   const migrationPath = join(migrationsDir, EXPECTED_MIGRATION);
   const migrationSql = readFileSync(migrationPath, "utf8");
-  const schemaSql = readFileSync(
-    join(root, "supabase", "schema.sql"),
-    "utf8",
-  );
 
   assert(
     migrationNames.includes(EXPECTED_MIGRATION),
@@ -72,17 +80,15 @@ function runSubscriptionWebhookReplayTests() {
       EXPECTED_PREVIOUS_MIGRATION,
     "replay migration follows its expected historical predecessor",
   );
-
-  const migrationContract = extractContract(migrationSql);
-  const schemaContract = extractContract(schemaSql);
   assert(
-    migrationContract === schemaContract,
-    "migration and canonical schema replay contracts are identical",
+    normalizedSha256(migrationSql) === EXPECTED_NORMALIZED_SHA256,
+    "historical replay migration remains unchanged after line-ending normalization",
   );
 
+  const migrationContract = extractContract(migrationSql);
+
   for (const [label, sql] of [
-    ["migration", migrationContract],
-    ["schema", schemaContract],
+    ["historical migration", migrationContract],
   ] as const) {
     assert(
       sql.includes(

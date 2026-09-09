@@ -54,18 +54,22 @@ function atomicResult(input: {
   processed: boolean;
   replayed: boolean;
   userId?: string | null;
-  planId?: "starter" | "pro" | "portfolio" | "agency";
+  planId?: "starter" | "pro" | "portfolio" | "agency" | null;
   status?: "active" | "past_due" | "canceled";
+  skippedSubscription?: boolean;
 }) {
   const resolvedUserId =
     input.userId === undefined ? USER_ID : input.userId;
+  const resolvedPlanId =
+    input.planId === undefined ? "pro" : input.planId;
   return [
     {
       processed: input.processed,
       replayed: input.replayed,
-      skipped_subscription: resolvedUserId === null,
+      skipped_subscription:
+        input.skippedSubscription ?? resolvedUserId === null,
       resolved_user_id: resolvedUserId,
-      resolved_plan_id: input.planId ?? "pro",
+      resolved_plan_id: resolvedPlanId,
       subscription_status: input.status ?? "active",
     },
   ];
@@ -252,6 +256,11 @@ async function runSubscriptionWebhookTests() {
     first.charges.length === 1 && first.funnels.length === 1,
     "successful first payment executes applicable side effects once",
   );
+  assert(
+    firstResult.planId === "pro" &&
+      firstResult.status === "active",
+    "payment-success plan and status remain unchanged",
+  );
 
   const firstArgs = first.rpcArgs[0];
   assert(firstArgs?.p_provider === "square", "RPC receives provider");
@@ -293,6 +302,42 @@ async function runSubscriptionWebhookTests() {
   assert(
     firstArgs?.p_current_period_end === null,
     "RPC receives null period end for database fallback",
+  );
+
+  const failedProvider = testDependencies({
+    results: [
+      atomicResult({
+        processed: true,
+        replayed: false,
+        status: "past_due",
+      }),
+    ],
+  });
+  const failedProviderResult =
+    await applyProviderSubscriptionWebhook(
+      providerPayment({
+        type: "payment.failed",
+        eventId: "square-event-failed",
+        paymentId: "failed-payment",
+      }),
+      failedProvider.dependencies,
+    );
+  assert(
+    failedProviderResult.processed &&
+      !failedProviderResult.replayed &&
+      failedProviderResult.planId === "pro" &&
+      failedProviderResult.status === "past_due",
+    "payment-failure plan and status remain unchanged",
+  );
+  assert(
+    failedProvider.rpcArgs[0]?.p_plan_id === "pro" &&
+      failedProvider.rpcArgs[0]?.p_monthly_usd === 99,
+    "payment failure still sends a concrete plan and price",
+  );
+  assert(
+    failedProvider.charges.length === 1 &&
+      failedProvider.funnels.length === 0,
+    "payment failure records one failed charge and no paid funnel",
   );
 
   const replay = testDependencies({
@@ -400,6 +445,35 @@ async function runSubscriptionWebhookTests() {
   assert(
     malformed.charges.length === 0 && malformed.funnels.length === 0,
     "malformed RPC result executes no side effects",
+  );
+
+  const nullPaymentPlanResult = testDependencies({
+    results: [[{
+      processed: true,
+      replayed: false,
+      skipped_subscription: false,
+      resolved_user_id: USER_ID,
+      resolved_plan_id: null,
+      subscription_status: "active",
+    }]],
+  });
+  let nullPaymentPlanRejected = false;
+  try {
+    await applyProviderSubscriptionWebhook(
+      providerPayment(),
+      nullPaymentPlanResult.dependencies,
+    );
+  } catch {
+    nullPaymentPlanRejected = true;
+  }
+  assert(
+    nullPaymentPlanRejected,
+    "payment RPC result with a null plan is rejected",
+  );
+  assert(
+    nullPaymentPlanResult.charges.length === 0 &&
+      nullPaymentPlanResult.funnels.length === 0,
+    "null-plan payment result executes no side effects",
   );
 
   for (const invalidIdentity of [
@@ -511,43 +585,251 @@ async function runSubscriptionWebhookTests() {
     "inconsistent no-user result executes no side effects",
   );
 
-  const canceledProvider = testDependencies({
+  const canceledPro = testDependencies({
     results: [
       atomicResult({
         processed: true,
         replayed: false,
+        planId: "pro",
         status: "canceled",
       }),
     ],
   });
-  const canceledProviderResult =
+  const canceledProResult =
     await applyProviderSubscriptionWebhook(
       {
         provider: "generic_subscription",
-        eventId: "cancel-event-1",
+        eventId: "cancel-pro-event",
         type: "subscription.canceled",
         userId: USER_ID,
-        planId: "pro",
+        planId: null,
         paymentId: null,
         amountUsd: null,
+        squareCustomerId: null,
+        squareSubscriptionId: null,
       },
-      canceledProvider.dependencies,
+      canceledPro.dependencies,
     );
   assert(
-    canceledProviderResult.processed &&
-      canceledProviderResult.status === "canceled",
-    "provider cancellation remains supported",
+    canceledProResult.processed &&
+      !canceledProResult.replayed &&
+      !canceledProResult.skippedSubscription &&
+      canceledProResult.planId === "pro" &&
+      canceledProResult.status === "canceled",
+    "existing Pro cancellation returns the preserved Pro plan",
   );
   assert(
-    canceledProvider.rpcArgs[0]?.p_payment_id === null &&
-      canceledProvider.rpcArgs[0]?.p_amount_usd === null,
-    "provider cancellation requires no payment values",
+    canceledPro.rpcArgs[0]?.p_plan_id === null &&
+      canceledPro.rpcArgs[0]?.p_monthly_usd === null &&
+      canceledPro.rpcArgs[0]?.p_payment_id === null &&
+      canceledPro.rpcArgs[0]?.p_amount_usd === null,
+    "missing cancellation plan, price, and payment values remain null",
   );
   assert(
-    canceledProvider.charges.length === 0 &&
-      canceledProvider.funnels.length === 0,
-    "cancellation executes no payment side effects",
+    canceledPro.rpcArgs[0]?.p_square_customer_id === null &&
+      canceledPro.rpcArgs[0]?.p_square_subscription_id === null,
+    "missing cancellation Square identifiers remain null for preservation",
   );
+  assert(
+    canceledPro.counts().planResolutions === 0,
+    "missing cancellation plan does not resolve to Starter pricing",
+  );
+  assert(
+    canceledPro.charges.length === 0 &&
+      canceledPro.funnels.length === 0,
+    "existing Pro cancellation executes no payment side effects",
+  );
+
+  const canceledPortfolio = testDependencies({
+    results: [
+      atomicResult({
+        processed: true,
+        replayed: false,
+        planId: "portfolio",
+        status: "canceled",
+      }),
+    ],
+  });
+  const canceledPortfolioResult =
+    await applyProviderSubscriptionWebhook(
+      {
+        provider: "generic_subscription",
+        eventId: "cancel-portfolio-event",
+        type: "subscription.canceled",
+        userId: USER_ID,
+        planId: null,
+        amountUsd: null,
+        paymentId: null,
+      },
+      canceledPortfolio.dependencies,
+    );
+  assert(
+    canceledPortfolioResult.planId === "portfolio" &&
+      canceledPortfolioResult.status === "canceled" &&
+      !canceledPortfolioResult.skippedSubscription,
+    "existing Portfolio cancellation returns the preserved Portfolio plan",
+  );
+  assert(
+    canceledPortfolio.counts().planResolutions === 0,
+    "Portfolio cancellation does not synthesize Starter pricing",
+  );
+
+  const explicitSquareIds = testDependencies({
+    results: [
+      atomicResult({
+        processed: true,
+        replayed: false,
+        planId: "pro",
+        status: "canceled",
+      }),
+    ],
+  });
+  await applyProviderSubscriptionWebhook(
+    {
+      provider: "square",
+      eventId: "cancel-explicit-square-ids",
+      type: "subscription.canceled",
+      userId: USER_ID,
+      planId: "pro",
+      squareCustomerId: " replacement-customer ",
+      squareSubscriptionId: " replacement-subscription ",
+    },
+    explicitSquareIds.dependencies,
+  );
+  assert(
+    explicitSquareIds.rpcArgs[0]?.p_square_customer_id ===
+      "replacement-customer" &&
+      explicitSquareIds.rpcArgs[0]?.p_square_subscription_id ===
+        "replacement-subscription",
+    "explicit cancellation Square identifiers retain existing update behavior",
+  );
+
+  const noRowCancellation = testDependencies({
+    results: [
+      atomicResult({
+        processed: true,
+        replayed: false,
+        planId: null,
+        status: "canceled",
+        skippedSubscription: true,
+      }),
+    ],
+  });
+  const noRowCancellationResult =
+    await applyProviderSubscriptionWebhook(
+      {
+        provider: "generic_subscription",
+        eventId: "cancel-no-row-event",
+        type: "subscription.canceled",
+        userId: USER_ID,
+        planId: null,
+        amountUsd: null,
+        paymentId: null,
+      },
+      noRowCancellation.dependencies,
+    );
+  assert(
+    noRowCancellationResult.processed &&
+      !noRowCancellationResult.replayed &&
+      noRowCancellationResult.skippedSubscription &&
+      noRowCancellationResult.userId === USER_ID &&
+      noRowCancellationResult.planId === null &&
+      noRowCancellationResult.status === "canceled",
+    "no-row cancellation reports processed, skipped, canceled, and null plan",
+  );
+  assert(
+    noRowCancellation.rpcArgs[0]?.p_plan_id === null &&
+      noRowCancellation.rpcArgs[0]?.p_monthly_usd === null,
+    "no-row cancellation sends no synthesized plan or price",
+  );
+  assert(
+    noRowCancellation.counts().planResolutions === 0 &&
+      noRowCancellation.charges.length === 0 &&
+      noRowCancellation.funnels.length === 0,
+    "no-row cancellation performs no plan fallback or payment side effects",
+  );
+
+  const cancellationReplay = testDependencies({
+    results: [
+      atomicResult({
+        processed: false,
+        replayed: true,
+        planId: null,
+        status: "canceled",
+        skippedSubscription: true,
+      }),
+    ],
+  });
+  const cancellationReplayResult =
+    await applyProviderSubscriptionWebhook(
+      {
+        provider: "generic_subscription",
+        eventId: "cancel-no-row-event",
+        type: "subscription.canceled",
+        userId: USER_ID,
+        planId: null,
+      },
+      cancellationReplay.dependencies,
+    );
+  assert(
+    !cancellationReplayResult.processed &&
+      cancellationReplayResult.replayed &&
+      cancellationReplayResult.skippedSubscription &&
+      cancellationReplayResult.planId === null,
+    "no-row cancellation replay remains an idempotent null-plan result",
+  );
+  assert(
+    cancellationReplay.charges.length === 0 &&
+      cancellationReplay.funnels.length === 0,
+    "cancellation replay executes no payment side effects",
+  );
+
+  for (const impossibleCancellationRow of [
+    {
+      processed: true,
+      replayed: false,
+      skipped_subscription: false,
+      resolved_user_id: USER_ID,
+      resolved_plan_id: null,
+      subscription_status: "canceled",
+    },
+    {
+      processed: true,
+      replayed: false,
+      skipped_subscription: true,
+      resolved_user_id: USER_ID,
+      resolved_plan_id: "starter",
+      subscription_status: "canceled",
+    },
+  ]) {
+    const impossibleCancellation = testDependencies({
+      results: [[impossibleCancellationRow]],
+    });
+    let impossibleCancellationRejected = false;
+    try {
+      await applyProviderSubscriptionWebhook(
+        {
+          provider: "generic_subscription",
+          eventId: "impossible-cancellation",
+          type: "subscription.canceled",
+          userId: USER_ID,
+          planId: null,
+        },
+        impossibleCancellation.dependencies,
+      );
+    } catch {
+      impossibleCancellationRejected = true;
+    }
+    assert(
+      impossibleCancellationRejected,
+      "impossible cancellation RPC result is rejected",
+    );
+    assert(
+      impossibleCancellation.charges.length === 0 &&
+        impossibleCancellation.funnels.length === 0,
+      "impossible cancellation result executes no side effects",
+    );
+  }
 
   const missingTimestampOne = testDependencies({
     now: new Date("2026-09-08T12:00:00.000Z"),

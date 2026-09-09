@@ -90,19 +90,14 @@ function runHostSubscriptionPlanSchemaTests() {
     "Microblock 6A migration remains present",
   );
 
-  const migrationStamp = Number(
-    EXPECTED_MIGRATION.slice(0, 14),
-  );
-  const previousStamps = migrationNames
-    .filter((name) => name !== EXPECTED_MIGRATION)
-    .map((name) => Number(name.slice(0, 14)));
+  const migrationIndex = migrationNames.indexOf(EXPECTED_MIGRATION);
   assert(
-    migrationStamp > Math.max(...previousStamps),
-    "plan migration follows every existing migration",
+    migrationIndex > 0,
+    "host subscription plan migration has a historical predecessor",
   );
   assert(
-    migrationStamp > 20260908120000,
-    "plan migration follows Microblock 6A",
+    migrationNames[migrationIndex - 1] === REPLAY_MIGRATION,
+    "host subscription plan migration follows Microblock 6A directly",
   );
 
   assert(

@@ -165,6 +165,7 @@ revoke all on table public.subscription_webhook_events from authenticated;
 revoke all on table public.subscription_webhook_events from service_role;
 grant select on table public.subscription_webhook_events to service_role;
 
+-- BEGIN subscription cancellation preserve plan RPC
 create or replace function public.process_subscription_webhook_atomic(
   p_provider pg_catalog.text,
   p_event_id pg_catalog.text,
@@ -208,6 +209,7 @@ declare
   v_existing_event_type pg_catalog.text;
   v_existing_payload_sha256 pg_catalog.text;
   v_existing_status pg_catalog.text;
+  v_processed_count pg_catalog.bigint;
 begin
   if p_provider is null then
     raise exception using
@@ -256,28 +258,28 @@ begin
       message = 'invalid webhook event';
   end if;
 
-  if p_plan_id is null then
-    raise exception using
-      errcode = 'ZB001',
-      message = 'invalid webhook event';
-  end if;
-  v_plan_id := pg_catalog.btrim(p_plan_id);
-  if v_plan_id = '' then
-    raise exception using
-      errcode = 'ZB001',
-      message = 'invalid webhook event';
-  end if;
-
-  if p_monthly_usd is null
-     or p_monthly_usd::pg_catalog.text in ('NaN', 'Infinity', '-Infinity')
-     or p_monthly_usd <= 0 then
-    raise exception using
-      errcode = 'ZB001',
-      message = 'invalid webhook event';
-  end if;
-
   if v_event_type = 'payment.succeeded'
      or v_event_type = 'payment.failed' then
+    if p_plan_id is null then
+      raise exception using
+        errcode = 'ZB001',
+        message = 'invalid webhook event';
+    end if;
+    v_plan_id := pg_catalog.btrim(p_plan_id);
+    if v_plan_id = '' then
+      raise exception using
+        errcode = 'ZB001',
+        message = 'invalid webhook event';
+    end if;
+
+    if p_monthly_usd is null
+       or p_monthly_usd::pg_catalog.text in ('NaN', 'Infinity', '-Infinity')
+       or p_monthly_usd <= 0 then
+      raise exception using
+        errcode = 'ZB001',
+        message = 'invalid webhook event';
+    end if;
+
     if p_payment_id is null then
       raise exception using
         errcode = 'ZB001',
@@ -299,6 +301,14 @@ begin
         message = 'invalid payment event';
     end if;
   else
+    if p_plan_id is null then
+      v_plan_id := null;
+    else
+      v_plan_id := pg_catalog.btrim(p_plan_id);
+      if v_plan_id = '' then
+        v_plan_id := null;
+      end if;
+    end if;
     v_payment_id := null;
   end if;
 
@@ -400,15 +410,31 @@ begin
     if v_existing_status = 'processed' then
       processed := false;
       replayed := true;
-      skipped_subscription := p_user_id is null;
       resolved_user_id := p_user_id;
-      resolved_plan_id := v_plan_id;
       subscription_status :=
         case
           when v_event_type = 'payment.succeeded' then 'active'
           when v_event_type = 'payment.failed' then 'past_due'
           else 'canceled'
         end;
+
+      if v_event_type = 'subscription.canceled' then
+        resolved_plan_id := null;
+        if p_user_id is null then
+          skipped_subscription := true;
+        else
+          select s.plan_id
+          into resolved_plan_id
+          from public.host_subscriptions as s
+          where s.user_id = p_user_id;
+
+          skipped_subscription := not found;
+        end if;
+      else
+        skipped_subscription := p_user_id is null;
+        resolved_plan_id := v_plan_id;
+      end if;
+
       return next;
       return;
     end if;
@@ -418,8 +444,50 @@ begin
       message = 'webhook event processing state conflict';
   end if;
 
-  if v_event_type = 'payment.succeeded'
-     or v_event_type = 'payment.failed' then
+  subscription_status :=
+    case
+      when v_event_type = 'payment.succeeded' then 'active'
+      when v_event_type = 'payment.failed' then 'past_due'
+      else 'canceled'
+    end;
+  resolved_user_id := p_user_id;
+
+  if v_event_type = 'subscription.canceled' then
+    -- BEGIN cancellation update-only branch
+    resolved_plan_id := null;
+    skipped_subscription := true;
+
+    if p_user_id is not null then
+      update public.host_subscriptions as s
+      set
+        email =
+          case
+            when v_email is null then s.email
+            else v_email
+          end,
+        status = 'canceled',
+        square_customer_id =
+          case
+            when v_square_customer_id is null
+              then s.square_customer_id
+            else v_square_customer_id
+          end,
+        square_subscription_id =
+          case
+            when v_square_subscription_id is null
+              then s.square_subscription_id
+            else v_square_subscription_id
+          end,
+        updated_at = v_occurred_at
+      where s.user_id = p_user_id
+      returning s.plan_id into resolved_plan_id;
+
+      if found then
+        skipped_subscription := false;
+      end if;
+    end if;
+    -- END cancellation update-only branch
+  else
     insert into public.subscription_payments (
       user_id,
       host_email,
@@ -452,97 +520,73 @@ begin
       plan_id = excluded.plan_id,
       status = excluded.status,
       provider_event = excluded.provider_event;
-  end if;
 
-  if p_user_id is null then
-    update public.subscription_webhook_events as e
-    set
-      status = 'processed',
-      processed_at = pg_catalog.now()
-    where e.provider = v_provider
-      and e.event_id = v_event_id
-      and e.status = 'processing';
-
-    processed := true;
-    replayed := false;
-    skipped_subscription := true;
-    resolved_user_id := null;
     resolved_plan_id := v_plan_id;
-    subscription_status :=
-      case
-        when v_event_type = 'payment.succeeded' then 'active'
-        when v_event_type = 'payment.failed' then 'past_due'
-        else 'canceled'
-      end;
-    return next;
-    return;
+    if p_user_id is null then
+      skipped_subscription := true;
+    else
+      insert into public.host_subscriptions (
+        user_id,
+        email,
+        plan_id,
+        status,
+        monthly_usd,
+        square_customer_id,
+        square_subscription_id,
+        current_period_end,
+        last_payment_at,
+        updated_at
+      )
+      values (
+        p_user_id,
+        v_email,
+        v_plan_id,
+        subscription_status,
+        p_monthly_usd,
+        v_square_customer_id,
+        v_square_subscription_id,
+        v_current_period_end,
+        case
+          when v_event_type = 'payment.succeeded' then v_occurred_at
+          else null
+        end,
+        v_occurred_at
+      )
+      on conflict (user_id) do update
+      set
+        email = excluded.email,
+        plan_id = excluded.plan_id,
+        status = excluded.status,
+        monthly_usd = excluded.monthly_usd,
+        square_customer_id =
+          case
+            when v_square_customer_id is null
+              then public.host_subscriptions.square_customer_id
+            else excluded.square_customer_id
+          end,
+        square_subscription_id =
+          case
+            when v_square_subscription_id is null
+              then public.host_subscriptions.square_subscription_id
+            else excluded.square_subscription_id
+          end,
+        current_period_end =
+          case
+            when v_event_type = 'payment.succeeded'
+              then excluded.current_period_end
+            else public.host_subscriptions.current_period_end
+          end,
+        last_payment_at =
+          case
+            when v_event_type = 'payment.succeeded'
+              then excluded.last_payment_at
+            else public.host_subscriptions.last_payment_at
+          end,
+        updated_at = excluded.updated_at;
+
+      skipped_subscription := false;
+    end if;
   end if;
-
-  subscription_status :=
-    case
-      when v_event_type = 'payment.succeeded' then 'active'
-      when v_event_type = 'payment.failed' then 'past_due'
-      else 'canceled'
-    end;
-
-  insert into public.host_subscriptions (
-    user_id,
-    email,
-    plan_id,
-    status,
-    monthly_usd,
-    square_customer_id,
-    square_subscription_id,
-    current_period_end,
-    last_payment_at,
-    updated_at
-  )
-  values (
-    p_user_id,
-    v_email,
-    v_plan_id,
-    subscription_status,
-    p_monthly_usd,
-    v_square_customer_id,
-    v_square_subscription_id,
-    v_current_period_end,
-    case
-      when v_event_type = 'payment.succeeded' then v_occurred_at
-      else null
-    end,
-    v_occurred_at
-  )
-  on conflict (user_id) do update
-  set
-    email = excluded.email,
-    plan_id = excluded.plan_id,
-    status = excluded.status,
-    monthly_usd = excluded.monthly_usd,
-    square_customer_id =
-      case
-        when v_square_customer_id is null
-          then public.host_subscriptions.square_customer_id
-        else excluded.square_customer_id
-      end,
-    square_subscription_id =
-      case
-        when v_square_subscription_id is null
-          then public.host_subscriptions.square_subscription_id
-        else excluded.square_subscription_id
-      end,
-    current_period_end =
-      case
-        when v_event_type = 'payment.succeeded'
-          then excluded.current_period_end
-        else public.host_subscriptions.current_period_end
-      end,
-    last_payment_at =
-      case
-        when v_event_type = 'payment.succeeded'
-          then excluded.last_payment_at
-        else public.host_subscriptions.last_payment_at
-      end,
-    updated_at = excluded.updated_at;
 
   update public.subscription_webhook_events as e
   set
@@ -552,11 +596,15 @@ begin
     and e.event_id = v_event_id
     and e.status = 'processing';
 
+  get diagnostics v_processed_count = row_count;
+  if v_processed_count <> 1 then
+    raise exception using
+      errcode = 'ZB003',
+      message = 'webhook event finalization unavailable';
+  end if;
+
   processed := true;
   replayed := false;
-  skipped_subscription := false;
-  resolved_user_id := p_user_id;
-  resolved_plan_id := v_plan_id;
   return next;
 end;
 $$;
@@ -625,6 +673,7 @@ grant execute on function public.process_subscription_webhook_atomic(
   pg_catalog.timestamptz,
   pg_catalog.timestamptz
 ) to service_role;
+-- END subscription cancellation preserve plan RPC
 -- END subscription webhook replay contract
 
 create table if not exists public.host_profiles (
