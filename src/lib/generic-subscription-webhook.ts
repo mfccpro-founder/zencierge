@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import {
   normalizeWebhookType,
-  type SubscriptionWebhookInput,
+  type ProviderSubscriptionWebhookInput,
 } from "@/lib/subscription-webhooks";
 import { parsePlanId } from "@/lib/zencierge-plans";
 
@@ -21,7 +21,7 @@ export type GenericSubscriptionWebhookResult = {
 };
 
 export type GenericSubscriptionWebhookEventApplier = (
-  input: SubscriptionWebhookInput,
+  input: ProviderSubscriptionWebhookInput,
 ) => Promise<unknown>;
 
 type GenericSubscriptionWebhookEnvironment = {
@@ -31,12 +31,13 @@ type GenericSubscriptionWebhookEnvironment = {
 type ParsedPayloadError =
   | "invalid_payload"
   | "unsupported_event"
+  | "missing_event_id"
   | "missing_payment_id";
 
 type ParsedPayload =
   | {
       ok: true;
-      event: SubscriptionWebhookInput;
+      event: ProviderSubscriptionWebhookInput;
     }
   | {
       ok: false;
@@ -51,6 +52,20 @@ function stringValue(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed || null;
+}
+
+function replayResponseMetadata(value: unknown) {
+  if (!isRecord(value)) return {};
+  if (
+    typeof value.processed !== "boolean" ||
+    typeof value.replayed !== "boolean"
+  ) {
+    return {};
+  }
+  return {
+    processed: value.processed,
+    replayed: value.replayed,
+  };
 }
 
 function nonnegativeNumber(value: unknown): number | null {
@@ -116,6 +131,11 @@ export function parseGenericSubscriptionWebhookPayload(
     return { ok: false, error: "unsupported_event" };
   }
 
+  const eventId = stringValue(payload.event_id);
+  if (!eventId) {
+    return { ok: false, error: "missing_event_id" };
+  }
+
   const data = isRecord(payload.data) ? payload.data : null;
   const object = data && isRecord(data.object) ? data.object : null;
   const payment =
@@ -154,6 +174,8 @@ export function parseGenericSubscriptionWebhookPayload(
   return {
     ok: true,
     event: {
+      provider: "generic_subscription",
+      eventId,
       type,
       userId:
         stringValue(payload.user_id) ??
@@ -200,6 +222,14 @@ function invalidPayloadResponse(
     return {
       status: 400,
       body: { error: "payment_id is required for payment events" },
+    };
+  }
+  if (error === "missing_event_id") {
+    return {
+      status: 400,
+      body: {
+        error: "event_id is required for subscription webhook events",
+      },
     };
   }
   return {
@@ -255,7 +285,7 @@ export async function handleGenericSubscriptionWebhook(input: {
       status: 200,
       body: {
         received: true,
-        ...(isRecord(applied) ? applied : {}),
+        ...replayResponseMetadata(applied),
       },
     };
   } catch {

@@ -1,6 +1,5 @@
 import { WebhooksHelper } from "square";
-import type { SubscriptionWebhookInput } from "@/lib/subscription-webhooks";
-import { planFromUsdAmount } from "@/lib/zencierge-plans";
+import type { ProviderSubscriptionWebhookInput } from "@/lib/subscription-webhooks";
 
 export type SquarePaymentDisposition = "succeeded" | "failed" | "ignored";
 
@@ -28,7 +27,7 @@ export type SquareWebhookSignatureVerifier = (input: {
 }) => Promise<boolean>;
 
 export type SquareWebhookEventApplier = (
-  input: SubscriptionWebhookInput,
+  input: ProviderSubscriptionWebhookInput,
 ) => Promise<unknown>;
 
 type SquareWebhookEnvironment = {
@@ -46,6 +45,20 @@ function stringValue(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed || null;
+}
+
+function replayResponseMetadata(value: unknown) {
+  if (!isRecord(value)) return {};
+  if (
+    typeof value.processed !== "boolean" ||
+    typeof value.replayed !== "boolean"
+  ) {
+    return {};
+  }
+  return {
+    processed: value.processed,
+    replayed: value.replayed,
+  };
 }
 
 function centsToUsd(value: unknown) {
@@ -206,6 +219,14 @@ export async function handleSquareWebhook(input: {
     };
   }
 
+  const eventId = stringValue(payload.event_id);
+  if (!eventId) {
+    return {
+      status: 400,
+      body: { error: "Invalid Square webhook event" },
+    };
+  }
+
   const amountMoney =
     payment && isRecord(payment.amount_money)
       ? payment.amount_money
@@ -215,7 +236,9 @@ export async function handleSquareWebhook(input: {
   const amountUsd = centsToUsd(amountMoney?.amount);
 
   try {
-    await input.applyEvent({
+    const applied = await input.applyEvent({
+      provider: "square",
+      eventId,
       type:
         disposition === "succeeded"
           ? "payment.succeeded"
@@ -223,7 +246,6 @@ export async function handleSquareWebhook(input: {
       email:
         stringValue(payment?.buyer_email_address) ??
         stringValue(payment?.buyerEmailAddress),
-      planId: planFromUsdAmount(amountUsd),
       amountUsd,
       paymentId,
       squareCustomerId:
@@ -233,12 +255,17 @@ export async function handleSquareWebhook(input: {
         stringValue(payment?.created_at) ??
         stringValue(payment?.createdAt),
     });
+    return {
+      status: 200,
+      body: {
+        received: true,
+        ...replayResponseMetadata(applied),
+      },
+    };
   } catch {
     return {
       status: 503,
       body: { error: "Square webhook processing unavailable" },
     };
   }
-
-  return { status: 200, body: { received: true } };
 }

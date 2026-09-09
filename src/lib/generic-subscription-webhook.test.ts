@@ -9,7 +9,7 @@ import {
   type GenericSubscriptionWebhookConfig,
 } from "./generic-subscription-webhook";
 import { normalizeWebhookType } from "./subscription-webhooks";
-import type { SubscriptionWebhookInput } from "./subscription-webhooks";
+import type { ProviderSubscriptionWebhookInput } from "./subscription-webhooks";
 
 function assert(condition: boolean, message: string) {
   if (!condition) throw new Error(message);
@@ -25,6 +25,7 @@ function paymentPayload(
   extras: Record<string, unknown> = {},
 ) {
   return {
+    event_id: "generic-event-1",
     type,
     user_id: "334119a5-44b0-4567-8184-c2c6ff83a49e",
     email: "host@example.com",
@@ -136,6 +137,14 @@ async function runGenericSubscriptionWebhookTests() {
   assert(parsedSuccess.ok, "valid payment payload parsed");
   if (parsedSuccess.ok) {
     assert(
+      parsedSuccess.event.provider === "generic_subscription",
+      "generic provider retained",
+    );
+    assert(
+      parsedSuccess.event.eventId === "generic-event-1",
+      "generic event_id retained",
+    );
+    assert(
       parsedSuccess.event.type === "payment.succeeded",
       "valid success retains event",
     );
@@ -153,6 +162,34 @@ async function runGenericSubscriptionWebhookTests() {
     );
   }
 
+  for (const eventId of [undefined, null, 42, "", "   "]) {
+    const missingEventId =
+      parseGenericSubscriptionWebhookPayload(
+        paymentPayload("payment.succeeded", {
+          event_id: eventId,
+        }),
+      );
+    assert(
+      !missingEventId.ok &&
+        missingEventId.error === "missing_event_id",
+      `${String(eventId)} generic event_id is rejected`,
+    );
+  }
+
+  const trimmedEventId =
+    parseGenericSubscriptionWebhookPayload(
+      paymentPayload("payment.succeeded", {
+        event_id: " generic-event-trimmed ",
+      }),
+    );
+  assert(trimmedEventId.ok, "trimmed generic event parsed");
+  if (trimmedEventId.ok) {
+    assert(
+      trimmedEventId.event.eventId === "generic-event-trimmed",
+      "generic event_id is trimmed",
+    );
+  }
+
   for (const value of [null, [], "payload", 1]) {
     assert(
       !parseGenericSubscriptionWebhookPayload(value).ok,
@@ -162,6 +199,7 @@ async function runGenericSubscriptionWebhookTests() {
 
   const missingPaymentId =
     parseGenericSubscriptionWebhookPayload({
+      event_id: "generic-missing-payment",
       type: "payment.succeeded",
       amount_usd: 99,
     });
@@ -173,6 +211,7 @@ async function runGenericSubscriptionWebhookTests() {
 
   const pendingInference =
     parseGenericSubscriptionWebhookPayload({
+      event_id: "generic-pending",
       data: {
         object: {
           payment: {
@@ -190,6 +229,7 @@ async function runGenericSubscriptionWebhookTests() {
 
   const approvedInference =
     parseGenericSubscriptionWebhookPayload({
+      event_id: "generic-approved",
       data: {
         object: {
           payment: {
@@ -207,6 +247,7 @@ async function runGenericSubscriptionWebhookTests() {
 
   const cancelInference =
     parseGenericSubscriptionWebhookPayload({
+      event_id: "generic-cancel-inference",
       data: {
         object: {
           subscription: {
@@ -224,6 +265,7 @@ async function runGenericSubscriptionWebhookTests() {
 
   const explicitCancellation =
     parseGenericSubscriptionWebhookPayload({
+      event_id: "generic-cancellation",
       type: "subscription.canceled",
       user_id: "334119a5-44b0-4567-8184-c2c6ff83a49e",
       data: {
@@ -238,6 +280,13 @@ async function runGenericSubscriptionWebhookTests() {
   assert(explicitCancellation.ok, "explicit cancellation accepted");
   if (explicitCancellation.ok) {
     assert(
+      explicitCancellation.event.provider ===
+        "generic_subscription" &&
+        explicitCancellation.event.eventId ===
+          "generic-cancellation",
+      "cancellation retains provider event identity",
+    );
+    assert(
       explicitCancellation.event.paymentId == null,
       "cancellation does not invent payment identity",
     );
@@ -250,6 +299,7 @@ async function runGenericSubscriptionWebhookTests() {
 
   const typePrecedence =
     parseGenericSubscriptionWebhookPayload({
+      event_id: "generic-type-precedence",
       type: "unknown.event",
       event: "payment.succeeded",
       payment_id: "payment-1",
@@ -303,7 +353,7 @@ async function runGenericSubscriptionWebhookTests() {
     "unauthorized request cannot parse or write",
   );
 
-  const applied: SubscriptionWebhookInput[] = [];
+  const applied: ProviderSubscriptionWebhookInput[] = [];
   const accepted = await handleGenericSubscriptionWebhook({
     config: CONFIG,
     xWebhookSecret: CONFIG.secret,
@@ -324,6 +374,72 @@ async function runGenericSubscriptionWebhookTests() {
     applied[0]?.type === "payment.succeeded",
     "invoice.paid maps to one success event",
   );
+  assert(
+    applied[0]?.provider === "generic_subscription" &&
+      applied[0]?.eventId === "generic-event-1",
+    "authorized generic event includes provider identity",
+  );
+
+  let missingEventWrites = 0;
+  const missingEvent = await handleGenericSubscriptionWebhook({
+    config: CONFIG,
+    xWebhookSecret: CONFIG.secret,
+    authorization: null,
+    readBody: async () => ({
+      type: "subscription.canceled",
+      user_id: "334119a5-44b0-4567-8184-c2c6ff83a49e",
+    }),
+    applyEvent: async () => {
+      missingEventWrites += 1;
+    },
+  });
+  assert(
+    missingEvent.status === 400,
+    "generic cancellation without event_id is rejected",
+  );
+  assert(
+    missingEventWrites === 0,
+    "missing generic event_id cannot apply",
+  );
+
+  const minimizedResponse =
+    await handleGenericSubscriptionWebhook({
+      config: CONFIG,
+      xWebhookSecret: CONFIG.secret,
+      authorization: null,
+      readBody: async () =>
+        paymentPayload("payment.succeeded"),
+      applyEvent: async () => ({
+        processed: true,
+        replayed: false,
+        userId: "private-user",
+        planId: "pro",
+        status: "active",
+        skippedSubscription: false,
+        secret: "private-secret",
+        arbitrary: "private-value",
+      }),
+    });
+  assert(
+    minimizedResponse.status === 200 &&
+      minimizedResponse.body.received === true &&
+      minimizedResponse.body.processed === true &&
+      minimizedResponse.body.replayed === false,
+    "generic response exposes only replay metadata",
+  );
+  for (const key of [
+    "userId",
+    "planId",
+    "status",
+    "skippedSubscription",
+    "secret",
+    "arbitrary",
+  ]) {
+    assert(
+      !(key in minimizedResponse.body),
+      `generic response omits ${key}`,
+    );
+  }
 
   let createdWrites = 0;
   const created = await handleGenericSubscriptionWebhook({

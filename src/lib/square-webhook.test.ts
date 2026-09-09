@@ -8,7 +8,7 @@ import {
   verifySquareWebhookSignature,
   type SquareWebhookConfig,
 } from "./square-webhook";
-import type { SubscriptionWebhookInput } from "./subscription-webhooks";
+import type { ProviderSubscriptionWebhookInput } from "./subscription-webhooks";
 
 function assert(condition: boolean, message: string) {
   if (!condition) throw new Error(message);
@@ -23,8 +23,10 @@ const CONFIG = {
 function paymentBody(
   status: string,
   extras: Record<string, unknown> = {},
+  eventId: unknown = "square-event-1",
 ) {
   return JSON.stringify({
+    event_id: eventId,
     type: "payment.updated",
     data: {
       object: {
@@ -113,7 +115,7 @@ async function runSquareWebhookTests() {
     "installed Square SDK validates exact raw body",
   );
 
-  const applied: SubscriptionWebhookInput[] = [];
+  const applied: ProviderSubscriptionWebhookInput[] = [];
   let verifiedBody = "";
   const valid = await handleSquareWebhook({
     rawBody: signedBody,
@@ -134,12 +136,75 @@ async function runSquareWebhookTests() {
     applied[0]?.type === "payment.succeeded",
     "COMPLETED maps to succeeded",
   );
+  assert(applied[0]?.provider === "square", "Square provider retained");
+  assert(
+    applied[0]?.eventId === "square-event-1",
+    "Square event_id retained",
+  );
   assert(applied[0]?.amountUsd === 99, "Square cents mapped to USD");
   assert(applied[0]?.paymentId === "square-payment-1", "payment id retained");
   assert(
     applied[0]?.squareCustomerId === "square-customer-1",
     "customer id retained",
   );
+
+  const trimmedEvents: ProviderSubscriptionWebhookInput[] = [];
+  await handleSquareWebhook({
+    rawBody: paymentBody(
+      "COMPLETED",
+      {},
+      " square-event-trimmed ",
+    ),
+    signatureHeader: "valid-signature",
+    config: CONFIG,
+    verifySignature: async () => true,
+    applyEvent: async (event) => {
+      trimmedEvents.push(event);
+    },
+  });
+  assert(
+    trimmedEvents[0]?.eventId === "square-event-trimmed",
+    "Square event_id is trimmed",
+  );
+
+  for (const eventId of [undefined, null, 42, "", "   "]) {
+    let applyCalls = 0;
+    const rawBody =
+      eventId === undefined
+        ? JSON.stringify({
+            type: "payment.updated",
+            data: {
+              object: {
+                payment: {
+                  id: "square-payment-1",
+                  status: "COMPLETED",
+                  amount_money: {
+                    amount: 9900,
+                    currency: "USD",
+                  },
+                },
+              },
+            },
+          })
+        : paymentBody("COMPLETED", {}, eventId);
+    const missingEvent = await handleSquareWebhook({
+      rawBody,
+      signatureHeader: "valid-signature",
+      config: CONFIG,
+      verifySignature: async () => true,
+      applyEvent: async () => {
+        applyCalls += 1;
+      },
+    });
+    assert(
+      missingEvent.status === 400,
+      `${String(eventId)} Square event_id is rejected`,
+    );
+    assert(
+      applyCalls === 0,
+      `${String(eventId)} Square event_id cannot apply`,
+    );
+  }
 
   for (const status of ["APPROVED", "PENDING", "", "UNKNOWN"]) {
     let writes = 0;
@@ -160,7 +225,7 @@ async function runSquareWebhookTests() {
   }
 
   for (const status of ["FAILED", "CANCELED"]) {
-    const events: SubscriptionWebhookInput[] = [];
+    const events: ProviderSubscriptionWebhookInput[] = [];
     await handleSquareWebhook({
       rawBody: paymentBody(status),
       signatureHeader: "valid-signature",
@@ -248,6 +313,7 @@ async function runSquareWebhookTests() {
 
   const unsupported = await handleSquareWebhook({
     rawBody: JSON.stringify({
+      event_id: "square-event-unsupported",
       type: "customer.updated",
       data: {
         object: {
@@ -270,6 +336,43 @@ async function runSquareWebhookTests() {
       unsupported.body.reason === "unsupported_event_type",
     "unsupported event ignored",
   );
+
+  const minimizedResponse = await handleSquareWebhook({
+    rawBody: paymentBody("COMPLETED"),
+    signatureHeader: "valid",
+    config: CONFIG,
+    verifySignature: async () => true,
+    applyEvent: async () => ({
+      processed: false,
+      replayed: true,
+      userId: "private-user",
+      planId: "pro",
+      status: "active",
+      skippedSubscription: true,
+      secret: "private-secret",
+      arbitrary: "private-value",
+    }),
+  });
+  assert(
+    minimizedResponse.status === 200 &&
+      minimizedResponse.body.received === true &&
+      minimizedResponse.body.processed === false &&
+      minimizedResponse.body.replayed === true,
+    "Square response exposes only replay metadata",
+  );
+  for (const key of [
+    "userId",
+    "planId",
+    "status",
+    "skippedSubscription",
+    "secret",
+    "arbitrary",
+  ]) {
+    assert(
+      !(key in minimizedResponse.body),
+      `Square response omits ${key}`,
+    );
+  }
 
   const route = readFileSync(
     join(process.cwd(), "src/app/api/webhooks/square/route.ts"),
