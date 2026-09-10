@@ -23,7 +23,7 @@ const PLAN_SHA256 =
 const CANCELLATION_MIGRATION =
   "20260908130000_subscription_cancellation_preserve_plan.sql";
 const CANCELLATION_SHA256 =
-  "c7856f48be782e17695b00e81cb77d3ee92843f0675977e6b8a7545d51600d95";
+  "4f3fa41f2ddf6a36e1b54b54cd185844e62faaf5d0c03fab89b67c28103b7f20";
 
 function normalizeLineEndings(value: string) {
   return value.replace(/\r\n/g, "\n").replace(/\r/g, "\n");

@@ -218,7 +218,7 @@ declare
   v_existing_event_type pg_catalog.text;
   v_existing_payload_sha256 pg_catalog.text;
   v_existing_status pg_catalog.text;
-  v_processed_count pg_catalog.bigint;
+  v_processed_count pg_catalog.int8;
 begin
   if p_provider is null then
     raise exception using
