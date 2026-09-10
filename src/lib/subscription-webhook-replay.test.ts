@@ -11,7 +11,7 @@ const EXPECTED_MIGRATION =
 const EXPECTED_PREVIOUS_MIGRATION =
   "20260908110000_subscription_billing_schema_compatibility.sql";
 const EXPECTED_NORMALIZED_SHA256 =
-  "3cabf8c583dd7d7f694e65a1e756ecc432a59f0ae2892a0d3a16e32fe558cf7d";
+  "e86b621cf4d843f988ef19c01121d15063673ffcb197f24c1261561cb71f6ba9";
 const CONTRACT_START =
   "-- BEGIN subscription webhook replay contract";
 const CONTRACT_END =

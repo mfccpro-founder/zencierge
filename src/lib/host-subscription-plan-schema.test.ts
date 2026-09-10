@@ -15,7 +15,7 @@ const EXPECTED_MIGRATION =
 const REPLAY_MIGRATION =
   "20260908120000_subscription_webhook_replay.sql";
 const REPLAY_MIGRATION_NORMALIZED_SHA256 =
-  "3cabf8c583dd7d7f694e65a1e756ecc432a59f0ae2892a0d3a16e32fe558cf7d";
+  "e86b621cf4d843f988ef19c01121d15063673ffcb197f24c1261561cb71f6ba9";
 const SCHEMA_SECTION_START =
   "create table if not exists public.host_subscriptions (";
 const SCHEMA_SECTION_END =

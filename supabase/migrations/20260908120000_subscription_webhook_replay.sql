@@ -68,9 +68,9 @@ create or replace function public.process_subscription_webhook_atomic(
   p_current_period_end pg_catalog.timestamptz
 )
 returns table (
-  processed pg_catalog.boolean,
-  replayed pg_catalog.boolean,
-  skipped_subscription pg_catalog.boolean,
+  processed pg_catalog.bool,
+  replayed pg_catalog.bool,
+  skipped_subscription pg_catalog.bool,
   resolved_user_id pg_catalog.uuid,
   resolved_plan_id pg_catalog.text,
   subscription_status pg_catalog.text

@@ -15,7 +15,7 @@ const EXPECTED_NEXT_MIGRATION =
 const REPLAY_MIGRATION =
   "20260908120000_subscription_webhook_replay.sql";
 const REPLAY_SHA256 =
-  "3cabf8c583dd7d7f694e65a1e756ecc432a59f0ae2892a0d3a16e32fe558cf7d";
+  "e86b621cf4d843f988ef19c01121d15063673ffcb197f24c1261561cb71f6ba9";
 const PLAN_MIGRATION =
   "20260908123000_host_subscription_plan_catalog.sql";
 const PLAN_SHA256 =
@@ -23,7 +23,7 @@ const PLAN_SHA256 =
 const CANCELLATION_MIGRATION =
   "20260908130000_subscription_cancellation_preserve_plan.sql";
 const CANCELLATION_SHA256 =
-  "7f2510bb55b463e7fbd4dc5f03fe468207b340f25fffad833c083808d1dee286";
+  "c7856f48be782e17695b00e81cb77d3ee92843f0675977e6b8a7545d51600d95";
 
 function normalizeLineEndings(value: string) {
   return value.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
