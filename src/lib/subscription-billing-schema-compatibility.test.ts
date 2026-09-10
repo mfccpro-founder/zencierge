@@ -196,7 +196,7 @@ function runSubscriptionBillingSchemaCompatibilityTests() {
 
   assert(
     migrationSql.includes(
-      "add column is_lifetime_free pg_catalog.boolean not null default false",
+      "add column is_lifetime_free pg_catalog.bool not null default false",
     ) &&
       migrationSql.includes(
         "add column updated_at pg_catalog.timestamptz not null default pg_catalog.now()",

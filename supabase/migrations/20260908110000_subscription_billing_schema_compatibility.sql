@@ -485,7 +485,7 @@ begin
   end if;
 
   alter table public.host_subscriptions
-    add column is_lifetime_free pg_catalog.boolean not null default false,
+    add column is_lifetime_free pg_catalog.bool not null default false,
     add column updated_at pg_catalog.timestamptz not null default pg_catalog.now(),
     add constraint host_subscriptions_plan_id_check
       check (plan_id in ('starter', 'pro', 'agency')),
