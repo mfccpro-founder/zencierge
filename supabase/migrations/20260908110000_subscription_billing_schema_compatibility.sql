@@ -327,7 +327,7 @@ begin
            '[[:space:]]',
            '',
            'g'
-         ) = '(complimentary_ends_atisnotnull)'
+         ) = 'complimentary_ends_atisnotnull'
      ) then
     raise exception using
       errcode = '55000',
