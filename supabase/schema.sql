@@ -103,17 +103,26 @@ alter table public.host_subscriptions add column if not exists complimentary_gra
 
 create table if not exists public.subscription_payments (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid references auth.users (id) on delete set null,
+  subscription_id uuid,
+  gateway_payment_id varchar(255) unique,
+  amount_paid numeric(10, 2),
+  net_revenue numeric(10, 2),
+  gateway_fee numeric(10, 2),
+  payment_status varchar(50),
+  paid_at timestamptz default now(),
+  user_id uuid references auth.users (id) on delete cascade,
   host_email text,
-  amount_usd numeric(10, 2) not null,
+  amount_usd numeric(10, 2),
   currency text not null default 'USD',
   plan_id text,
-  status text not null check (status in ('succeeded', 'failed', 'refunded')),
+  status text check (status in ('succeeded', 'failed', 'refunded')),
   provider_event text,
   provider_payment_id text unique,
   created_at timestamptz not null default now()
 );
 
+create index if not exists idx_subscription_payments_user_id
+  on public.subscription_payments (user_id);
 create index if not exists subscription_payments_user_idx on public.subscription_payments (user_id, created_at desc);
 
 -- BEGIN subscription webhook replay contract
@@ -712,10 +721,6 @@ create policy "hosts read own subscription"
   to authenticated
   using (auth.uid() = user_id);
 
-drop policy if exists "hosts read own payments" on public.subscription_payments;
-create policy "hosts read own payments"
-  on public.subscription_payments for select
-  to authenticated
 drop policy if exists "hosts read own payments" on public.subscription_payments;
 create policy "hosts read own payments"
   on public.subscription_payments for select

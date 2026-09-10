@@ -129,12 +129,17 @@ async function loadTtsWindow(admin: NonNullable<ReturnType<typeof tryCreateSupab
   return { error: null as string | null, stats: aggregateTtsEvents(rows, SYSTEM_HEALTH_TTS_WINDOW_HOURS) };
 }
 
-/** Live-compatible first; documented schema.sql names as fallback. Never hard-require `.status`. */
+/** Prefer canonical values while retaining legacy-only deployment fallbacks. */
 const SQUARE_PAYMENT_READ_ATTEMPTS = [
-  { columns: "payment_status, amount_paid, paid_at", timeCol: "paid_at" as const },
-  { columns: "payment_status, paid_at", timeCol: "paid_at" as const },
+  {
+    columns:
+      "status, payment_status, amount_usd, amount_paid, created_at, paid_at",
+    timeCol: "created_at" as const,
+  },
   { columns: "status, amount_usd, created_at", timeCol: "created_at" as const },
   { columns: "status, created_at", timeCol: "created_at" as const },
+  { columns: "payment_status, amount_paid, paid_at", timeCol: "paid_at" as const },
+  { columns: "payment_status, paid_at", timeCol: "paid_at" as const },
 ];
 
 async function loadSubscriptionPaymentsTolerant(

@@ -76,14 +76,14 @@ export type SquareHealthWindowStats = {
   mockCheckout: boolean;
 };
 
-/** Prefer live column names; fall back to schema.sql names. */
+/** Prefer canonical values; fall back to legacy values for legacy-origin rows. */
 export function normalizeSquarePaymentState(row: Record<string, unknown>): string {
-  return String(row.payment_status ?? row.status ?? "").toLowerCase();
+  return String(row.status ?? row.payment_status ?? "").toLowerCase();
 }
 
-/** Prefer live paid_at; fall back to created_at. */
+/** Prefer canonical created_at; fall back to legacy paid_at. */
 export function normalizeSquarePaymentAt(row: Record<string, unknown>): string {
-  const at = row.paid_at ?? row.created_at;
+  const at = row.created_at ?? row.paid_at;
   return typeof at === "string" ? at : at != null ? String(at) : "";
 }
 

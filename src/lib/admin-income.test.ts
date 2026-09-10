@@ -6,6 +6,7 @@ import {
   incomeCalendarMonthUtcBounds,
   incomeTrendMonthBounds,
   incomeYtdUtcBounds,
+  normalizeIncomeProviderPaymentId,
   normalizeIncomePaymentStatus,
   resolveIncomePlanLabel,
 } from "./admin-income";
@@ -33,6 +34,31 @@ export function runAdminIncomeTests() {
   assert(normalizeIncomePaymentStatus("succeeded") === "succeeded", "succeeded status");
   assert(normalizeIncomePaymentStatus("failed") === "failed", "failed status");
   assert(normalizeIncomePaymentStatus("declined") === "failed", "declined maps to failed");
+  assert(
+    normalizeIncomeProviderPaymentId({
+      provider_payment_id: " provider-1 ",
+      gateway_payment_id: "gateway-1",
+    }) === "provider-1",
+    "populated canonical provider payment ID wins",
+  );
+  assert(
+    normalizeIncomeProviderPaymentId({
+      provider_payment_id: "   ",
+      gateway_payment_id: " gateway-1 ",
+    }) === "gateway-1",
+    "blank canonical provider payment ID falls back to legacy gateway ID",
+  );
+  assert(
+    normalizeIncomeProviderPaymentId({
+      provider_payment_id: null,
+      gateway_payment_id: "gateway-2",
+    }) === "gateway-2",
+    "null canonical provider payment ID falls back to legacy gateway ID",
+  );
+  assert(
+    normalizeIncomeProviderPaymentId({}) === null,
+    "missing payment IDs remain null",
+  );
 
   assert(resolveIncomePlanLabel({ planId: "pro", amountUsd: 1 }).planLabel === "Pro Superhost", "plan_id wins");
   assert(resolveIncomePlanLabel({ planId: null, amountUsd: 99 }).planId === "pro", "amount fallback");
@@ -128,6 +154,16 @@ export function runAdminIncomeTests() {
   assert(!incomePage.includes("admin-revenue-store"), "income page does not import demo revenue store");
   assert(incomeLib.includes("getAdminBillingSnapshot"), "MRR reused from admin-billing");
   assert(incomeLib.includes("Recurring run-rate — not cash collected"), "MRR kept distinct from cash");
+  assert(
+    incomeLib.includes(
+      "amount_usd, amount_paid, plan_id, status, payment_status, provider_payment_id, gateway_payment_id, created_at, paid_at",
+    ),
+    "income loader requests both payment column families for row-level fallback",
+  );
+  assert(
+    incomeLib.includes("normalizeIncomeProviderPaymentId(row)"),
+    "income normalization uses blank-safe provider payment ID fallback",
+  );
   assert(incomePage.includes("getAdminIncomeSnapshot"), "page uses income snapshot");
   assert(incomePage.includes("Recurring run-rate") || incomePage.includes("mrrNote"), "page surfaces MRR note");
   assert(incomePage.includes("subscription_payments"), "page cites live payment source");

@@ -106,6 +106,18 @@ function runBackOfficeBillingTests() {
   assert(!page.includes("admin-revenue-store") && !panel.includes("admin-revenue-store"), "no demo revenue store");
   assert(!page.includes("fetch(") && !panel.includes("fetch("), "Phase 1 has no mutation API calls");
   assert(billing.includes("ZENCIERGE_PLANS"), "plan catalog remains the pricing source");
+  assert(
+    billing.includes(
+      "amount_usd, amount_paid, status, payment_status, created_at, paid_at",
+    ),
+    "billing loader requests both payment column families first",
+  );
+  assert(
+    billing.includes("pay.amount_usd ?? pay.amount_paid") &&
+      billing.includes("pay.status ?? pay.payment_status") &&
+      billing.includes("pay.created_at ?? pay.paid_at"),
+    "billing normalization prefers canonical values with legacy fallback",
+  );
   assert(/href: "\/backoffice\/billing"[\s\S]*?status: "ready"/.test(nav), "Billing nav ready");
 
   const migrations = join(root, "supabase/migrations");

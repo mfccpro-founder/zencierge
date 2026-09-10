@@ -222,6 +222,22 @@ function asAmount(value: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+export function normalizeIncomeProviderPaymentId(
+  row: Record<string, unknown>,
+): string | null {
+  const canonical =
+    typeof row.provider_payment_id === "string"
+      ? row.provider_payment_id.trim()
+      : "";
+  if (canonical) return canonical;
+
+  const legacy =
+    typeof row.gateway_payment_id === "string"
+      ? row.gateway_payment_id.trim()
+      : "";
+  return legacy || null;
+}
+
 function normalizePaymentRow(row: Record<string, unknown>): NormalizedPayment | null {
   const id = typeof row.id === "string" ? row.id : row.id != null ? String(row.id) : "";
   if (!id) return null;
@@ -240,10 +256,7 @@ function normalizePaymentRow(row: Record<string, unknown>): NormalizedPayment | 
     planIdRaw: typeof row.plan_id === "string" && row.plan_id.trim() ? row.plan_id.trim() : null,
     status: normalizeIncomePaymentStatus(statusRaw),
     statusRaw,
-    providerPaymentId:
-      typeof row.provider_payment_id === "string" && row.provider_payment_id.trim()
-        ? row.provider_payment_id.trim()
-        : null,
+    providerPaymentId: normalizeIncomeProviderPaymentId(row),
     at,
   };
 }
@@ -256,6 +269,12 @@ async function loadPaymentsInRange(
   toIso: string,
 ): Promise<{ rows: NormalizedPayment[]; error: string | null }> {
   const attempts = [
+    {
+      columns:
+        "id, user_id, host_email, amount_usd, amount_paid, plan_id, status, payment_status, provider_payment_id, gateway_payment_id, created_at, paid_at",
+      order: "created_at",
+      fromCol: "created_at",
+    },
     {
       columns: "id, user_id, host_email, amount_usd, plan_id, status, provider_payment_id, created_at",
       order: "created_at",

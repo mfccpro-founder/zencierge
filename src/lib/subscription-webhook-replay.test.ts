@@ -9,7 +9,7 @@ function assert(condition: boolean, message: string) {
 const EXPECTED_MIGRATION =
   "20260908120000_subscription_webhook_replay.sql";
 const EXPECTED_PREVIOUS_MIGRATION =
-  "20260907001500_system_health_alert_state.sql";
+  "20260908110000_subscription_billing_schema_compatibility.sql";
 const EXPECTED_NORMALIZED_SHA256 =
   "3cabf8c583dd7d7f694e65a1e756ecc432a59f0ae2892a0d3a16e32fe558cf7d";
 const CONTRACT_START =

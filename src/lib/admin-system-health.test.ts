@@ -115,8 +115,31 @@ export function runAdminSystemHealthTests() {
   assert(fromPaymentStatus.failed === 1, "payment_status failed counted");
   assert(fromPaymentStatus.refunded === 1, "payment_status refunded counted");
   assert(fromPaymentStatus.latestPaymentAt === "2026-09-03T12:00:00.000Z", "paid_at used for latest");
-  assert(normalizeSquarePaymentState({ payment_status: "failed", status: "succeeded" }) === "failed", "payment_status preferred over status");
-  assert(normalizeSquarePaymentAt({ paid_at: "a", created_at: "b" }) === "a", "paid_at preferred over created_at");
+  assert(
+    normalizeSquarePaymentState({
+      payment_status: "failed",
+      status: "succeeded",
+    }) === "succeeded",
+    "canonical status is preferred over legacy payment_status",
+  );
+  assert(
+    normalizeSquarePaymentAt({
+      paid_at: "2026-09-01T00:00:00.000Z",
+      created_at: "2026-09-02T00:00:00.000Z",
+    }) === "2026-09-02T00:00:00.000Z",
+    "canonical created_at is preferred over legacy paid_at",
+  );
+  assert(
+    normalizeSquarePaymentState({ payment_status: "failed" }) ===
+      "failed",
+    "legacy payment_status remains a row-level fallback",
+  );
+  assert(
+    normalizeSquarePaymentAt({
+      paid_at: "2026-09-03T00:00:00.000Z",
+    }) === "2026-09-03T00:00:00.000Z",
+    "legacy paid_at remains a row-level fallback",
+  );
 
   // Fallback status / created_at path (documented schema)
   const fromStatus = countSquarePaymentsFromRows([
@@ -174,6 +197,12 @@ export function runAdminSystemHealthTests() {
   assert(domain.includes("payment_status"), "tolerant live payment_status read");
   assert(domain.includes("paid_at"), "tolerant live paid_at read");
   assert(domain.includes("loadSubscriptionPaymentsTolerant") || domain.includes("SQUARE_PAYMENT_READ_ATTEMPTS") || domain.includes("payment_status, amount_paid, paid_at"), "multi-attempt Square payment select");
+  assert(
+    domain.includes(
+      "status, payment_status, amount_usd, amount_paid, created_at, paid_at",
+    ),
+    "coexistence read requests both payment column families first",
+  );
   assert(!domain.includes('.select("status, created_at, paid_at")'), "no hard-coded status-only Square select");
   assert(domain.includes("Could not read Square payment records") || domain.includes("paymentsLoad.error"), "true query failure surfaces unhealthy Square card");
   assert(domain.includes('method: "GET"') && domain.includes("/api/tts"), "safe TTS GET probe");

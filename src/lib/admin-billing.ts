@@ -130,18 +130,20 @@ type AdminClient = ReturnType<typeof createSupabaseAdminClient>;
 type LoadedPayments = { rows: Record<string, unknown>[]; error: string | null };
 
 /**
- * Tolerant loader for subscription_payments: the live schema may use
- * (user_id | subscription_id) for linking and (amount_paid, payment_status,
- * paid_at) or (amount_usd, status, created_at) for the money/status fields.
- * Tries the known variants first and falls back on schema errors, so a
- * mismatched schema degrades gracefully instead of surfacing an error banner.
+ * Prefer populated canonical payment values while retaining row-level legacy
+ * fallbacks. Older deployments may expose only one column family.
  */
 async function loadSubscriptionPayments(admin: AdminClient): Promise<LoadedPayments> {
   const attempts = [
-    { columns: "id, user_id, subscription_id, amount_paid, payment_status, paid_at", order: "paid_at" },
+    {
+      columns:
+        "id, user_id, subscription_id, amount_usd, amount_paid, status, payment_status, created_at, paid_at",
+      order: "created_at",
+    },
     { columns: "id, user_id, subscription_id, amount_usd, status, created_at", order: "created_at" },
-    { columns: "id, user_id, amount_paid, payment_status, paid_at", order: "paid_at" },
     { columns: "id, user_id, amount_usd, status, created_at", order: "created_at" },
+    { columns: "id, user_id, subscription_id, amount_paid, payment_status, paid_at", order: "paid_at" },
+    { columns: "id, user_id, amount_paid, payment_status, paid_at", order: "paid_at" },
   ];
   let lastError: string | null = null;
   for (const attempt of attempts) {
