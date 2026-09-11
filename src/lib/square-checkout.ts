@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { createSquareClient } from "@/lib/square-client";
+import { createSquareClient, isSquareSandbox } from "@/lib/square-client";
 import { parsePlanId, ZENCIERGE_PLANS, type ZenciergePlanId } from "@/lib/zencierge-plans";
 import { recordFunnelEvent } from "@/lib/admin-revenue-store";
 import { GUEST_ADDONS, parseGuestAddonId, type GuestAddonId } from "@/lib/guest-addons";
@@ -8,15 +8,13 @@ export type SquareCheckoutKind = "host_subscription" | "guest_addon";
 export type BillingCycle = "monthly" | "annual";
 export type { GuestAddonId };
 export { GUEST_ADDONS, parseGuestAddonId };
-
-export function isSquareSandbox() {
-  return (process.env.SQUARE_ENVIRONMENT ?? "sandbox").toLowerCase() === "sandbox";
-}
+export { isSquareSandbox } from "@/lib/square-client";
 
 export function allowMockSquareCheckout() {
+  const sandbox = isSquareSandbox();
   if (process.env.SQUARE_MOCK_CHECKOUT === "1") return true;
   if (process.env.NODE_ENV !== "production") return true;
-  return isSquareSandbox();
+  return sandbox;
 }
 
 export function hasUsableSquareCredentials() {
