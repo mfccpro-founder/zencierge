@@ -2,10 +2,15 @@ export const ZENCIERGE_PLAN_IDS = ["starter", "pro", "portfolio", "agency"] as c
 
 export type ZenciergePlanId = (typeof ZENCIERGE_PLAN_IDS)[number];
 
+export const BILLING_CYCLES = ["monthly", "annual"] as const;
+
+export type BillingCycle = (typeof BILLING_CYCLES)[number];
+
 export type ZenciergePlan = {
   id: ZenciergePlanId;
   name: string;
   monthlyUsd: number;
+  annualUsd: number;
   maxProperties: number;
   blurb: string;
   featured?: boolean;
@@ -21,6 +26,7 @@ export const ZENCIERGE_PLANS: Record<ZenciergePlanId, ZenciergePlan> = {
     id: "starter",
     name: "Starter Host",
     monthlyUsd: 49,
+    annualUsd: 490,
     maxProperties: 1,
     blurb: "Autonomous operations for single-property self-managers.",
     features: ["1 Listing Included", "1 AI Voice Line (24/7)", "AI Turnover Auditing", "True-Net NOI Ledger"],
@@ -29,6 +35,7 @@ export const ZENCIERGE_PLANS: Record<ZenciergePlanId, ZenciergePlan> = {
     id: "pro",
     name: "Pro Superhost",
     monthlyUsd: 99,
+    annualUsd: 990,
     maxProperties: 4,
     blurb: "Zero co-host dependency for growing multi-unit hosts.",
     features: ["Up to 4 Listings", "4 AI Voice Lines", AIRCOVER, "Cleaner Escrow Release"],
@@ -37,6 +44,7 @@ export const ZENCIERGE_PLANS: Record<ZenciergePlanId, ZenciergePlan> = {
     id: "portfolio",
     name: "Portfolio Host",
     monthlyUsd: 149,
+    annualUsd: 1490,
     maxProperties: 8,
     featured: true,
     blurb: "Full autonomous fleet operations for serious real estate portfolios.",
@@ -53,6 +61,7 @@ export const ZENCIERGE_PLANS: Record<ZenciergePlanId, ZenciergePlan> = {
     id: "agency",
     name: "Co-Host Agency",
     monthlyUsd: 199,
+    annualUsd: 1990,
     maxProperties: 20,
     blurb: "Scale boutique co-hosting agency operations with zero staff overhead.",
     includesPrior: "Includes everything in Pro Superhost, plus:",
@@ -69,6 +78,22 @@ export const ZENCIERGE_PLANS: Record<ZenciergePlanId, ZenciergePlan> = {
 export function parsePlanId(value: unknown): ZenciergePlanId | null {
   if (typeof value !== "string") return null;
   return (ZENCIERGE_PLAN_IDS as readonly string[]).includes(value) ? (value as ZenciergePlanId) : null;
+}
+
+export function parseBillingCycle(value: unknown): BillingCycle | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  return (BILLING_CYCLES as readonly string[]).includes(normalized)
+    ? (normalized as BillingCycle)
+    : null;
+}
+
+export function billingPriceUsd(
+  planId: ZenciergePlanId,
+  billingCycle: BillingCycle,
+) {
+  const plan = ZENCIERGE_PLANS[planId];
+  return billingCycle === "annual" ? plan.annualUsd : plan.monthlyUsd;
 }
 
 export function planFromMetadata(meta: Record<string, unknown> | null | undefined): ZenciergePlanId {

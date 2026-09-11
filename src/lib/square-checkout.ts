@@ -1,11 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { createSquareClient, isSquareSandbox } from "@/lib/square-client";
-import { parsePlanId, ZENCIERGE_PLANS, type ZenciergePlanId } from "@/lib/zencierge-plans";
+import {
+  billingPriceUsd,
+  parsePlanId,
+  ZENCIERGE_PLANS,
+  type BillingCycle,
+  type ZenciergePlanId,
+} from "@/lib/zencierge-plans";
 import { recordFunnelEvent } from "@/lib/admin-revenue-store";
 import { GUEST_ADDONS, parseGuestAddonId, type GuestAddonId } from "@/lib/guest-addons";
 
 export type SquareCheckoutKind = "host_subscription" | "guest_addon";
-export type BillingCycle = "monthly" | "annual";
+export type { BillingCycle } from "@/lib/zencierge-plans";
 export type { GuestAddonId };
 export { GUEST_ADDONS, parseGuestAddonId };
 export { isSquareSandbox } from "@/lib/square-client";
@@ -180,7 +186,7 @@ export async function createSquareCheckoutSession(input: SquareCheckoutRequest):
 
   const planId = parsePlanId(input.planId) ?? "pro";
   const plan = ZENCIERGE_PLANS[planId];
-  const amountUsd = billing === "annual" ? plan.monthlyUsd * 10 : plan.monthlyUsd;
+  const amountUsd = billingPriceUsd(planId, billing);
   const amountCents = amountUsd * 100;
   const label =
     billing === "annual" ? `${plan.name} · annual subscription` : `${plan.name} · monthly subscription`;
