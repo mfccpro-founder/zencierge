@@ -70,10 +70,10 @@ begin
   select pg_catalog.pg_get_functiondef(v_rpc::pg_catalog.oid)
   into v_rpc_definition;
 
-  if pg_catalog.position(
+  if position(
        '-- BEGIN cancellation update-only branch' in v_rpc_definition
      ) = 0
-     or pg_catalog.position(
+     or position(
        '-- END cancellation update-only branch' in v_rpc_definition
      ) = 0 then
     raise exception using
@@ -91,17 +91,17 @@ begin
     1
   );
 
-  if pg_catalog.position(
+  if position(
        'update public.host_subscriptions as s' in v_cancellation_branch
      ) = 0
-     or pg_catalog.position(
+     or position(
        'where s.user_id = p_user_id' in v_cancellation_branch
      ) = 0
-     or pg_catalog.position(
+     or position(
        'returning s.plan_id into resolved_plan_id' in v_cancellation_branch
      ) = 0
-     or pg_catalog.position('plan_id =' in v_cancellation_branch) <> 0
-     or pg_catalog.position('monthly_usd =' in v_cancellation_branch) <> 0 then
+     or position('plan_id =' in v_cancellation_branch) <> 0
+     or position('monthly_usd =' in v_cancellation_branch) <> 0 then
     raise exception using
       errcode = '55000',
       message = 'Microblock 6D cancellation contract is incompatible';

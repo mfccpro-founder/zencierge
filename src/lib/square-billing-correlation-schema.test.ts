@@ -8,6 +8,8 @@ function assert(condition: boolean, message: string) {
 
 const EXPECTED_MIGRATION =
   "20260910120000_square_billing_correlation_schema.sql";
+const EXPECTED_NEXT_MIGRATION =
+  "20260910130000_subscription_billing_acl_normalization.sql";
 const EXPECTED_PREVIOUS_MIGRATION =
   "20260908130000_subscription_cancellation_preserve_plan.sql";
 const REPLAY_MIGRATION =
@@ -24,6 +26,8 @@ const CANCELLATION_SHA256 =
   "4f3fa41f2ddf6a36e1b54b54cd185844e62faaf5d0c03fab89b67c28103b7f20";
 const CONTRACT_START = "-- BEGIN square billing correlation schema";
 const CONTRACT_END = "-- END square billing correlation schema";
+const ACL_START = "-- BEGIN subscription billing ACL normalization";
+const ACL_END = "-- END subscription billing ACL normalization";
 const RPC_START = "-- BEGIN subscription cancellation preserve plan RPC";
 const RPC_END = "-- END subscription cancellation preserve plan RPC";
 const CANCELLATION_START = "-- BEGIN cancellation update-only branch";
@@ -79,6 +83,9 @@ function runSquareBillingCorrelationSchemaTests() {
   const migrationSql = normalizeLineEndings(
     readFileSync(join(migrationsDir, EXPECTED_MIGRATION), "utf8"),
   );
+  const aclMigrationSql = normalizeLineEndings(
+    readFileSync(join(migrationsDir, EXPECTED_NEXT_MIGRATION), "utf8"),
+  );
   const schemaSql = normalizeLineEndings(
     readFileSync(join(root, "supabase", "schema.sql"), "utf8"),
   );
@@ -100,8 +107,12 @@ function runSquareBillingCorrelationSchemaTests() {
     "7D1 follows Microblock 6D directly",
   );
   assert(
-    migrationNames[migrationNames.length - 1] === EXPECTED_MIGRATION,
-    "7D1 is the latest migration",
+    migrationNames[migrationIndex + 1] === EXPECTED_NEXT_MIGRATION,
+    "baseline ACL normalization follows 7D1 directly",
+  );
+  assert(
+    migrationNames[migrationNames.length - 1] === EXPECTED_NEXT_MIGRATION,
+    "baseline ACL normalization is the latest migration",
   );
 
   assert(
@@ -144,6 +155,104 @@ function runSquareBillingCorrelationSchemaTests() {
   assert(
     migrationContract === schemaContract,
     "migration and canonical schema correlation contracts are identical",
+  );
+
+  const aclMigrationContract = extractMarkedSection(
+    aclMigrationSql,
+    ACL_START,
+    ACL_END,
+  );
+  const schemaAclContract = extractMarkedSection(
+    schemaSql,
+    ACL_START,
+    ACL_END,
+  );
+  assert(
+    aclMigrationContract === schemaAclContract,
+    "migration and canonical schema ACL contracts are identical",
+  );
+
+  const aclStatements = aclMigrationSql
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("--"))
+    .join("\n")
+    .split(";")
+    .map((statement) => statement.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  const expectedAclStatements = [
+    "begin",
+    "revoke all on table public.host_subscriptions from public",
+    "revoke all on table public.host_subscriptions from anon",
+    "revoke all on table public.host_subscriptions from authenticated",
+    "revoke all on table public.host_subscriptions from service_role",
+    "grant select on table public.host_subscriptions to authenticated",
+    "grant truncate, references, trigger on table public.host_subscriptions to service_role",
+    "revoke all on table public.subscription_payments from public",
+    "revoke all on table public.subscription_payments from anon",
+    "revoke all on table public.subscription_payments from authenticated",
+    "revoke all on table public.subscription_payments from service_role",
+    "grant select on table public.subscription_payments to authenticated",
+    "grant truncate, references, trigger on table public.subscription_payments to service_role",
+    "commit",
+  ];
+  assert(
+    JSON.stringify(aclStatements) === JSON.stringify(expectedAclStatements),
+    "ACL migration contains only the exact authorized transaction and ACL statements",
+  );
+  assert(
+    aclStatements.filter((statement) => statement.startsWith("revoke all "))
+      .length === 8,
+    "ACL migration has exactly eight REVOKE ALL statements",
+  );
+  assert(
+    aclStatements.filter(
+      (statement) =>
+        statement.startsWith("grant select ") &&
+        statement.endsWith(" to authenticated"),
+    ).length === 2,
+    "ACL migration has exactly two authenticated SELECT grants",
+  );
+  assert(
+    aclStatements.filter(
+      (statement) =>
+        statement.startsWith("grant truncate, references, trigger ") &&
+        statement.endsWith(" to service_role"),
+    ).length === 2,
+    "ACL migration has exactly two service-role maintenance grants",
+  );
+  assert(
+    !/\bmaintain\b/i.test(aclMigrationSql),
+    "ACL migration contains no literal MAINTAIN privilege",
+  );
+  assert(
+    !/\b(insert|update|delete|truncate)\s+(into|public\.|from|table)\b/i.test(
+      aclMigrationSql,
+    ) &&
+      !/\b(create|alter|drop|comment|copy|merge|call|execute)\b/i.test(
+        aclMigrationSql
+          .split("\n")
+          .filter((line) => !line.trimStart().startsWith("--"))
+          .join("\n"),
+      ),
+    "ACL migration contains no row DML, structural DDL, or dynamic SQL",
+  );
+  assert(
+    !/\bpolicy\b|\brow\s+level\s+security\b|\bowner\s+to\b|\bfunction\b/i.test(
+      aclMigrationSql
+        .split("\n")
+        .filter((line) => !line.trimStart().startsWith("--"))
+        .join("\n"),
+    ),
+    "ACL migration does not change policies, RLS, ownership, or functions",
+  );
+  const schemaAfterAclContract = schemaSql.slice(
+    schemaSql.indexOf(ACL_END) + ACL_END.length,
+  );
+  assert(
+    !/\b(grant|revoke)\b[\s\S]*?\bpublic\.(host_subscriptions|subscription_payments)\b/i.test(
+      schemaAfterAclContract,
+    ),
+    "later canonical schema statements do not override baseline billing ACLs",
   );
 
   const hostAlter = alterTable(
