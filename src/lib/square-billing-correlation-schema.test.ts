@@ -10,6 +10,12 @@ const EXPECTED_MIGRATION =
   "20260910120000_square_billing_correlation_schema.sql";
 const EXPECTED_NEXT_MIGRATION =
   "20260910130000_subscription_billing_acl_normalization.sql";
+const EXPECTED_HOST_CORRELATION_RPC_MIGRATION =
+  "20260915140000_square_billing_host_correlation_rpcs.sql";
+const EXPECTED_RPC_OWNER_STATUS_MIGRATION =
+  "20260915180000_square_billing_host_correlation_rpc_owner_status.sql";
+const EXPECTED_UPSERT_AMBIGUITY_MIGRATION =
+  "20260916143000_square_billing_upsert_host_correlation_user_id_ambiguity.sql";
 const EXPECTED_PREVIOUS_MIGRATION =
   "20260908130000_subscription_cancellation_preserve_plan.sql";
 const REPLAY_MIGRATION =
@@ -111,8 +117,36 @@ function runSquareBillingCorrelationSchemaTests() {
     "baseline ACL normalization follows 7D1 directly",
   );
   assert(
-    migrationNames[migrationNames.length - 1] === EXPECTED_NEXT_MIGRATION,
-    "baseline ACL normalization is the latest migration",
+    migrationNames.includes(EXPECTED_HOST_CORRELATION_RPC_MIGRATION),
+    "host correlation RPC migration exists",
+  );
+  assert(
+    migrationNames.includes(EXPECTED_RPC_OWNER_STATUS_MIGRATION),
+    "RPC owner/status migration exists",
+  );
+  assert(
+    migrationNames.includes(EXPECTED_UPSERT_AMBIGUITY_MIGRATION),
+    "upsert user_id ambiguity migration exists",
+  );
+  assert(
+    migrationNames[migrationNames.length - 1] ===
+      EXPECTED_UPSERT_AMBIGUITY_MIGRATION,
+    "upsert user_id ambiguity migration is the latest migration",
+  );
+  assert(
+    migrationNames.indexOf(EXPECTED_RPC_OWNER_STATUS_MIGRATION) >
+      migrationNames.indexOf(EXPECTED_HOST_CORRELATION_RPC_MIGRATION),
+    "owner/status migration follows host correlation RPCs",
+  );
+  assert(
+    migrationNames.indexOf(EXPECTED_UPSERT_AMBIGUITY_MIGRATION) >
+      migrationNames.indexOf(EXPECTED_RPC_OWNER_STATUS_MIGRATION),
+    "user_id ambiguity migration follows owner/status",
+  );
+  assert(
+    migrationNames.indexOf(EXPECTED_HOST_CORRELATION_RPC_MIGRATION) >
+      migrationNames.indexOf(EXPECTED_NEXT_MIGRATION),
+    "host correlation RPCs follow baseline ACL normalization",
   );
 
   assert(
