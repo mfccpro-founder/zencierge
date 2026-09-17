@@ -21,6 +21,7 @@ function toEnrollClient(
   return {
     customers: {
       search: (input) => client.customers.search(input),
+      retrieve: (input) => client.customers.get({ customerId: input.customerId }),
       create: (input) => client.customers.create(input),
     },
     cards: {
@@ -71,6 +72,21 @@ function toEnrollClient(
       },
     },
     subscriptions: {
+      get: async (input) => {
+        const response = await client.subscriptions.get({
+          subscriptionId: input.subscriptionId,
+        });
+        return {
+          subscription: response.subscription
+            ? {
+                id: response.subscription.id,
+                status: response.subscription.status,
+                customerId: response.subscription.customerId ?? null,
+                locationId: response.subscription.locationId ?? null,
+              }
+            : null,
+        };
+      },
       create: async (input) => {
         const response = await client.subscriptions.create(input);
         return {
@@ -162,6 +178,7 @@ export async function POST(request: Request) {
       intentId,
       userId: user.id,
       email: user.email ?? "",
+      userMetadata: user.user_metadata ?? null,
       sourceId,
       verificationToken,
       cardholderName,

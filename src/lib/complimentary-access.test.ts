@@ -4,7 +4,7 @@ import {
   isComplimentaryWindowOpen,
   complimentaryDaysRemaining,
 } from "./complimentary-access-core";
-import { isHostAccessGranted } from "./zencierge-plans";
+import { isHostAccessGranted, isPaidSubscriptionStatus } from "./zencierge-plans";
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
@@ -59,6 +59,26 @@ function runComplimentaryBlock3Tests() {
     }),
     "paid users remain paid",
   );
+  assert(
+    !isHostAccessGranted({
+      subscriptionStatus: "active",
+      complimentaryEndsAt: null,
+      squareSubscriptionId: "sqsub_1",
+      squareSubscriptionStatus: "DEACTIVATED",
+    }),
+    "Square DEACTIVATED denies ordinary paid access even with complimentary null",
+  );
+  assert(
+    isHostAccessGranted({
+      subscriptionStatus: "inactive",
+      complimentaryEndsAt: sixMonths,
+      squareSubscriptionId: "sqsub_1",
+      squareSubscriptionStatus: "DEACTIVATED",
+    }),
+    "complimentary remains granted when Square is not ACTIVE",
+  );
+  assert(isPaidSubscriptionStatus("active"), "isPaidSubscriptionStatus unchanged for active");
+  assert(!isPaidSubscriptionStatus("DEACTIVATED"), "isPaidSubscriptionStatus ignores Square statuses");
   assert(
     isHostAccessGranted({
       subscriptionStatus: "inactive",

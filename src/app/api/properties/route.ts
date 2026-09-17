@@ -47,7 +47,7 @@ export async function POST(request: Request) {
 
   const { data: sub } = await auth.supabase
     .from("host_subscriptions")
-    .select("plan_id, status, complimentary_ends_at, is_lifetime_free")
+    .select("plan_id, status, complimentary_ends_at, is_lifetime_free, square_subscription_id, square_subscription_status")
     .eq("user_id", auth.user.id)
     .maybeSingle();
   const planId = parsePlanId(sub?.plan_id) ?? planFromMetadata(auth.user.user_metadata);
@@ -58,6 +58,8 @@ export async function POST(request: Request) {
     complimentaryEndsAt: (sub?.complimentary_ends_at as string | null | undefined) ?? null,
     isLifetimeFree: sub?.is_lifetime_free === true,
     lifetimeVip: hasLifetimeVipAccess(auth.user),
+    squareSubscriptionId: (sub?.square_subscription_id as string | null | undefined) ?? null,
+    squareSubscriptionStatus: (sub?.square_subscription_status as string | null | undefined) ?? null,
   });
 
   if (isCreate) {

@@ -18,6 +18,7 @@ import {
   type RecordSquareCustomerInput,
   type SquareBillingStores,
   type SquareCorrelatablePaymentRow,
+  type SquareHostSubscriptionCorrelation,
   type SquareHostSubscriptionPersistence,
   type SquareInvoicePaymentCorrelationResult,
   type SquareInvoicePersistenceResult,
@@ -1558,6 +1559,60 @@ export function createSupabaseSquareBillingStores(
         };
       },
     },
+    hostSubscriptions: {
+      async getByUserId(userId: string): Promise<SquareHostSubscriptionCorrelation | null> {
+        const id = requireUuid(userId);
+        const rows = await awaitRows(
+          client
+            .from("square_subscription_intents")
+            .select(INTENT_COLUMNS)
+            .eq("user_id", id)
+            .limit(20),
+        );
+        const withSubscription = rows
+          .map((row) => parseIntentRow(row))
+          .filter(
+            (row) =>
+              typeof row.square_subscription_id === "string" &&
+              row.square_subscription_id.trim().length > 0,
+          );
+        const uniqueIds = [
+          ...new Set(
+            withSubscription.map((row) => row.square_subscription_id as string),
+          ),
+        ];
+        if (uniqueIds.length === 0) return null;
+        if (uniqueIds.length > 1) conflict();
+        const subscriptionId = uniqueIds[0]!;
+        const intent = withSubscription.find(
+          (row) => row.square_subscription_id === subscriptionId,
+        );
+        if (!intent) conflict();
+        const host = await findHostBySubscription(
+          intent.square_environment,
+          subscriptionId,
+        );
+        if (host) {
+          if (host.user_id !== id) conflict();
+          return {
+            user_id: host.user_id,
+            square_environment: host.square_environment,
+            square_location_id: host.square_location_id,
+            square_customer_id: host.square_customer_id,
+            square_subscription_id: host.square_subscription_id,
+          };
+        }
+        const customerId = intent.square_customer_id;
+        if (!customerId) conflict();
+        return {
+          user_id: intent.user_id,
+          square_environment: intent.square_environment,
+          square_location_id: intent.square_location_id,
+          square_customer_id: customerId,
+          square_subscription_id: subscriptionId,
+        };
+      },
+    },
   };
 }
 
@@ -1574,4 +1629,122 @@ export function tryCreateSupabaseSquareBillingStores(
     ...options,
     client: admin as unknown as SquareBillingSupabaseClient,
   });
+}
+
+export const SUBSCRIPTION_STATUS_WEBHOOK_RPC =
+  "square_billing_apply_subscription_status_webhook" as const;
+
+export type SquareSubscriptionStatusWebhookRpcArgs = {
+  p_provider: "square";
+  p_event_id: string;
+  p_event_type: "subscription.created" | "subscription.updated" | string;
+  p_payload_sha256: string;
+  p_square_environment: "sandbox" | "production";
+  p_square_subscription_id: string;
+  p_square_customer_id: string;
+  p_square_location_id: string;
+  p_square_plan_variation_id: string;
+  p_square_subscription_status: string;
+  p_square_subscription_version: number;
+  p_square_start_date: string | null;
+  p_square_charged_through_date: string | null;
+  p_square_canceled_date: string | null;
+};
+
+export type SquareSubscriptionStatusWebhookRpcResult = {
+  processed: boolean;
+  replayed: boolean;
+  skipped_subscription: boolean;
+  resolved_user_id: string | null;
+  subscription_status: string | null;
+};
+
+export class SquareSubscriptionStatusWebhookRpcError extends Error {
+  readonly code: "ZB001" | "ZB002" | "ZB003" | "unavailable";
+
+  constructor(code: "ZB001" | "ZB002" | "ZB003" | "unavailable") {
+    super(code);
+    this.name = "SquareSubscriptionStatusWebhookRpcError";
+    this.code = code;
+  }
+}
+
+function parseSubscriptionStatusWebhookRow(
+  value: unknown,
+): SquareSubscriptionStatusWebhookRpcResult | null {
+  const row = Array.isArray(value) ? value[0] : value;
+  if (!isRecord(row)) return null;
+  if (
+    typeof row.processed !== "boolean" ||
+    typeof row.replayed !== "boolean" ||
+    typeof row.skipped_subscription !== "boolean"
+  ) {
+    return null;
+  }
+  return {
+    processed: row.processed,
+    replayed: row.replayed,
+    skipped_subscription: row.skipped_subscription,
+    resolved_user_id:
+      typeof row.resolved_user_id === "string" ? row.resolved_user_id : null,
+    subscription_status:
+      typeof row.subscription_status === "string"
+        ? row.subscription_status
+        : null,
+  };
+}
+
+function throwSubscriptionStatusWebhookRpcError(
+  error: SquareBillingDbError | null | undefined,
+): never {
+  const code = error?.code?.trim() ?? "";
+  if (code === "ZB001") {
+    throw new SquareSubscriptionStatusWebhookRpcError("ZB001");
+  }
+  if (code === "ZB002") {
+    throw new SquareSubscriptionStatusWebhookRpcError("ZB002");
+  }
+  if (code === "ZB003") {
+    throw new SquareSubscriptionStatusWebhookRpcError("ZB003");
+  }
+  throw new SquareSubscriptionStatusWebhookRpcError("unavailable");
+}
+
+export async function applySquareSubscriptionStatusWebhookRpc(
+  args: SquareSubscriptionStatusWebhookRpcArgs,
+  client?: SquareBillingSupabaseClient | null,
+): Promise<SquareSubscriptionStatusWebhookRpcResult> {
+  const rpcClient =
+    client ??
+    (tryCreateSupabaseAdminClient() as unknown as SquareBillingSupabaseClient | null);
+  if (!rpcClient) {
+    throw new SquareSubscriptionStatusWebhookRpcError("unavailable");
+  }
+
+  const response = await rpcClient.rpc(SUBSCRIPTION_STATUS_WEBHOOK_RPC, {
+    p_provider: args.p_provider,
+    p_event_id: args.p_event_id,
+    p_event_type: args.p_event_type,
+    p_payload_sha256: args.p_payload_sha256,
+    p_square_environment: args.p_square_environment,
+    p_square_subscription_id: args.p_square_subscription_id,
+    p_square_customer_id: args.p_square_customer_id,
+    p_square_location_id: args.p_square_location_id,
+    p_square_plan_variation_id: args.p_square_plan_variation_id,
+    p_square_subscription_status: args.p_square_subscription_status,
+    p_square_subscription_version: args.p_square_subscription_version,
+    p_square_start_date: args.p_square_start_date,
+    p_square_charged_through_date: args.p_square_charged_through_date,
+    p_square_canceled_date: args.p_square_canceled_date,
+  });
+
+  if (response.error) {
+    throwSubscriptionStatusWebhookRpcError(response.error);
+  }
+
+  const parsed = parseSubscriptionStatusWebhookRow(response.data);
+  if (!parsed) {
+    throw new SquareSubscriptionStatusWebhookRpcError("unavailable");
+  }
+  return parsed;
 }

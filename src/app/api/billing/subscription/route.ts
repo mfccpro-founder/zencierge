@@ -24,7 +24,7 @@ export async function GET() {
   const { data: sub, error: subError } = await auth.supabase
     .from("host_subscriptions")
     .select(
-      "plan_id, status, monthly_usd, last_payment_at, current_period_end, square_customer_id, square_subscription_id, complimentary_ends_at, complimentary_starts_at, is_lifetime_free",
+      "plan_id, status, monthly_usd, last_payment_at, current_period_end, square_customer_id, square_subscription_id, square_subscription_status, complimentary_ends_at, complimentary_starts_at, is_lifetime_free",
     )
     .eq("user_id", auth.user.id)
     .maybeSingle();
@@ -48,6 +48,8 @@ export async function GET() {
     complimentaryEndsAt,
     isLifetimeFree: sub?.is_lifetime_free === true,
     lifetimeVip: hasLifetimeVipAccess(auth.user),
+    squareSubscriptionId: (sub?.square_subscription_id as string | null | undefined) ?? null,
+    squareSubscriptionStatus: (sub?.square_subscription_status as string | null | undefined) ?? null,
   });
   const status = isPaidSubscriptionStatus(sub?.status as string | undefined)
     ? "active"

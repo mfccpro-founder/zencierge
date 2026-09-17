@@ -1,4 +1,5 @@
 import { createSquareCheckoutSession } from "@/lib/square-checkout";
+import { maybeCreateCheckoutBillingIntent } from "@/lib/square-checkout-billing-intent";
 import { createSupabaseRouteClient } from "@/lib/supabase-route";
 import { parsePlanId } from "@/lib/zencierge-plans";
 import { publicOriginFromRequest } from "@/lib/public-app-url";
@@ -6,14 +7,22 @@ import { publicOriginFromRequest } from "@/lib/public-app-url";
 export async function POST(request: Request) {
   let body: { planId?: string; billing?: string; email?: string; name?: string };
   try {
-    body = (await request.json()) as { planId?: string; billing?: string; email?: string; name?: string };
+    body = (await request.json()) as {
+      planId?: string;
+      billing?: string;
+      email?: string;
+      name?: string;
+    };
   } catch {
     return Response.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
   const planId = parsePlanId(body.planId);
   if (!planId) {
-    return Response.json({ error: "planId must be starter, pro, portfolio, or agency" }, { status: 400 });
+    return Response.json(
+      { error: "planId must be starter, pro, portfolio, or agency" },
+      { status: 400 },
+    );
   }
 
   const billing = body.billing === "annual" ? "annual" : "monthly";
@@ -37,6 +46,23 @@ export async function POST(request: Request) {
     /* Square checkout does not require a live Supabase session */
   }
 
+  // Fail-soft intent for future Web Payments enroll. Payment Link remains default.
+  let intentId: string | undefined;
+  if (user?.id) {
+    const intentResult = await maybeCreateCheckoutBillingIntent({
+      kind: "host_subscription",
+      userId: user.id,
+      planId,
+      billingCycle: billing,
+    });
+    if (
+      intentResult.status === "created" ||
+      intentResult.status === "replayed"
+    ) {
+      intentId = intentResult.intentId;
+    }
+  }
+
   try {
     const session = await createSquareCheckoutSession({
       kind: "host_subscription",
@@ -58,9 +84,11 @@ export async function POST(request: Request) {
       billing: session.billing,
       mock: session.mock,
       sandbox: session.sandbox,
+      ...(intentId ? { intentId } : {}),
     });
   } catch (cause) {
-    const message = cause instanceof Error ? cause.message : "Square checkout failed";
+    const message =
+      cause instanceof Error ? cause.message : "Square checkout failed";
     return Response.json({ error: message }, { status: 502 });
   }
 }

@@ -8,6 +8,8 @@ import {
   TRIAL_DAYS,
   buildTrialMetadata,
   isHostAccessGranted,
+  isPaidSubscriptionStatus,
+  isSquareBackedPaidEntitlement,
   isTrialWindowOpen,
   trialDaysRemaining,
   trialEndsAtIso,
@@ -104,6 +106,154 @@ function runBillingAccessTypesTests() {
     "paid remains paid",
   );
 
+  assert(isPaidSubscriptionStatus("active") === true, "isPaidSubscriptionStatus active");
+  assert(isPaidSubscriptionStatus("inactive") === false, "isPaidSubscriptionStatus inactive");
+  assert(isPaidSubscriptionStatus("canceled") === false, "isPaidSubscriptionStatus canceled");
+  assert(isPaidSubscriptionStatus("ACTIVE") === false, "isPaidSubscriptionStatus does not reinterpret case");
+  assert(isPaidSubscriptionStatus(" active ") === false, "isPaidSubscriptionStatus does not trim");
+
+  assert(
+    isSquareBackedPaidEntitlement({
+      localStatus: "active",
+      squareSubscriptionId: null,
+      squareSubscriptionStatus: null,
+    }),
+    "legacy local active without Square fields remains entitled",
+  );
+  assert(
+    isHostAccessGranted({ subscriptionStatus: "active" }),
+    "legacy host access without Square fields remains entitled",
+  );
+
+  const nonActiveSquare = [
+    "DEACTIVATED",
+    "CANCELED",
+    "PAUSED",
+    "PENDING",
+    "COMPLETED",
+  ] as const;
+  for (const squareStatus of nonActiveSquare) {
+    assert(
+      !isSquareBackedPaidEntitlement({
+        localStatus: "active",
+        squareSubscriptionId: "sqsub_1",
+        squareSubscriptionStatus: squareStatus,
+      }),
+      `Square ${squareStatus} denies ordinary paid access`,
+    );
+    assert(
+      !isHostAccessGranted({
+        subscriptionStatus: "active",
+        squareSubscriptionId: "sqsub_1",
+        squareSubscriptionStatus: squareStatus,
+      }),
+      `host access denied for Square ${squareStatus}`,
+    );
+  }
+
+  assert(
+    isSquareBackedPaidEntitlement({
+      localStatus: "active",
+      squareSubscriptionId: "sqsub_1",
+      squareSubscriptionStatus: "ACTIVE",
+    }),
+    "Square ACTIVE grants ordinary paid access",
+  );
+  assert(
+    isHostAccessGranted({
+      subscriptionStatus: "active",
+      squareSubscriptionId: "sqsub_1",
+      squareSubscriptionStatus: "ACTIVE",
+    }),
+    "host access granted for Square ACTIVE",
+  );
+  assert(
+    isSquareBackedPaidEntitlement({
+      localStatus: "active",
+      squareSubscriptionId: " sqsub_1 ",
+      squareSubscriptionStatus: " ACTIVE ",
+    }),
+    "Square fields normalize surrounding whitespace only",
+  );
+  assert(
+    !isSquareBackedPaidEntitlement({
+      localStatus: "active",
+      squareSubscriptionId: "sqsub_1",
+      squareSubscriptionStatus: "active",
+    }),
+    "unknown/lowercase Square status is not reinterpreted",
+  );
+
+  assert(
+    !isSquareBackedPaidEntitlement({
+      localStatus: "active",
+      squareSubscriptionId: "sqsub_1",
+      squareSubscriptionStatus: null,
+    }),
+    "Square ID plus missing status denies access",
+  );
+  assert(
+    !isSquareBackedPaidEntitlement({
+      localStatus: "active",
+      squareSubscriptionId: null,
+      squareSubscriptionStatus: "ACTIVE",
+    }),
+    "status without ID denies access",
+  );
+  assert(
+    !isSquareBackedPaidEntitlement({
+      localStatus: "inactive",
+      squareSubscriptionId: "sqsub_1",
+      squareSubscriptionStatus: "ACTIVE",
+    }),
+    "inactive local status plus Square ACTIVE denies ordinary paid access",
+  );
+  assert(
+    !isHostAccessGranted({
+      subscriptionStatus: "inactive",
+      squareSubscriptionId: "sqsub_1",
+      squareSubscriptionStatus: "ACTIVE",
+    }),
+    "inactive local plus Square ACTIVE does not grant host access",
+  );
+
+  assert(
+    isHostAccessGranted({
+      subscriptionStatus: "inactive",
+      metadata: meta,
+      squareSubscriptionId: "sqsub_1",
+      squareSubscriptionStatus: "DEACTIVATED",
+    }),
+    "trial remains granted independently of Square status",
+  );
+  assert(
+    isHostAccessGranted({
+      subscriptionStatus: "inactive",
+      complimentaryEndsAt: six,
+      squareSubscriptionId: "sqsub_1",
+      squareSubscriptionStatus: "CANCELED",
+    }),
+    "complimentary remains granted independently of Square status",
+  );
+  assert(
+    isHostAccessGranted({
+      subscriptionStatus: "inactive",
+      isLifetimeFree: true,
+      squareSubscriptionId: "sqsub_1",
+      squareSubscriptionStatus: "PAUSED",
+    }),
+    "lifetime access remains unchanged",
+  );
+  assert(
+    isHostAccessGranted({
+      subscriptionStatus: "inactive",
+      lifetimeVip: true,
+      squareSubscriptionId: "sqsub_1",
+      squareSubscriptionStatus: "PENDING",
+    }),
+    "founder/VIP access remains unchanged",
+  );
+
   assert(!evaluateSquareCompSafety({ status: "active", squareSubscriptionId: "sq" }).ok, "active Square blocked");
   assert(!evaluateSquareCompSafety({ status: "past_due", squareSubscriptionId: "sq" }).ok, "past_due Square blocked");
   assert(evaluateSquareCompSafety({ status: "canceled", squareSubscriptionId: "sq" }).ok, "canceled Square safe");
@@ -183,6 +333,61 @@ function runBillingAccessTypesTests() {
   const overview = readFileSync(join(root, "src/app/(founder-admin)/backoffice/page.tsx"), "utf8");
   assert(overview.includes("metrics.trials"), "Overview shows trial count");
   assert(overview.includes("metrics.complimentary"), "Overview shows complimentary count");
+
+  const billingRoute = readFileSync(
+    join(root, "src/app/api/billing/subscription/route.ts"),
+    "utf8",
+  );
+  assert(billingRoute.includes("square_subscription_id"), "billing selects Square subscription id");
+  assert(
+    billingRoute.includes("square_subscription_status"),
+    "billing selects Square subscription status",
+  );
+  assert(
+    billingRoute.includes("squareSubscriptionId:"),
+    "billing passes Square subscription id into access",
+  );
+  assert(
+    billingRoute.includes("squareSubscriptionStatus:"),
+    "billing passes Square subscription status into access",
+  );
+  assert(billingRoute.includes("isHostAccessGranted"), "billing still uses host access helper");
+
+  const propertiesRoute = readFileSync(join(root, "src/app/api/properties/route.ts"), "utf8");
+  assert(
+    propertiesRoute.includes("square_subscription_id"),
+    "properties selects Square subscription id",
+  );
+  assert(
+    propertiesRoute.includes("square_subscription_status"),
+    "properties selects Square subscription status",
+  );
+  assert(
+    propertiesRoute.includes("squareSubscriptionId:"),
+    "properties passes Square subscription id into access",
+  );
+  assert(
+    propertiesRoute.includes("squareSubscriptionStatus:"),
+    "properties passes Square subscription status into access",
+  );
+  assert(propertiesRoute.includes("isHostAccessGranted"), "properties still uses host access helper");
+  assert(
+    propertiesRoute.includes('.eq("user_id", auth.user.id)'),
+    "properties tenant filter unchanged",
+  );
+
+  const authForm = readFileSync(
+    join(root, "src/components/auth/host-auth-form.tsx"),
+    "utf8",
+  );
+  assert(
+    authForm.includes("isPaidSubscriptionStatus"),
+    "login metadata still uses isPaidSubscriptionStatus",
+  );
+  assert(
+    !authForm.includes("isSquareBackedPaidEntitlement"),
+    "login metadata is not Square-gated in this microblock",
+  );
 
   console.log("billing access types tests passed");
 }

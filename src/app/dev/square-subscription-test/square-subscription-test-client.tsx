@@ -6,19 +6,28 @@ import {
   SquareSubscriptionCardForm,
   type B4cSubmitTraceSnapshot,
 } from "@/components/billing/square-subscription-card-form";
-import { B4C_AUTHORIZED_ENROLL_INTENT_ID } from "./b4c-single-enroll-gate";
+import type { BillingCycle, ZenciergePlanId } from "@/lib/zencierge-plans";
+
+export type B4cAuthorizedIntentCatalog = {
+  planId: ZenciergePlanId;
+  billingCycle: BillingCycle;
+  amountUsd: number;
+  displayLabel: string;
+};
 
 export function SquareSubscriptionTestClient({
   intentId,
-  amountUsd,
+  catalog,
   enrollEnabled = false,
   singleEnrollEnabled = false,
+  authorizedIntentMatch = false,
 }: {
   intentId: string;
-  amountUsd: number;
+  catalog: B4cAuthorizedIntentCatalog | null;
   enrollEnabled?: boolean;
   /** When true, diagnosticOnly is off — one real sandbox subscribe POST is allowed. */
   singleEnrollEnabled?: boolean;
+  authorizedIntentMatch?: boolean;
 }) {
   const [webPaymentsReady, setWebPaymentsReady] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
@@ -34,8 +43,7 @@ export function SquareSubscriptionTestClient({
     null,
   );
 
-  const liveEnroll = Boolean(enrollEnabled && singleEnrollEnabled);
-  const authorizedIntentMatch = intentId === B4C_AUTHORIZED_ENROLL_INTENT_ID;
+  const liveEnroll = Boolean(enrollEnabled && singleEnrollEnabled && catalog);
   const diagnosticOnly = !liveEnroll;
 
   return (
@@ -72,6 +80,12 @@ export function SquareSubscriptionTestClient({
                     : "initializing…"
               }
             />
+          </li>
+          <li>
+            Authorized plan:{" "}
+            <span className={catalog ? "text-emerald-300" : "text-amber-300"}>
+              {catalog ? catalog.displayLabel : "unavailable"}
+            </span>
           </li>
           <li>
             Enroll submit:{" "}
@@ -124,33 +138,39 @@ export function SquareSubscriptionTestClient({
         </ul>
       </section>
 
-      <SquareSubscriptionCardForm
-        intentId={intentId}
-        planId="starter"
-        billingCycle="monthly"
-        amountUsd={amountUsd}
-        disableEnroll={!enrollEnabled}
-        showTokenizationDiagnostics
-        diagnosticOnly={diagnosticOnly}
-        oneShotSubmit={liveEnroll}
-        oneShotUnlockKey={liveEnroll ? "b4c-host-rpc-retry-1" : ""}
-        showSafeSubscribeDiagnostics
-        showB4cSubmitTrace
-        onSubmitTraceChange={setSubmitTrace}
-        onReady={() => {
-          setConfigStatus("ok");
-          setWebPaymentsReady(true);
-          setInitError(null);
-        }}
-        onInitError={(message) => {
-          setConfigStatus("fail");
-          setWebPaymentsReady(false);
-          setInitError(message);
-        }}
-        onSuccess={(result) => {
-          setEnrollResult(result);
-        }}
-      />
+      {catalog ? (
+        <SquareSubscriptionCardForm
+          intentId={intentId}
+          planId={catalog.planId}
+          billingCycle={catalog.billingCycle}
+          amountUsd={catalog.amountUsd}
+          disableEnroll={!enrollEnabled}
+          showTokenizationDiagnostics
+          diagnosticOnly={diagnosticOnly}
+          oneShotSubmit={liveEnroll}
+          oneShotUnlockKey={liveEnroll ? "b4c-host-rpc-retry-1" : ""}
+          showSafeSubscribeDiagnostics
+          showB4cSubmitTrace
+          onSubmitTraceChange={setSubmitTrace}
+          onReady={() => {
+            setConfigStatus("ok");
+            setWebPaymentsReady(true);
+            setInitError(null);
+          }}
+          onInitError={(message) => {
+            setConfigStatus("fail");
+            setWebPaymentsReady(false);
+            setInitError(message);
+          }}
+          onSuccess={(result) => {
+            setEnrollResult(result);
+          }}
+        />
+      ) : (
+        <p className="rounded-2xl border border-amber-500/40 bg-amber-950/20 p-4 text-sm text-amber-100">
+          Card form closed — authorized intent plan could not be validated.
+        </p>
+      )}
     </div>
   );
 }

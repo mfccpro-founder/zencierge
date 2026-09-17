@@ -267,10 +267,24 @@ export type SquareInvoicePaymentStore = {
   ): Promise<SquareInvoicePaymentCorrelationResult>;
 };
 
+/** Read-only host_subscriptions correlation used by enroll's single-active guard. */
+export type SquareHostSubscriptionCorrelation = {
+  user_id: string;
+  square_environment: SquareEnvironmentName;
+  square_location_id: string;
+  square_customer_id: string;
+  square_subscription_id: string;
+};
+
+export type SquareHostSubscriptionStore = {
+  getByUserId(userId: string): Promise<SquareHostSubscriptionCorrelation | null>;
+};
+
 export type SquareBillingStores = {
   intents: SquareSubscriptionIntentStore;
   paymentMethods: SquarePaymentMethodStore;
   invoicePayments: SquareInvoicePaymentStore;
+  hostSubscriptions: SquareHostSubscriptionStore;
 };
 
 export const SQUARE_BILLING_STORE_ERROR_MESSAGES = Object.freeze({
@@ -1290,18 +1304,31 @@ export function createMemorySquareBillingStores(
       );
       if (duplicateIntent) conflict();
       const trusted = trustedSubscription(row, normalized);
-      const customerConflict = subscriptions.some(
+      const otherOwnerConflict = subscriptions.some(
         (candidate) =>
           candidate !== existing &&
-          (candidate.user_id === trusted.user_id ||
-            (candidate.square_environment === trusted.square_environment &&
-              candidate.square_customer_id === trusted.square_customer_id)),
+          candidate.user_id !== trusted.user_id &&
+          candidate.square_environment === trusted.square_environment &&
+          (candidate.square_customer_id === trusted.square_customer_id ||
+            candidate.square_subscription_id === trusted.square_subscription_id),
       );
-      if (customerConflict || (existing && !subscriptionsEqual(existing, trusted))) {
+      if (
+        otherOwnerConflict ||
+        (existing &&
+          existing.user_id === trusted.user_id &&
+          !subscriptionsEqual(existing, trusted))
+      ) {
         conflict();
       }
       mapSquareSubscriptionStatusToHostStatus(normalized.squareSubscriptionStatus);
-      if (!existing) subscriptions.push(trusted);
+      const sameUserIndex = subscriptions.findIndex(
+        (candidate) => candidate.user_id === trusted.user_id,
+      );
+      if (sameUserIndex >= 0) {
+        subscriptions[sameUserIndex] = trusted;
+      } else if (!existing) {
+        subscriptions.push(trusted);
+      }
       if (!isEnrollableSquareSubscriptionStatus(normalized.squareSubscriptionStatus)) {
         return {
           intent: cloneIntent(row),
@@ -1750,10 +1777,29 @@ export function createMemorySquareBillingStores(
     },
   };
 
+  const hostSubscriptionStore: SquareHostSubscriptionStore = {
+    async getByUserId(userId) {
+      assertNoSquareBillingTokenKeys(userId);
+      const id = requireUuid(userId);
+      const matches = subscriptions.filter((row) => row.user_id === id);
+      if (matches.length > 1) conflict();
+      const row = matches[0];
+      if (!row) return null;
+      return {
+        user_id: row.user_id,
+        square_environment: row.square_environment,
+        square_location_id: row.square_location_id,
+        square_customer_id: row.square_customer_id,
+        square_subscription_id: row.square_subscription_id,
+      };
+    },
+  };
+
   return {
     intents: intentStore,
     paymentMethods: paymentMethodStore,
     invoicePayments: invoicePaymentStore,
+    hostSubscriptions: hostSubscriptionStore,
     snapshot() {
       return {
         paymentMethods: paymentMethods.map(clonePaymentMethod),

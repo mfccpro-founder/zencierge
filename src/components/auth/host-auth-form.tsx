@@ -37,8 +37,13 @@ export function HostAuthForm({
   const [busy, setBusy] = useState(false);
   const isSignup = mode === "signup";
   const selectedPlan = ZENCIERGE_PLANS[planId];
+  const allowDevNext =
+    process.env.NODE_ENV !== "production" && nextPath.startsWith("/dev/");
   const destination =
-    (nextPath.startsWith("/dashboard") || nextPath.startsWith("/admin")) && !nextPath.startsWith("//")
+    (nextPath.startsWith("/dashboard") ||
+      nextPath.startsWith("/admin") ||
+      allowDevNext) &&
+    !nextPath.startsWith("//")
       ? nextPath
       : "/dashboard";
 

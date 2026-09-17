@@ -111,6 +111,31 @@ export function isPaidSubscriptionStatus(status: string | null | undefined) {
   return status === "active";
 }
 
+function trimmedNonempty(value: string | null | undefined): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+/**
+ * Ordinary paid entitlement for Square-backed host subscriptions.
+ * Legacy local-active rows with no Square id/status remain entitled.
+ * Square-linked rows require square_subscription_status === "ACTIVE".
+ */
+export function isSquareBackedPaidEntitlement(input: {
+  localStatus: string | null | undefined;
+  squareSubscriptionId: string | null | undefined;
+  squareSubscriptionStatus: string | null | undefined;
+}) {
+  const localStatus = trimmedNonempty(input.localStatus);
+  if (localStatus !== "active") return false;
+
+  const squareSubscriptionId = trimmedNonempty(input.squareSubscriptionId);
+  const squareSubscriptionStatus = trimmedNonempty(input.squareSubscriptionStatus);
+
+  if (!squareSubscriptionId && !squareSubscriptionStatus) return true;
+  if (!squareSubscriptionId) return false;
+  return squareSubscriptionStatus === "ACTIVE";
+}
+
 export const TRIAL_DAYS = 14;
 
 export function trialEndsAtIso(from = new Date()) {
@@ -148,12 +173,22 @@ export function isHostAccessGranted(input: {
   complimentaryEndsAt?: string | null;
   isLifetimeFree?: boolean | null;
   lifetimeVip?: boolean | null;
+  squareSubscriptionId?: string | null;
+  squareSubscriptionStatus?: string | null;
 }) {
   const meta = input.metadata ?? {};
   const status = String(input.subscriptionStatus ?? meta.subscription_status ?? "");
   if (input.lifetimeVip === true) return true;
   if (input.isLifetimeFree === true) return true;
-  if (isPaidSubscriptionStatus(status)) return true;
+  if (
+    isSquareBackedPaidEntitlement({
+      localStatus: status,
+      squareSubscriptionId: input.squareSubscriptionId,
+      squareSubscriptionStatus: input.squareSubscriptionStatus,
+    })
+  ) {
+    return true;
+  }
   if (isComplimentaryEndsOpen(input.complimentaryEndsAt)) return true;
   // Public 14-day trial: server-side window only. Never treat bare status "trial" as permanent.
   if (isTrialWindowOpen(meta.trial_ends_at)) return true;

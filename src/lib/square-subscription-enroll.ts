@@ -3,6 +3,7 @@ import {
   assertNoSquareBillingTokenKeys,
   isEnrollableSquareSubscriptionStatus,
   type SquareBillingStores,
+  type SquareHostSubscriptionCorrelation,
   type SquareSubscriptionIntentRow,
   type SquareSubscriptionIntentStatus,
 } from "@/lib/square-billing-stores";
@@ -35,6 +36,7 @@ export type SquareSubscriptionEnrollErrorCode =
 /** Internal customer-path stage — never returned as the public API error code. */
 export type SquareCustomerPathFailureStage =
   | "customer_search_failed"
+  | "customer_retrieve_failed"
   | "customer_create_failed";
 
 export type SafeSquareErrorDiagnostic = {
@@ -196,16 +198,29 @@ export type SquareEnrollSubscriptionResult = {
   canceledDate: string | null;
 };
 
+export type SquareEnrollCustomerProfile = {
+  id?: string | null;
+  emailAddress?: string | null;
+  givenName?: string | null;
+  familyName?: string | null;
+  companyName?: string | null;
+  referenceId?: string | null;
+};
+
 export type SquareEnrollClient = {
   customers: {
     search: (input: {
       query: { filter: { emailAddress: { exact: string } } };
     }) => Promise<{ customers?: Array<{ id?: string | null }> | null }>;
+    retrieve: (input: {
+      customerId: string;
+    }) => Promise<{ customer?: SquareEnrollCustomerProfile | null }>;
     create: (input: {
       idempotencyKey: string;
       emailAddress: string;
-      givenName?: string;
-      referenceId?: string;
+      givenName: string;
+      familyName?: string;
+      referenceId: string;
     }) => Promise<{ customer?: { id?: string | null } | null }>;
   };
   cards: {
@@ -214,6 +229,16 @@ export type SquareEnrollClient = {
     ) => Promise<{ card?: Partial<SquareEnrollCardResult> & { id?: string } }>;
   };
   subscriptions: {
+    get: (input: {
+      subscriptionId: string;
+    }) => Promise<{
+      subscription?: {
+        id?: string | null;
+        status?: string | null;
+        customerId?: string | null;
+        locationId?: string | null;
+      } | null;
+    }>;
     create: (
       input: SquareEnrollCreateSubscriptionRequest,
     ) => Promise<{
@@ -233,6 +258,8 @@ export type EnrollSquareSubscriptionInput = {
   intentId: string;
   userId: string;
   email: string;
+  /** Authenticated `user.user_metadata` only — never request-body identity. */
+  userMetadata?: Record<string, unknown> | null;
   /** Required unless intent is already card_ready / has square_card_id. */
   sourceId?: string | null;
   verificationToken?: string | null;
@@ -366,6 +393,99 @@ export function buildSquareCreateSubscriptionRequest(input: {
   };
 }
 
+export const BLOCKING_EXISTING_SQUARE_SUBSCRIPTION_STATUSES = [
+  "ACTIVE",
+  "PENDING",
+  "PAUSED",
+] as const;
+
+export const TERMINAL_SQUARE_SUBSCRIPTION_STATUSES_ALLOWING_ENROLL = [
+  "DEACTIVATED",
+  "CANCELED",
+  "COMPLETED",
+] as const;
+
+export function existingSquareSubscriptionBlocksNewEnrollment(
+  status: string | null | undefined,
+): boolean {
+  const normalized = nonblank(status)?.toUpperCase() ?? "";
+  if (
+    (
+      TERMINAL_SQUARE_SUBSCRIPTION_STATUSES_ALLOWING_ENROLL as readonly string[]
+    ).includes(normalized)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+export function existingHostCorrelationConflictsWithIntent(
+  host: SquareHostSubscriptionCorrelation,
+  intent: SquareSubscriptionIntentRow,
+): boolean {
+  if (host.user_id !== intent.user_id) return true;
+  if (host.square_environment !== intent.square_environment) return true;
+  if (host.square_location_id !== intent.square_location_id) return true;
+  const intentCustomer = nonblank(intent.square_customer_id);
+  if (intentCustomer && intentCustomer !== host.square_customer_id) {
+    return true;
+  }
+  return !nonblank(host.square_subscription_id) || !nonblank(host.square_customer_id);
+}
+
+async function assertNoBlockingExistingSquareSubscription(input: {
+  intent: SquareSubscriptionIntentRow;
+  stores: SquareBillingStores;
+  square: SquareEnrollClient;
+}): Promise<void> {
+  let host: SquareHostSubscriptionCorrelation | null;
+  try {
+    host = await input.stores.hostSubscriptions.getByUserId(input.intent.user_id);
+  } catch (error) {
+    throw new SquareSubscriptionEnrollError(mapStoreError(error));
+  }
+  if (!host) return;
+  if (existingHostCorrelationConflictsWithIntent(host, input.intent)) {
+    throw new SquareSubscriptionEnrollError("conflict");
+  }
+
+  let retrieved: {
+    id?: string | null;
+    status?: string | null;
+    customerId?: string | null;
+    locationId?: string | null;
+  } | null;
+  try {
+    const response = await input.square.subscriptions.get({
+      subscriptionId: host.square_subscription_id,
+    });
+    retrieved = response.subscription ?? null;
+  } catch (error) {
+    if (error instanceof SquareSubscriptionEnrollError) throw error;
+    throw new SquareSubscriptionEnrollError("unavailable");
+  }
+
+  const retrievedId = nonblank(retrieved?.id ?? null);
+  const retrievedStatus = nonblank(retrieved?.status ?? null);
+  const retrievedCustomer = nonblank(retrieved?.customerId ?? null);
+  const retrievedLocation = nonblank(retrieved?.locationId ?? null);
+  if (!retrievedId || !retrievedStatus) {
+    throw new SquareSubscriptionEnrollError("unavailable");
+  }
+  if (retrievedId !== host.square_subscription_id) {
+    throw new SquareSubscriptionEnrollError("conflict");
+  }
+  if (retrievedCustomer && retrievedCustomer !== host.square_customer_id) {
+    throw new SquareSubscriptionEnrollError("conflict");
+  }
+  if (retrievedLocation && retrievedLocation !== host.square_location_id) {
+    throw new SquareSubscriptionEnrollError("conflict");
+  }
+  if (existingSquareSubscriptionBlocksNewEnrollment(retrievedStatus)) {
+    throw new SquareSubscriptionEnrollError("conflict");
+  }
+}
+
 function mapStoreError(
   error: unknown,
 ): SquareSubscriptionEnrollErrorCode {
@@ -395,7 +515,30 @@ function failure(
   };
 }
 
-const FIXTURE_INVALID_EMAIL_SUFFIXES = [".invalid"] as const;
+const RESERVED_EMAIL_HOSTS = new Set([
+  "example.com",
+  "example.org",
+  "example.net",
+  "localhost",
+  "test.com",
+  "test.org",
+]);
+
+const RESERVED_EMAIL_SUFFIXES = [
+  ".example",
+  ".invalid",
+  ".test",
+  ".localhost",
+] as const;
+
+const GENERIC_SQUARE_HOST_REFERENCE_ID = "zencierge-host";
+
+export type SquareCustomerIdentity = {
+  email: string;
+  givenName: string;
+  familyName: string | null;
+  referenceId: string;
+};
 
 function emailHost(email: string): string {
   const at = email.lastIndexOf("@");
@@ -409,6 +552,24 @@ function emailLocalPart(email: string): string {
   return email.slice(0, at).trim().toLowerCase();
 }
 
+function metadataNonblank(
+  metadata: Record<string, unknown> | null | undefined,
+  keys: readonly string[],
+): string | null {
+  if (!metadata || typeof metadata !== "object") return null;
+  for (const key of keys) {
+    const value = metadata[key];
+    const trimmed = nonblank(typeof value === "string" ? value : null);
+    if (trimmed) return trimmed;
+  }
+  return null;
+}
+
+function isReservedEmailHost(host: string): boolean {
+  if (RESERVED_EMAIL_HOSTS.has(host)) return true;
+  return RESERVED_EMAIL_SUFFIXES.some((suffix) => host.endsWith(suffix));
+}
+
 /** True when the address is syntactically usable by Square (not a reserved invalid host). */
 export function isSquareAcceptableEmail(email: string): boolean {
   const trimmed = email.trim().toLowerCase();
@@ -417,31 +578,23 @@ export function isSquareAcceptableEmail(email: string): boolean {
   const host = emailHost(trimmed);
   if (!local || !host) return false;
   if (local.includes(" ") || host.includes(" ")) return false;
-  if (!host.includes(".")) return false;
-  if (FIXTURE_INVALID_EMAIL_SUFFIXES.some((suffix) => host.endsWith(suffix))) {
-    return false;
-  }
+  if (host !== "localhost" && !host.includes(".")) return false;
+  if (isReservedEmailHost(host)) return false;
   return true;
 }
 
 export function isSandboxFixtureInvalidEmail(email: string): boolean {
-  const host = emailHost(email.trim().toLowerCase());
-  return FIXTURE_INVALID_EMAIL_SUFFIXES.some((suffix) => host.endsWith(suffix));
-}
-
-function stableSandboxUserFragment(userId: string): string {
-  return userId.replace(/-/g, "").toLowerCase().slice(0, 12);
+  return !isSquareAcceptableEmail(email);
 }
 
 /**
  * Resolve the email address sent to Square Customers APIs.
- * Production: real auth email only; fail closed if missing/invalid.
- * Sandbox: map reserved fixture hosts (*.invalid) to a stable @example.com address.
+ * Sandbox and production use identical rules. Never invents a reserved example mailbox.
  */
 export function resolveSquareCustomerEmail(input: {
   email: string | null | undefined;
   userId: string;
-  squareEnvironment: "sandbox" | "production";
+  squareEnvironment?: "sandbox" | "production";
 }): string {
   const userId = nonblank(input.userId);
   if (!userId) {
@@ -449,67 +602,182 @@ export function resolveSquareCustomerEmail(input: {
   }
 
   const raw = nonblank(input.email)?.toLowerCase() ?? null;
+  if (!raw || !isSquareAcceptableEmail(raw)) {
+    throw new SquareSubscriptionEnrollError("invalid_input");
+  }
+  return raw;
+}
 
-  if (input.squareEnvironment === "production") {
-    if (!raw || !isSquareAcceptableEmail(raw)) {
-      throw new SquareSubscriptionEnrollError("invalid_input");
-    }
-    return raw;
+export function resolveSquareCustomerName(input: {
+  userMetadata?: Record<string, unknown> | null;
+}): { givenName: string; familyName: string | null } {
+  const given = metadataNonblank(input.userMetadata, [
+    "first_name",
+    "given_name",
+  ]);
+  const family = metadataNonblank(input.userMetadata, [
+    "last_name",
+    "family_name",
+  ]);
+  if (given) {
+    return { givenName: given, familyName: family };
   }
 
-  // sandbox
-  if (raw && isSquareAcceptableEmail(raw)) {
-    return raw;
-  }
-  if (raw && isSandboxFixtureInvalidEmail(raw)) {
-    return `zencierge-sandbox+${stableSandboxUserFragment(userId)}@example.com`;
+  const full = metadataNonblank(input.userMetadata, ["full_name", "name"]);
+  if (!full) {
+    throw new SquareSubscriptionEnrollError("invalid_input");
   }
 
-  throw new SquareSubscriptionEnrollError("invalid_input");
+  const parts = full.split(/\s+/).filter((part) => part.length > 0);
+  if (parts.length === 0) {
+    throw new SquareSubscriptionEnrollError("invalid_input");
+  }
+  if (parts.length === 1) {
+    return { givenName: parts[0], familyName: null };
+  }
+  return {
+    givenName: parts[0],
+    familyName: parts.slice(1).join(" "),
+  };
+}
+
+export function resolveSquareCustomerIdentity(input: {
+  email: string | null | undefined;
+  userId: string;
+  userMetadata?: Record<string, unknown> | null;
+  squareEnvironment?: "sandbox" | "production";
+}): SquareCustomerIdentity {
+  const referenceId = nonblank(input.userId);
+  if (!referenceId) {
+    throw new SquareSubscriptionEnrollError("invalid_input");
+  }
+  const email = resolveSquareCustomerEmail({
+    email: input.email,
+    userId: referenceId,
+    squareEnvironment: input.squareEnvironment,
+  });
+  const name = resolveSquareCustomerName({ userMetadata: input.userMetadata });
+  return {
+    email,
+    givenName: name.givenName,
+    familyName: name.familyName,
+    referenceId,
+  };
+}
+
+export function isOwnedReusableSquareCustomer(
+  customer: SquareEnrollCustomerProfile | null | undefined,
+  userId: string,
+): boolean {
+  const expectedUserId = nonblank(userId);
+  const id = nonblank(customer?.id ?? null);
+  const email = nonblank(customer?.emailAddress ?? null)?.toLowerCase() ?? null;
+  const referenceId = nonblank(customer?.referenceId ?? null);
+  const givenName = nonblank(customer?.givenName ?? null);
+  const companyName = nonblank(customer?.companyName ?? null);
+  if (!expectedUserId || !id || !email || !referenceId) return false;
+  if (!isSquareAcceptableEmail(email)) return false;
+  if (!givenName && !companyName) return false;
+  if (referenceId.toLowerCase() === GENERIC_SQUARE_HOST_REFERENCE_ID) {
+    return false;
+  }
+  return referenceId === expectedUserId;
+}
+
+function throwCustomerPathFailure(
+  stage: SquareCustomerPathFailureStage,
+  error: unknown,
+): never {
+  if (error instanceof SquareSubscriptionEnrollError) throw error;
+  const diagnostic = extractSafeSquareErrorDiagnostic(error);
+  logSafeCustomerPathFailure(stage, diagnostic);
+  throw new SquareSubscriptionEnrollError("customer_failed", undefined, {
+    customerStage: stage,
+    safeDiagnostic: diagnostic,
+  });
+}
+
+async function retrieveSquareCustomerProfile(
+  square: SquareEnrollClient,
+  customerId: string,
+): Promise<SquareEnrollCustomerProfile | null> {
+  try {
+    const response = await square.customers.retrieve({ customerId });
+    const customer = response.customer ?? null;
+    if (!customer || !nonblank(customer.id ?? null)) return null;
+    return customer;
+  } catch (error) {
+    throwCustomerPathFailure("customer_retrieve_failed", error);
+  }
 }
 
 async function ensureSquareCustomerId(input: {
   intent: SquareSubscriptionIntentRow;
   email: string;
   userId: string;
+  userMetadata?: Record<string, unknown> | null;
   square: SquareEnrollClient;
 }): Promise<string> {
-  const existing = nonblank(input.intent.square_customer_id);
-  if (existing) return existing;
-
-  const email = resolveSquareCustomerEmail({
+  const identity = resolveSquareCustomerIdentity({
     email: input.email,
-    userId: input.userId,
+    userId: input.intent.user_id,
+    userMetadata: input.userMetadata,
     squareEnvironment: input.intent.square_environment,
   });
+
+  const existing = nonblank(input.intent.square_customer_id);
+  if (existing) {
+    const stored = await retrieveSquareCustomerProfile(input.square, existing);
+    if (!isOwnedReusableSquareCustomer(stored, input.intent.user_id)) {
+      throw new SquareSubscriptionEnrollError("customer_failed", undefined, {
+        customerStage: "customer_retrieve_failed",
+        safeDiagnostic: {
+          httpStatus: null,
+          category: null,
+          code: "UNOWNED_OR_INVALID_CUSTOMER",
+          message: "stored Square customer is not a valid owned profile",
+          field: null,
+        },
+      });
+    }
+    return existing;
+  }
 
   let searchResult: { customers?: Array<{ id?: string | null }> | null };
   try {
     searchResult = await input.square.customers.search({
       query: {
         filter: {
-          emailAddress: { exact: email },
+          emailAddress: { exact: identity.email },
         },
       },
     });
   } catch (error) {
-    if (error instanceof SquareSubscriptionEnrollError) throw error;
-    const diagnostic = extractSafeSquareErrorDiagnostic(error);
-    logSafeCustomerPathFailure("customer_search_failed", diagnostic);
-    throw new SquareSubscriptionEnrollError("customer_failed", undefined, {
-      customerStage: "customer_search_failed",
-      safeDiagnostic: diagnostic,
-    });
+    throwCustomerPathFailure("customer_search_failed", error);
   }
 
-  const found = nonblank(searchResult.customers?.[0]?.id ?? null);
-  if (found) return found;
+  const candidates = Array.isArray(searchResult.customers)
+    ? searchResult.customers
+    : [];
+  for (const candidate of candidates) {
+    const candidateId = nonblank(candidate?.id ?? null);
+    if (!candidateId) continue;
+    const profile = await retrieveSquareCustomerProfile(
+      input.square,
+      candidateId,
+    );
+    if (isOwnedReusableSquareCustomer(profile, input.intent.user_id)) {
+      return candidateId;
+    }
+  }
 
   try {
     const created = await input.square.customers.create({
       idempotencyKey: input.intent.customer_idempotency_key,
-      emailAddress: email,
-      referenceId: input.intent.user_id,
+      emailAddress: identity.email,
+      givenName: identity.givenName,
+      ...(identity.familyName ? { familyName: identity.familyName } : {}),
+      referenceId: identity.referenceId,
     });
     const createdId = nonblank(created.customer?.id ?? null);
     if (!createdId) {
@@ -528,13 +796,7 @@ async function ensureSquareCustomerId(input: {
     }
     return createdId;
   } catch (error) {
-    if (error instanceof SquareSubscriptionEnrollError) throw error;
-    const diagnostic = extractSafeSquareErrorDiagnostic(error);
-    logSafeCustomerPathFailure("customer_create_failed", diagnostic);
-    throw new SquareSubscriptionEnrollError("customer_failed", undefined, {
-      customerStage: "customer_create_failed",
-      safeDiagnostic: diagnostic,
-    });
+    throwCustomerPathFailure("customer_create_failed", error);
   }
 }
 
@@ -791,10 +1053,17 @@ export async function enrollSquareSubscription(
   }
 
   try {
+    await assertNoBlockingExistingSquareSubscription({
+      intent,
+      stores: dependencies.stores,
+      square: dependencies.square,
+    });
+
     const customerId = await ensureSquareCustomerId({
       intent,
       email: email ?? "",
       userId,
+      userMetadata: input.userMetadata,
       square: dependencies.square,
     });
 

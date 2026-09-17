@@ -3,19 +3,27 @@ import {
   squareBillingValueHasForbiddenTokenKey,
   type CreateSquareSubscriptionIntentInput,
   type SquareBillingStores,
+  type SquareHostSubscriptionPersistence,
 } from "./square-billing-stores";
 import {
   buildSquareCreateCardRequest,
   buildSquareCreateSubscriptionRequest,
   enrollSquareSubscription,
+  existingHostCorrelationConflictsWithIntent,
+  existingSquareSubscriptionBlocksNewEnrollment,
   extractSafeSquareErrorDiagnostic,
+  isOwnedReusableSquareCustomer,
+  isSquareAcceptableEmail,
   mapEnrollErrorToHttpStatus,
   resolveSquareCustomerEmail,
+  resolveSquareCustomerIdentity,
+  resolveSquareCustomerName,
   SquareSubscriptionEnrollError,
   type EnrollSquareSubscriptionInput,
   type SquareEnrollClient,
   type SquareEnrollCreateCardRequest,
   type SquareEnrollCreateSubscriptionRequest,
+  type SquareEnrollCustomerProfile,
 } from "./square-subscription-enroll";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -26,6 +34,11 @@ function assert(condition: boolean, message: string) {
 
 const USER_A = "11111111-1111-4111-8111-111111111111";
 const USER_B = "22222222-2222-4222-8222-222222222222";
+const HOST_EMAIL = "ada@zencierge.io";
+const HOST_METADATA = {
+  first_name: "Ada",
+  last_name: "Lovelace",
+} as const;
 const BASE_MS = Date.parse("2026-09-10T12:00:00.000Z");
 
 function createClock(startMs = BASE_MS) {
@@ -67,18 +80,41 @@ type MockSquareState = {
   customersCreated: number;
   cardsCreated: number;
   subscriptionsCreated: number;
+  subscriptionsRetrieved: number;
   lastCardRequest: SquareEnrollCreateCardRequest | null;
   lastSubscriptionRequest: SquareEnrollCreateSubscriptionRequest | null;
+  lastRetrieveIds: string[];
   customerByEmail: Map<string, string>;
+  customerProfiles: Map<string, SquareEnrollCustomerProfile>;
+  subscriptionById: Map<
+    string,
+    {
+      id: string;
+      status: string;
+      customerId: string | null;
+      locationId: string | null;
+    }
+  >;
   failCardOnce: boolean;
   failSubscriptionOnce: boolean;
   failSubscriptionPersistAfterCreate: boolean;
   failCustomerSearchOnce: boolean;
   failCustomerCreateOnce: boolean;
+  failCustomerRetrieveOnce: boolean;
+  failSubscriptionGetOnce: boolean;
   customerSearchError: unknown;
   customerCreateError: unknown;
+  customerRetrieveError: unknown;
   lastCustomerSearchEmail: string | null;
   lastCustomerCreateEmail: string | null;
+  lastCustomerCreate: {
+    emailAddress: string;
+    givenName: string;
+    familyName?: string;
+    referenceId: string;
+    idempotencyKey: string;
+  } | null;
+  lastCustomerRetrieveIds: string[];
 };
 
 function createMockSquare(options?: {
@@ -86,18 +122,31 @@ function createMockSquare(options?: {
   subscriptionId?: string;
   subscriptionStatus?: string;
 }): { client: SquareEnrollClient; state: MockSquareState } {
+  const defaultExisting: SquareEnrollCustomerProfile = {
+    id: "CUSTOMER_EXISTING",
+    emailAddress: HOST_EMAIL,
+    givenName: "Ada",
+    familyName: "Lovelace",
+    referenceId: USER_A,
+  };
   const state: MockSquareState = {
     customersCreated: 0,
     cardsCreated: 0,
     subscriptionsCreated: 0,
+    subscriptionsRetrieved: 0,
     lastCardRequest: null,
     lastSubscriptionRequest: null,
-    customerByEmail: new Map([["host@example.com", "CUSTOMER_EXISTING"]]),
+    lastRetrieveIds: [],
+    customerByEmail: new Map([[HOST_EMAIL, "CUSTOMER_EXISTING"]]),
+    customerProfiles: new Map([["CUSTOMER_EXISTING", defaultExisting]]),
+    subscriptionById: new Map(),
     failCardOnce: false,
     failSubscriptionOnce: false,
     failSubscriptionPersistAfterCreate: false,
     failCustomerSearchOnce: false,
     failCustomerCreateOnce: false,
+    failCustomerRetrieveOnce: false,
+    failSubscriptionGetOnce: false,
     customerSearchError: {
       statusCode: 401,
       errors: [
@@ -121,10 +170,45 @@ function createMockSquare(options?: {
         ],
       },
     },
+    customerRetrieveError: {
+      statusCode: 404,
+      errors: [
+        {
+          category: "INVALID_REQUEST_ERROR",
+          code: "NOT_FOUND",
+          detail: "Customer not found.",
+        },
+      ],
+    },
     lastCustomerSearchEmail: null,
     lastCustomerCreateEmail: null,
+    lastCustomerCreate: null,
+    lastCustomerRetrieveIds: [],
     ...options?.state,
   };
+
+  if (options?.state?.customerProfiles) {
+    if (!options.state.customerByEmail) {
+      state.customerByEmail = new Map();
+      for (const profile of state.customerProfiles.values()) {
+        const email = profile.emailAddress?.trim().toLowerCase();
+        const id = profile.id?.trim();
+        if (email && id) state.customerByEmail.set(email, id);
+      }
+    }
+  } else {
+    state.customerProfiles = new Map();
+    for (const [email, id] of state.customerByEmail) {
+      state.customerProfiles.set(id, {
+        id,
+        emailAddress: email,
+        givenName: "Ada",
+        familyName: "Lovelace",
+        companyName: null,
+        referenceId: USER_A,
+      });
+    }
+  }
 
   const client: SquareEnrollClient = {
     customers: {
@@ -135,8 +219,28 @@ function createMockSquare(options?: {
         }
         const email = input.query.filter.emailAddress.exact;
         state.lastCustomerSearchEmail = email;
-        const id = state.customerByEmail.get(email);
-        return { customers: id ? [{ id }] : [] };
+        const matches: Array<{ id: string }> = [];
+        for (const profile of state.customerProfiles.values()) {
+          const profileEmail = profile.emailAddress?.trim().toLowerCase() ?? "";
+          const id = profile.id?.trim() ?? "";
+          if (id && profileEmail === email.toLowerCase()) {
+            matches.push({ id });
+          }
+        }
+        const legacyId = state.customerByEmail.get(email);
+        if (legacyId && !matches.some((match) => match.id === legacyId)) {
+          matches.push({ id: legacyId });
+        }
+        return { customers: matches };
+      },
+      async retrieve(input) {
+        state.lastCustomerRetrieveIds.push(input.customerId);
+        if (state.failCustomerRetrieveOnce) {
+          state.failCustomerRetrieveOnce = false;
+          throw state.customerRetrieveError;
+        }
+        const profile = state.customerProfiles.get(input.customerId);
+        return { customer: profile ?? null };
       },
       async create(input) {
         if (state.failCustomerCreateOnce) {
@@ -145,8 +249,22 @@ function createMockSquare(options?: {
         }
         state.customersCreated += 1;
         state.lastCustomerCreateEmail = input.emailAddress;
+        state.lastCustomerCreate = {
+          emailAddress: input.emailAddress,
+          givenName: input.givenName,
+          ...(input.familyName ? { familyName: input.familyName } : {}),
+          referenceId: input.referenceId,
+          idempotencyKey: input.idempotencyKey,
+        };
         const id = `CUSTOMER_NEW_${state.customersCreated}`;
         state.customerByEmail.set(input.emailAddress, id);
+        state.customerProfiles.set(id, {
+          id,
+          emailAddress: input.emailAddress,
+          givenName: input.givenName,
+          familyName: input.familyName ?? null,
+          referenceId: input.referenceId,
+        });
         return { customer: { id } };
       },
     },
@@ -170,6 +288,16 @@ function createMockSquare(options?: {
       },
     },
     subscriptions: {
+      async get(input) {
+        state.subscriptionsRetrieved += 1;
+        state.lastRetrieveIds.push(input.subscriptionId);
+        if (state.failSubscriptionGetOnce) {
+          state.failSubscriptionGetOnce = false;
+          throw new Error("square subscription get boom");
+        }
+        const found = state.subscriptionById.get(input.subscriptionId);
+        return { subscription: found ?? null };
+      },
       async create(input) {
         if (state.failSubscriptionOnce) {
           state.failSubscriptionOnce = false;
@@ -205,9 +333,64 @@ function baseEnrollInput(
   return {
     intentId: "aaaaaaaa-aaaa-4aaa-8aaa-000000000001",
     userId: USER_A,
-    email: "host@example.com",
+    email: HOST_EMAIL,
+    userMetadata: { ...HOST_METADATA },
     sourceId: "cnon:test-source",
     ...overrides,
+  };
+}
+
+function existingHost(
+  overrides: Partial<SquareHostSubscriptionPersistence> = {},
+): SquareHostSubscriptionPersistence {
+  return {
+    user_id: USER_A,
+    plan_id: "portfolio",
+    billing_cycle: "monthly",
+    billing_amount_usd: 149,
+    square_environment: "sandbox",
+    square_location_id: "LOC_SANDBOX",
+    square_plan_variation_id: "PLAN_VAR_PORTFOLIO_MONTHLY",
+    square_customer_id: "CUSTOMER_EXISTING",
+    square_subscription_id: "SUB_EXISTING",
+    square_subscription_status: "ACTIVE",
+    square_subscription_version: 1,
+    square_start_date: "2026-09-10",
+    square_charged_through_date: "2026-10-10",
+    square_canceled_date: null,
+    complimentary_ends_at: null,
+    ...overrides,
+  };
+}
+
+function trackStoreWrites(stores: SquareBillingStores) {
+  let writes = 0;
+  function wrap<T extends object, K extends keyof T>(target: T, key: K) {
+    const original = (target[key] as (...args: never[]) => Promise<unknown>).bind(
+      target,
+    );
+    (target[key] as unknown) = async (...args: never[]) => {
+      writes += 1;
+      return original(...args);
+    };
+  }
+  wrap(stores.intents, "recordCustomer");
+  wrap(stores.intents, "persistSubscription");
+  wrap(stores.intents, "completeIntent");
+  wrap(stores.intents, "failIntent");
+  wrap(stores.paymentMethods, "persistPaymentMethod");
+  return () => writes;
+}
+
+function squareSub(
+  status: string,
+  overrides: { customerId?: string | null; locationId?: string | null } = {},
+) {
+  return {
+    id: "SUB_EXISTING",
+    status,
+    customerId: overrides.customerId === undefined ? "CUSTOMER_EXISTING" : overrides.customerId,
+    locationId: overrides.locationId === undefined ? "LOC_SANDBOX" : overrides.locationId,
   };
 }
 
@@ -280,6 +463,7 @@ export async function runSquareSubscriptionEnrollTests() {
     assert(state.customersCreated === 0, "reused searched customer");
     assert(state.cardsCreated === 1, "created card once");
     assert(state.subscriptionsCreated === 1, "created subscription once");
+    assert(state.subscriptionsRetrieved === 0, "no existing-sub GET on first enroll");
     assert(
       state.lastCardRequest?.idempotencyKey === intent.card_idempotency_key,
       "card uses intent card key",
@@ -324,7 +508,7 @@ export async function runSquareSubscriptionEnrollTests() {
     const result = await enrollSquareSubscription(
       baseEnrollInput({
         intentId: intent.id,
-        email: "new-host@example.com",
+        email: "new-host@zencierge.io",
       }),
       { stores, square: client, now: clock.now },
     );
@@ -490,6 +674,183 @@ export async function runSquareSubscriptionEnrollTests() {
       mapEnrollErrorToHttpStatus("square_subscription_not_enrollable") === 400,
       "400 not enrollable",
     );
+    const routeSource = readFileSync(
+      join(process.cwd(), "src/app/api/payments/square/subscribe/route.ts"),
+      "utf8",
+    );
+    assert(
+      routeSource.includes("mapEnrollErrorToHttpStatus(result.error)"),
+      "subscribe route maps enroll errors including conflict",
+    );
+    assert(
+      routeSource.includes("subscriptions.get(") &&
+        routeSource.includes("status: mapEnrollErrorToHttpStatus(result.error)"),
+      "subscribe route exposes GET and HTTP mapping",
+    );
+  }
+
+  // fail-closed single-active Square subscription guard
+  {
+    assert(
+      existingSquareSubscriptionBlocksNewEnrollment("ACTIVE") &&
+        existingSquareSubscriptionBlocksNewEnrollment("PENDING") &&
+        existingSquareSubscriptionBlocksNewEnrollment("PAUSED") &&
+        existingSquareSubscriptionBlocksNewEnrollment("UNKNOWN"),
+      "blocking statuses fail closed",
+    );
+    assert(
+      !existingSquareSubscriptionBlocksNewEnrollment("DEACTIVATED") &&
+        !existingSquareSubscriptionBlocksNewEnrollment("CANCELED") &&
+        !existingSquareSubscriptionBlocksNewEnrollment("COMPLETED"),
+      "terminal statuses allow new enrollment",
+    );
+
+    async function enrollWithHost(options: {
+      host?: SquareHostSubscriptionPersistence;
+      status?: string;
+      locationMismatch?: boolean;
+      customerMismatch?: boolean;
+      uuidPrefix: string;
+    }) {
+      const clock = createClock();
+      const host = options.host;
+      const stores = createMemorySquareBillingStores({
+        now: clock.now,
+        uuid: createUuidSource(options.uuidPrefix),
+        ...(host ? { subscriptions: [host] } : {}),
+      });
+      const writeCount = trackStoreWrites(stores);
+      const intent = await createPendingIntent(stores);
+      const { client, state } = createMockSquare({
+        state: {
+          subscriptionById: new Map([
+            [
+              "SUB_EXISTING",
+              squareSub(options.status ?? "ACTIVE", {
+                ...(options.customerMismatch
+                  ? { customerId: "CUSTOMER_OTHER" }
+                  : {}),
+                ...(options.locationMismatch
+                  ? { locationId: "LOC_OTHER" }
+                  : {}),
+              }),
+            ],
+          ]),
+        },
+      });
+      const result = await enrollSquareSubscription(
+        baseEnrollInput({ intentId: intent.id }),
+        { stores, square: client, now: clock.now },
+      );
+      return { result, state, writeCount, intent, stores };
+    }
+
+    {
+      const blocked = await enrollWithHost({
+        host: existingHost(),
+        status: "ACTIVE",
+        uuidPrefix: "aa01aa01-aa01-4a01-8a01",
+      });
+      assert(blocked.result.ok === false, "ACTIVE blocks");
+      if (blocked.result.ok) throw new Error("unreachable");
+      assert(blocked.result.error === "conflict", "ACTIVE conflict");
+      assert(blocked.state.customersCreated === 0, "ACTIVE no customer create");
+      assert(blocked.state.cardsCreated === 0, "ACTIVE no card create");
+      assert(blocked.state.subscriptionsCreated === 0, "ACTIVE no sub create");
+      assert(blocked.writeCount() === 0, "ACTIVE no database writes");
+      assert(blocked.state.subscriptionsRetrieved === 1, "ACTIVE GET once");
+      const stored = await blocked.stores.intents.getIntent(blocked.intent.id);
+      assert(stored?.status === "pending", "ACTIVE leaves intent pending");
+    }
+
+    {
+      const blocked = await enrollWithHost({
+        host: existingHost({ square_subscription_status: "PENDING" }),
+        status: "PENDING",
+        uuidPrefix: "aa02aa02-aa02-4a02-8a02",
+      });
+      assert(
+        blocked.result.ok === false &&
+          blocked.result.error === "conflict" &&
+          blocked.state.subscriptionsCreated === 0 &&
+          blocked.writeCount() === 0,
+        "PENDING blocks before writes",
+      );
+    }
+
+    {
+      const blocked = await enrollWithHost({
+        host: existingHost({ square_subscription_status: "PAUSED" }),
+        status: "PAUSED",
+        uuidPrefix: "aa03aa03-aa03-4a03-8a03",
+      });
+      assert(
+        blocked.result.ok === false &&
+          blocked.result.error === "conflict" &&
+          blocked.state.cardsCreated === 0 &&
+          blocked.state.subscriptionsCreated === 0 &&
+          blocked.writeCount() === 0,
+        "PAUSED blocks before writes",
+      );
+    }
+
+    const terminalPrefixes: Record<string, string> = {
+      DEACTIVATED: "aa14aa14-aa14-4a14-8a14",
+      CANCELED: "aa15aa15-aa15-4a15-8a15",
+      COMPLETED: "aa16aa16-aa16-4a16-8a16",
+    };
+    for (const status of ["DEACTIVATED", "CANCELED", "COMPLETED"] as const) {
+      const allowed = await enrollWithHost({
+        host: existingHost({ square_subscription_status: status }),
+        status,
+        uuidPrefix: terminalPrefixes[status],
+      });
+      assert(allowed.result.ok === true, `${status} allows enroll`);
+      assert(allowed.state.subscriptionsRetrieved === 1, `${status} GET once`);
+      assert(allowed.state.subscriptionsCreated === 1, `${status} creates once`);
+      assert(allowed.state.cardsCreated === 1, `${status} creates card`);
+    }
+
+    {
+      const mismatched = await enrollWithHost({
+        host: existingHost({ square_location_id: "LOC_OTHER" }),
+        status: "ACTIVE",
+        uuidPrefix: "aa05aa05-aa05-4a05-8a05",
+      });
+      assert(
+        mismatched.result.ok === false &&
+          mismatched.result.error === "conflict" &&
+          mismatched.state.subscriptionsRetrieved === 0 &&
+          mismatched.state.subscriptionsCreated === 0 &&
+          mismatched.writeCount() === 0,
+        "mismatched location fails closed before Square GET/create",
+      );
+      assert(
+        existingHostCorrelationConflictsWithIntent(
+          {
+            user_id: USER_A,
+            square_environment: "production",
+            square_location_id: "LOC_SANDBOX",
+            square_customer_id: "CUSTOMER_EXISTING",
+            square_subscription_id: "SUB_EXISTING",
+          },
+          {
+            ...mismatched.intent,
+            square_environment: "sandbox",
+          },
+        ),
+        "mismatched environment conflicts",
+      );
+    }
+
+    {
+      const first = await enrollWithHost({
+        uuidPrefix: "aa06aa06-aa06-4a06-8a06",
+      });
+      assert(first.result.ok === true, "no existing host still enrolls");
+      assert(first.state.subscriptionsRetrieved === 0, "no GET without host");
+      assert(first.state.subscriptionsCreated === 1, "one create without host");
+    }
   }
 
   // sourceId never stored on intent / payment method rows
@@ -687,7 +1048,7 @@ export async function runSquareSubscriptionEnrollTests() {
     const createResult = await enrollSquareSubscription(
       baseEnrollInput({
         intentId: intentCreate.id,
-        email: "new-host@example.com",
+        email: "new-host@zencierge.io",
       }),
       { stores: storesCreate, square: createClient, now: clockCreate.now },
     );
@@ -704,7 +1065,7 @@ export async function runSquareSubscriptionEnrollTests() {
       "utf8",
     );
     assert(
-      source.includes('customerStage: "customer_search_failed"'),
+      source.includes('throwCustomerPathFailure("customer_search_failed"'),
       "search stage tagged",
     );
     assert(
@@ -731,115 +1092,412 @@ export async function runSquareSubscriptionEnrollTests() {
       !source.includes("b0e6c7d3-62fb-43a7-b12f-dee072d23b13"),
       "enroll does not persist the existing DEACTIVATED Square subscription",
     );
+    assert(
+      !source.includes("zencierge-sandbox+"),
+      "sandbox never invents mapped emails",
+    );
+    assert(
+      !source.includes("@example.com"),
+      "enroll never invents @example.com customer emails",
+    );
+    assert(
+      source.includes("customer_retrieve_failed"),
+      "retrieve stage tagged",
+    );
   }
 
-  // customer email normalization (sandbox fixture → stable @example.com)
-  {
-    const mappedA = resolveSquareCustomerEmail({
-      email: "mb6d-20260910-01@example.invalid",
-      userId: USER_A,
-      squareEnvironment: "sandbox",
-    });
-    const mappedARetry = resolveSquareCustomerEmail({
-      email: "mb6d-20260910-01@example.invalid",
-      userId: USER_A,
-      squareEnvironment: "sandbox",
-    });
-    assert(
-      mappedA === "zencierge-sandbox+111111111111@example.com",
-      "sandbox fixture maps to stable example.com",
-    );
-    assert(mappedA === mappedARetry, "same user → same mapped email on retry");
-    assert(!mappedA.includes("example.invalid"), "mapped email hides fixture host");
-
-    const validSandbox = resolveSquareCustomerEmail({
-      email: "host@example.com",
-      userId: USER_A,
-      squareEnvironment: "sandbox",
-    });
-    assert(validSandbox === "host@example.com", "sandbox valid email unchanged");
-
-    const mappedB = resolveSquareCustomerEmail({
-      email: "other@example.invalid",
-      userId: USER_B,
-      squareEnvironment: "sandbox",
-    });
-    assert(
-      mappedB === "zencierge-sandbox+222222222222@example.com",
-      "different user → different fragment",
-    );
-    assert(mappedA !== mappedB, "users do not share mapped emails");
-
-    const prodValid = resolveSquareCustomerEmail({
-      email: "host@example.com",
-      userId: USER_A,
-      squareEnvironment: "production",
-    });
-    assert(prodValid === "host@example.com", "production valid email unchanged");
-
-    let prodInvalidThrown = false;
+  function expectInvalidInput(run: () => unknown, message: string) {
+    let thrown = false;
     try {
-      resolveSquareCustomerEmail({
-        email: "x@example.invalid",
-        userId: USER_A,
-        squareEnvironment: "production",
-      });
+      run();
     } catch (error) {
-      prodInvalidThrown =
+      thrown =
         error instanceof SquareSubscriptionEnrollError &&
         error.code === "invalid_input";
     }
-    assert(prodInvalidThrown, "production invalid email fails closed");
+    assert(thrown, message);
+  }
 
-    let prodMissingThrown = false;
-    try {
-      resolveSquareCustomerEmail({
-        email: "",
-        userId: USER_A,
-        squareEnvironment: "production",
-      });
-    } catch (error) {
-      prodMissingThrown =
-        error instanceof SquareSubscriptionEnrollError &&
-        error.code === "invalid_input";
-    }
-    assert(prodMissingThrown, "production missing email fails closed");
-
+  async function enrollExpecting(
+    input: Partial<EnrollSquareSubscriptionInput>,
+    mockState?: Partial<MockSquareState>,
+  ) {
     const clock = createClock();
     const stores = createMemorySquareBillingStores({
       now: clock.now,
-      uuid: createUuidSource("cccccccc-cccc-4ccc-8ccc"),
+      uuid: createUuidSource("aabbccdd-eeee-4fff-8aaa"),
+    });
+    const intent = await createPendingIntent(stores);
+    const { client, state } = createMockSquare(
+      mockState ? { state: mockState } : undefined,
+    );
+    const result = await enrollSquareSubscription(
+      baseEnrollInput({ intentId: intent.id, ...input }),
+      { stores, square: client, now: clock.now },
+    );
+    return { result, state, stores, intent, clock };
+  }
+
+  // valid first + last name
+  {
+    const identity = resolveSquareCustomerIdentity({
+      email: HOST_EMAIL,
+      userId: USER_A,
+      userMetadata: { first_name: "Ada", last_name: "Lovelace" },
+    });
+    assert(identity.givenName === "Ada", "first_name given");
+    assert(identity.familyName === "Lovelace", "last_name family");
+    assert(identity.referenceId === USER_A, "reference is user id");
+    assert(identity.email === HOST_EMAIL, "auth email");
+  }
+
+  // valid one-part full name
+  {
+    const identity = resolveSquareCustomerName({
+      userMetadata: { full_name: "Madonna" },
+    });
+    assert(identity.givenName === "Madonna", "one-part givenName");
+    assert(identity.familyName === null, "one-part has no familyName");
+  }
+
+  // missing name
+  {
+    expectInvalidInput(
+      () => resolveSquareCustomerName({ userMetadata: {} }),
+      "missing name fails",
+    );
+    const { result, state } = await enrollExpecting({ userMetadata: {} });
+    assert(result.ok === false && result.error === "invalid_input", "enroll missing name");
+    assert(state.cardsCreated === 0, "no card without name");
+    assert(state.customersCreated === 0, "no customer without name");
+  }
+
+  // missing email
+  {
+    expectInvalidInput(
+      () =>
+        resolveSquareCustomerEmail({
+          email: "",
+          userId: USER_A,
+          squareEnvironment: "sandbox",
+        }),
+      "missing email fails sandbox",
+    );
+    expectInvalidInput(
+      () =>
+        resolveSquareCustomerEmail({
+          email: "   ",
+          userId: USER_A,
+          squareEnvironment: "production",
+        }),
+      "missing email fails production",
+    );
+    const { result, state } = await enrollExpecting({ email: "" });
+    assert(result.ok === false && result.error === "invalid_input", "enroll missing email");
+    assert(state.cardsCreated === 0, "no card without email");
+  }
+
+  // reserved / placeholder domains — identical sandbox and production
+  {
+    const reserved = [
+      "user@example.com",
+      "user@example.org",
+      "user@example.net",
+      "user@foo.example",
+      "user@example.invalid",
+      "user@foo.test",
+      "user@device.localhost",
+      "user@localhost",
+      "user@test.com",
+      "user@test.org",
+    ];
+    for (const email of reserved) {
+      assert(!isSquareAcceptableEmail(email), `reject ${email}`);
+      expectInvalidInput(
+        () =>
+          resolveSquareCustomerEmail({
+            email,
+            userId: USER_A,
+            squareEnvironment: "sandbox",
+          }),
+        `sandbox rejects ${email}`,
+      );
+      expectInvalidInput(
+        () =>
+          resolveSquareCustomerEmail({
+            email,
+            userId: USER_A,
+            squareEnvironment: "production",
+          }),
+        `production rejects ${email}`,
+      );
+    }
+
+    const { result, state } = await enrollExpecting({
+      email: "fixture@example.invalid",
+    });
+    assert(
+      result.ok === false && result.error === "invalid_input",
+      "sandbox fixture email fails closed",
+    );
+    assert(state.lastCustomerSearchEmail === null, "Square never searched fixture email");
+    assert(state.customersCreated === 0, "sandbox never creates example.com customer");
+    assert(state.cardsCreated === 0, "no card on reserved email");
+  }
+
+  // existing owned customer succeeds
+  {
+    const clock = createClock();
+    const stores = createMemorySquareBillingStores({
+      now: clock.now,
+      uuid: createUuidSource("a1a1a1a1-aaaa-4aaa-8aaa"),
+    });
+    const intent = await createPendingIntent(stores);
+    await stores.intents.recordCustomer({
+      intentId: intent.id,
+      squareCustomerId: "CUSTOMER_OWNED",
+    });
+    const owned: SquareEnrollCustomerProfile = {
+      id: "CUSTOMER_OWNED",
+      emailAddress: HOST_EMAIL,
+      givenName: "Ada",
+      referenceId: USER_A,
+    };
+    const { client, state } = createMockSquare({
+      state: {
+        customerByEmail: new Map(),
+        customerProfiles: new Map([["CUSTOMER_OWNED", owned]]),
+      },
+    });
+    const result = await enrollSquareSubscription(
+      baseEnrollInput({ intentId: intent.id }),
+      { stores, square: client, now: clock.now },
+    );
+    assert(result.ok === true, "owned stored customer enrolls");
+    assert(state.customersCreated === 0, "did not create when owned stored");
+    assert(state.lastCardRequest?.card.customerId === "CUSTOMER_OWNED", "card uses owned id");
+    assert(isOwnedReusableSquareCustomer(owned, USER_A), "owned profile reusable");
+  }
+
+  // existing customer with missing / wrong / generic referenceId fails
+  {
+    const cases: Array<[string, SquareEnrollCustomerProfile]> = [
+      [
+        "missing",
+        {
+          id: "CUSTOMER_BAD",
+          emailAddress: HOST_EMAIL,
+          givenName: "Ada",
+          referenceId: null,
+        },
+      ],
+      [
+        "wrong",
+        {
+          id: "CUSTOMER_BAD",
+          emailAddress: HOST_EMAIL,
+          givenName: "Ada",
+          referenceId: USER_B,
+        },
+      ],
+      [
+        "generic",
+        {
+          id: "CUSTOMER_BAD",
+          emailAddress: HOST_EMAIL,
+          givenName: "Ada",
+          referenceId: "zencierge-host",
+        },
+      ],
+    ];
+    for (const [label, profile] of cases) {
+      const clock = createClock();
+      const stores = createMemorySquareBillingStores({
+        now: clock.now,
+        uuid: createUuidSource("b2b2b2b2-bbbb-4bbb-8bbb"),
+      });
+      const intent = await createPendingIntent(stores);
+      await stores.intents.recordCustomer({
+        intentId: intent.id,
+        squareCustomerId: "CUSTOMER_BAD",
+      });
+      const { client, state } = createMockSquare({
+        state: {
+          customerByEmail: new Map(),
+          customerProfiles: new Map([["CUSTOMER_BAD", profile]]),
+        },
+      });
+      const result = await enrollSquareSubscription(
+        baseEnrollInput({ intentId: intent.id }),
+        { stores, square: client, now: clock.now },
+      );
+      assert(
+        result.ok === false && result.error === "customer_failed",
+        `stored ${label} reference fails closed`,
+      );
+      assert(state.cardsCreated === 0, `no card for ${label} stored customer`);
+      assert(state.customersCreated === 0, `no create for ${label} stored customer`);
+    }
+  }
+
+  // search same email different owner is ignored; create new owned customer
+  {
+    const other: SquareEnrollCustomerProfile = {
+      id: "CUSTOMER_OTHER",
+      emailAddress: HOST_EMAIL,
+      givenName: "Other",
+      referenceId: USER_B,
+    };
+    const clock = createClock();
+    const stores = createMemorySquareBillingStores({
+      now: clock.now,
+      uuid: createUuidSource("c3c3c3c3-cccc-4ccc-8ccc"),
     });
     const intent = await createPendingIntent(stores);
     const { client, state } = createMockSquare({
-      state: { customerByEmail: new Map() },
+      state: {
+        customerByEmail: new Map(),
+        customerProfiles: new Map([["CUSTOMER_OTHER", other]]),
+      },
+    });
+    const result = await enrollSquareSubscription(
+      baseEnrollInput({ intentId: intent.id }),
+      { stores, square: client, now: clock.now },
+    );
+    assert(result.ok === true, "ignores other-owner search hit");
+    assert(state.customersCreated === 1, "creates owned customer after ignore");
+    assert(state.lastCustomerCreate?.referenceId === USER_A, "create reference is user id");
+    assert(state.lastCardRequest?.card.customerId === "CUSTOMER_NEW_1", "card uses new owned id");
+    assert(
+      state.lastCardRequest?.card.customerId !== "CUSTOMER_OTHER",
+      "card never uses mismatched customer",
+    );
+  }
+
+  // multiple results reuse only the correct owned customer
+  {
+    const other: SquareEnrollCustomerProfile = {
+      id: "CUSTOMER_OTHER_MULTI",
+      emailAddress: HOST_EMAIL,
+      givenName: "Other",
+      referenceId: USER_B,
+    };
+    const generic: SquareEnrollCustomerProfile = {
+      id: "CUSTOMER_GENERIC_MULTI",
+      emailAddress: HOST_EMAIL,
+      givenName: "Host",
+      referenceId: "zencierge-host",
+    };
+    const owned: SquareEnrollCustomerProfile = {
+      id: "CUSTOMER_OWNED_MULTI",
+      emailAddress: HOST_EMAIL,
+      givenName: "Ada",
+      companyName: "Zencierge",
+      referenceId: USER_A,
+    };
+    const clock = createClock();
+    const stores = createMemorySquareBillingStores({
+      now: clock.now,
+      uuid: createUuidSource("d4d4d4d4-dddd-4ddd-8ddd"),
+    });
+    const intent = await createPendingIntent(stores);
+    const { client, state } = createMockSquare({
+      state: {
+        customerByEmail: new Map(),
+        customerProfiles: new Map([
+          ["CUSTOMER_OTHER_MULTI", other],
+          ["CUSTOMER_GENERIC_MULTI", generic],
+          ["CUSTOMER_OWNED_MULTI", owned],
+        ]),
+      },
+    });
+    const result = await enrollSquareSubscription(
+      baseEnrollInput({ intentId: intent.id }),
+      { stores, square: client, now: clock.now },
+    );
+    assert(result.ok === true, "multi-search reuses owned");
+    assert(state.customersCreated === 0, "did not create when owned search hit exists");
+    assert(
+      state.lastCardRequest?.card.customerId === "CUSTOMER_OWNED_MULTI",
+      "reused only owned customer",
+    );
+    assert(
+      state.lastCustomerRetrieveIds.includes("CUSTOMER_OTHER_MULTI"),
+      "inspected other candidate",
+    );
+    assert(
+      state.lastCustomerRetrieveIds.includes("CUSTOMER_OWNED_MULTI"),
+      "inspected owned candidate",
+    );
+  }
+
+  // no valid owned result creates a new customer with identity fields
+  {
+    const clock = createClock();
+    const stores = createMemorySquareBillingStores({
+      now: clock.now,
+      uuid: createUuidSource("e5e5e5e5-eeee-4eee-8eee"),
+    });
+    const intent = await createPendingIntent(stores);
+    const { client, state } = createMockSquare({
+      state: { customerByEmail: new Map(), customerProfiles: new Map() },
     });
     const result = await enrollSquareSubscription(
       baseEnrollInput({
         intentId: intent.id,
-        email: "fixture@example.invalid",
+        email: "new-owner@zencierge.io",
+        userMetadata: { given_name: "Grace", family_name: "Hopper" },
+        cardholderName: "CARDHOLDER NOT IDENTITY",
       }),
       { stores, square: client, now: clock.now },
     );
-    assert(result.ok === true, "fixture sandbox email enrolls after mapping");
+    assert(result.ok === true, "create path ok");
+    assert(state.customersCreated === 1, "created customer");
+    assert(state.lastCustomerCreate?.emailAddress === "new-owner@zencierge.io", "create email");
+    assert(state.lastCustomerCreate?.givenName === "Grace", "create givenName");
+    assert(state.lastCustomerCreate?.familyName === "Hopper", "create familyName");
+    assert(state.lastCustomerCreate?.referenceId === USER_A, "create referenceId");
     assert(
-      state.lastCustomerSearchEmail ===
-        "zencierge-sandbox+111111111111@example.com",
-      "search uses mapped email",
+      state.lastCustomerCreate?.idempotencyKey === intent.customer_idempotency_key,
+      "create uses stored customer idempotency key",
     );
     assert(
-      state.lastCustomerCreateEmail ===
-        "zencierge-sandbox+111111111111@example.com",
-      "create uses same mapped email",
+      state.lastCustomerCreate?.givenName !== "CARDHOLDER NOT IDENTITY",
+      "cardholderName is not customer identity",
     );
     assert(
-      state.lastCustomerSearchEmail === state.lastCustomerCreateEmail,
-      "search and create share resolved email",
+      state.lastCardRequest?.card.cardholderName === "CARDHOLDER NOT IDENTITY",
+      "cardholderName stays on cards.create only",
     );
     assert(
-      !state.lastCustomerSearchEmail?.includes("example.invalid"),
-      "Square never sees fixture host",
+      state.lastCardRequest?.card.customerId === "CUSTOMER_NEW_1",
+      "card waits for resolved owned customer",
     );
+  }
+
+  // cardholderName never becomes customer identity even when metadata uses name
+  {
+    const clock = createClock();
+    const stores = createMemorySquareBillingStores({
+      now: clock.now,
+      uuid: createUuidSource("f6f6f6f6-ffff-4fff-8fff"),
+    });
+    const intent = await createPendingIntent(stores);
+    const { client, state } = createMockSquare({
+      state: { customerByEmail: new Map(), customerProfiles: new Map() },
+    });
+    await enrollSquareSubscription(
+      baseEnrollInput({
+        intentId: intent.id,
+        email: "onepart@zencierge.io",
+        userMetadata: { name: "Prince" },
+        cardholderName: "Host",
+      }),
+      { stores, square: client, now: clock.now },
+    );
+    assert(state.lastCustomerCreate?.givenName === "Prince", "metadata name used");
+    assert(state.lastCustomerCreate?.givenName !== "Host", "never uses Host fallback");
+    assert(state.lastCardRequest?.card.cardholderName === "Host", "Host only on card");
   }
 
   console.log("square-subscription-enroll tests passed");

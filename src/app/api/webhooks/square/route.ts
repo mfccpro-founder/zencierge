@@ -1,4 +1,6 @@
 import { applySubscriptionWebhook } from "@/lib/subscription-webhooks";
+import { enrichSubscriptionPaymentSquareCorrelation } from "@/lib/square-payment-enrichment";
+import { applySquareSubscriptionStatusWebhookRpc } from "@/lib/square-billing-supabase-stores";
 import {
   handleSquareWebhook,
   squareWebhookConfig,
@@ -21,6 +23,8 @@ export async function POST(request: Request) {
     config: squareWebhookConfig(),
     verifySignature: verifySquareWebhookSignature,
     applyEvent: applySubscriptionWebhook,
+    applySubscriptionStatus: applySquareSubscriptionStatusWebhookRpc,
+    enrichPaymentCorrelation: enrichSubscriptionPaymentSquareCorrelation,
   });
   return Response.json(result.body, { status: result.status });
 }

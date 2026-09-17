@@ -1,10 +1,18 @@
 /**
  * Pure B4C single-enroll gate (dev/sandbox only). No I/O.
  * Production and non-matching intents stay blocked.
+ * Authorized intent id comes only from server-provided config — never a fallback UUID.
  */
 
-export const B4C_AUTHORIZED_ENROLL_INTENT_ID =
-  "8ae24a84-e04c-4c5d-be30-254a002095d6";
+if (typeof window !== "undefined") {
+  throw new Error("b4c-single-enroll-gate is server-only");
+}
+
+export const SQUARE_B4C_AUTHORIZED_INTENT_ENV =
+  "SQUARE_B4C_AUTHORIZED_INTENT_ID";
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const TERMINAL_OR_DEAD_STATUSES = new Set([
   "expired",
@@ -25,6 +33,7 @@ export type B4cSingleEnrollGateInput = {
   nodeEnv: string | undefined;
   squareEnvironment: string | undefined;
   intentId: string;
+  authorizedIntentId: string | null | undefined;
   sessionUserId: string | null | undefined;
   intentOwnerUserId: string | null | undefined;
   intentStatus: string | null | undefined;
@@ -37,6 +46,23 @@ export type B4cSingleEnrollGateResult = {
   reason: string;
 };
 
+export function resolveSquareB4cAuthorizedIntentId(
+  envValue: string | null | undefined,
+): string | null {
+  const trimmed = (envValue ?? "").trim();
+  if (!trimmed) return null;
+  if (!UUID_RE.test(trimmed)) return null;
+  return trimmed.toLowerCase();
+}
+
+export function readSquareB4cAuthorizedIntentIdFromEnv(
+  env: NodeJS.Dict<string> = process.env,
+): string | null {
+  return resolveSquareB4cAuthorizedIntentId(
+    env[SQUARE_B4C_AUTHORIZED_INTENT_ENV],
+  );
+}
+
 export function resolveB4cSingleEnrollAllowed(
   input: B4cSingleEnrollGateInput,
 ): B4cSingleEnrollGateResult {
@@ -48,7 +74,15 @@ export function resolveB4cSingleEnrollAllowed(
     return { allowed: false, reason: "square_env_not_sandbox" };
   }
 
-  if (input.intentId !== B4C_AUTHORIZED_ENROLL_INTENT_ID) {
+  const authorizedIntentId = resolveSquareB4cAuthorizedIntentId(
+    input.authorizedIntentId,
+  );
+  if (!authorizedIntentId) {
+    return { allowed: false, reason: "authorized_intent_unconfigured" };
+  }
+
+  const intentId = (input.intentId || "").trim().toLowerCase();
+  if (intentId !== authorizedIntentId) {
     return { allowed: false, reason: "intent_not_authorized" };
   }
 

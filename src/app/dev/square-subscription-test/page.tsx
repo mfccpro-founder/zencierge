@@ -1,10 +1,16 @@
 import { notFound } from "next/navigation";
 import { resolveSquareWebPaymentsPublicConfig } from "@/lib/square-web-payments-config";
-import { billingPriceUsd } from "@/lib/zencierge-plans";
+import {
+  billingPriceUsd,
+  parseBillingCycle,
+  parsePlanId,
+  type BillingCycle,
+  type ZenciergePlanId,
+} from "@/lib/zencierge-plans";
 import { createSupabaseRouteClient } from "@/lib/supabase-route";
 import { tryCreateSupabaseAdminClient } from "@/lib/supabase-admin";
 import {
-  B4C_AUTHORIZED_ENROLL_INTENT_ID,
+  readSquareB4cAuthorizedIntentIdFromEnv,
   resolveB4cSingleEnrollAllowed,
 } from "./b4c-single-enroll-gate";
 import { SquareSubscriptionAuthStatus } from "./square-subscription-auth-status";
@@ -13,6 +19,19 @@ import { SquareSubscriptionTestClient } from "./square-subscription-test-client"
 export const dynamic = "force-dynamic";
 
 const UI_ONLY_INTENT_ID = "00000000-0000-4000-8000-0000000000b4";
+const OPEN_INTENT_STATUSES = new Set([
+  "pending",
+  "customer_ready",
+  "card_ready",
+  "subscription_ready",
+]);
+
+export type B4cAuthorizedIntentCatalog = {
+  planId: ZenciergePlanId;
+  billingCycle: BillingCycle;
+  amountUsd: number;
+  displayLabel: string;
+};
 
 function isDevSandboxTestAllowed() {
   if (process.env.NODE_ENV === "production") return false;
@@ -28,6 +47,16 @@ function maskId(value: string) {
   const trimmed = value.trim();
   if (trimmed.length <= 8) return `${trimmed.slice(0, 2)}…`;
   return `${trimmed.slice(0, 4)}…${trimmed.slice(-4)}`;
+}
+
+function formatIntentPlanLabel(
+  planId: ZenciergePlanId,
+  billingCycle: BillingCycle,
+  amountUsd: number,
+) {
+  const planLabel = `${planId.slice(0, 1).toUpperCase()}${planId.slice(1)}`;
+  const cycleLabel = billingCycle === "annual" ? "Annual" : "Monthly";
+  return `${planLabel} · ${cycleLabel} · $${amountUsd}`;
 }
 
 async function loadIntentGateFields(intentId: string): Promise<{
@@ -54,6 +83,87 @@ async function loadIntentGateFields(intentId: string): Promise<{
   };
 }
 
+function asNonblank(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+async function loadAuthorizedIntentCatalog(input: {
+  queryIntentId: string;
+  sessionUserId: string | null;
+  authorizedIntentId: string | null;
+}): Promise<{
+  catalog: B4cAuthorizedIntentCatalog | null;
+  reason: string;
+}> {
+  if (!input.authorizedIntentId) {
+    return { catalog: null, reason: "authorized_intent_unconfigured" };
+  }
+  if (input.queryIntentId.trim().toLowerCase() !== input.authorizedIntentId) {
+    return { catalog: null, reason: "intent_not_authorized" };
+  }
+
+  const admin = tryCreateSupabaseAdminClient();
+  if (!admin) {
+    return { catalog: null, reason: "intent_unreadable" };
+  }
+
+  const { data, error } = await admin
+    .from("square_subscription_intents")
+    .select(
+      "user_id, status, plan_id, billing_cycle, billing_amount_usd, square_environment, square_plan_variation_id",
+    )
+    .eq("id", input.authorizedIntentId)
+    .maybeSingle();
+  if (error || !data) {
+    return { catalog: null, reason: "intent_missing" };
+  }
+
+  const ownerId = asNonblank(data.user_id);
+  if (!ownerId) {
+    return { catalog: null, reason: "intent_owner_missing" };
+  }
+  if (!input.sessionUserId || input.sessionUserId !== ownerId) {
+    return { catalog: null, reason: "wrong_owner" };
+  }
+
+  const status = asNonblank(data.status);
+  if (!status || !OPEN_INTENT_STATUSES.has(status)) {
+    return { catalog: null, reason: "intent_not_open" };
+  }
+
+  if (asNonblank(data.square_environment) !== "sandbox") {
+    return { catalog: null, reason: "intent_not_sandbox" };
+  }
+
+  const planId = parsePlanId(data.plan_id);
+  const billingCycle = parseBillingCycle(data.billing_cycle);
+  if (!planId || !billingCycle) {
+    return { catalog: null, reason: "unsupported_plan_or_cycle" };
+  }
+
+  if (!asNonblank(data.square_plan_variation_id)) {
+    return { catalog: null, reason: "variation_missing" };
+  }
+
+  const storedAmount = Number(data.billing_amount_usd);
+  const configuredAmount = billingPriceUsd(planId, billingCycle);
+  if (!Number.isFinite(storedAmount) || storedAmount !== configuredAmount) {
+    return { catalog: null, reason: "amount_mismatch" };
+  }
+
+  return {
+    catalog: {
+      planId,
+      billingCycle,
+      amountUsd: configuredAmount,
+      displayLabel: formatIntentPlanLabel(planId, billingCycle, configuredAmount),
+    },
+    reason: "ok",
+  };
+}
+
 export default async function SquareSubscriptionTestPage({
   searchParams,
 }: {
@@ -64,6 +174,7 @@ export default async function SquareSubscriptionTestPage({
   }
 
   const params = await searchParams;
+  const authorizedIntentId = readSquareB4cAuthorizedIntentIdFromEnv();
   const queryIntentId = params.intentId?.trim() || "";
   const intentId = queryIntentId || UI_ONLY_INTENT_ID;
   const intentSource = queryIntentId ? "query" : "ui_only_placeholder";
@@ -79,27 +190,39 @@ export default async function SquareSubscriptionTestPage({
     notFound();
   }
 
+  const supabase = await createSupabaseRouteClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
   let singleEnroll = {
     allowed: false,
     reason: "placeholder_or_invalid_intent",
   };
 
   if (enrollEnabled) {
-    const supabase = await createSupabaseRouteClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
     const intentFields = await loadIntentGateFields(intentId);
     singleEnroll = resolveB4cSingleEnrollAllowed({
       nodeEnv: process.env.NODE_ENV,
       squareEnvironment: process.env.SQUARE_ENVIRONMENT,
       intentId,
+      authorizedIntentId,
       sessionUserId: user?.id ?? null,
       intentOwnerUserId: intentFields.userId,
       intentStatus: intentFields.status,
       expiresAt: intentFields.expiresAt,
     });
   }
+
+  const authorizedCatalog = await loadAuthorizedIntentCatalog({
+    queryIntentId,
+    sessionUserId: user?.id ?? null,
+    authorizedIntentId,
+  });
+  const authorizedIntentMatch = Boolean(
+    authorizedIntentId &&
+      queryIntentId.trim().toLowerCase() === authorizedIntentId,
+  );
 
   return (
     <main className="min-h-screen bg-slate-950 px-4 py-10 text-slate-100">
@@ -112,8 +235,11 @@ export default async function SquareSubscriptionTestPage({
             Square sandbox subscription enroll
           </h1>
           <p className="max-w-2xl text-sm text-slate-400">
-            Starter Monthly enroll via Web Payments. Host Payment Link checkout
-            remains unchanged. Production enroll paths are untouched.
+            {authorizedCatalog.catalog
+              ? `${authorizedCatalog.catalog.displayLabel} enroll via Web Payments.`
+              : "Authorized intent plan unavailable."}{" "}
+            Host Payment Link checkout remains unchanged. Production enroll
+            paths are untouched.
           </p>
         </header>
 
@@ -136,7 +262,11 @@ export default async function SquareSubscriptionTestPage({
               <dt className="text-xs uppercase tracking-wide text-slate-500">
                 Plan
               </dt>
-              <dd className="font-medium text-white">Starter · Monthly · $49</dd>
+              <dd className="font-medium text-white">
+                {authorizedCatalog.catalog
+                  ? authorizedCatalog.catalog.displayLabel
+                  : `Unavailable (${authorizedCatalog.reason})`}
+              </dd>
             </div>
             <div>
               <dt className="text-xs uppercase tracking-wide text-slate-500">
@@ -168,7 +298,9 @@ export default async function SquareSubscriptionTestPage({
                 Authorized enroll intent
               </dt>
               <dd className="font-mono text-xs text-slate-200">
-                {B4C_AUTHORIZED_ENROLL_INTENT_ID}
+                {authorizedIntentId
+                  ? maskId(authorizedIntentId)
+                  : "unconfigured"}
               </dd>
             </div>
             <div className="sm:col-span-2">
@@ -205,9 +337,10 @@ export default async function SquareSubscriptionTestPage({
 
         <SquareSubscriptionTestClient
           intentId={intentId}
-          amountUsd={billingPriceUsd("starter", "monthly")}
+          catalog={authorizedCatalog.catalog}
           enrollEnabled={enrollEnabled}
           singleEnrollEnabled={singleEnroll.allowed}
+          authorizedIntentMatch={authorizedIntentMatch}
         />
       </div>
     </main>
