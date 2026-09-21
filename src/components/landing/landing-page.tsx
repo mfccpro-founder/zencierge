@@ -12,6 +12,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { ZenciergeLogo } from "@/components/brand/zencierge-logo";
+import { HomepageGuestPhoneExperience } from "@/components/landing/homepage-guest-phone-experience";
 import { PricingCards } from "@/components/pricing/pricing-cards";
 
 export function LandingPage() {
@@ -51,6 +52,8 @@ export function LandingPage() {
           </div>
         </div>
       </nav>
+
+      <HomepageGuestPhoneExperience />
 
       <section className="relative overflow-hidden border-b border-slate-800 px-6 pb-20 pt-24">
         <div className="pointer-events-none absolute left-1/2 top-1/2 h-[600px] w-[600px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-sky-500/10 blur-[140px]" />
