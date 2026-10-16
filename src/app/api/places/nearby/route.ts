@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { requireHostUser } from "@/lib/supabase-route";
-import { loadInboundProperty } from "@/lib/supabase-listings";
+import { loadHostListings } from "@/lib/host-listings-server";
 import {
   isNearbyPlaceKind,
   NearbyUnavailableError,
@@ -9,6 +9,7 @@ import {
 import { loadActiveLocalGuide } from "@/lib/local-guide";
 import { nearbyFromHostOrGoogle } from "@/lib/local-guide-shared";
 import { tryCreateSupabaseAdminClient } from "@/lib/supabase-admin";
+import { authorizeGuestProperty } from "@/lib/guest-property-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,14 +45,14 @@ function unavailable(code: string = "google") {
 }
 
 export async function POST(request: NextRequest) {
-  let body: { propertyId?: string; kind?: string; language?: string };
+  let body: { propertyId?: string; kind?: string; language?: string; token?: string };
   try {
     body = (await request.json()) as { propertyId?: string; kind?: string; language?: string };
   } catch {
     return Response.json({ error: "invalid" }, { status: 400 });
   }
 
-  const allowedKeys = new Set(["propertyId", "kind", "language"]);
+  const allowedKeys = new Set(["propertyId", "kind", "language", "token"]);
   if (Object.keys(body).some((key) => !allowedKeys.has(key))) {
     return Response.json({ error: "invalid" }, { status: 400 });
   }
@@ -63,22 +64,28 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "invalid" }, { status: 400 });
   }
 
-  let auth: Awaited<ReturnType<typeof requireHostUser>> | null = null;
   try {
-    auth = await requireHostUser();
-  } catch {
-    auth = null;
-  }
-  if (rateLimited(clientKey(request, auth?.user?.id))) {
-    return Response.json({ error: "unavailable", code: "quota" }, { status: 429 });
-  }
-
-  try {
-    const listing = await loadInboundProperty({ propertyId });
+    const admin = tryCreateSupabaseAdminClient();
+    if (!admin) return unavailable("database");
+    let listing;
+    let rateKey: string;
+    if (Object.hasOwn(body, "token")) {
+      const guest = await authorizeGuestProperty({ admin, token: body.token, requestedPropertyId: propertyId });
+      if (guest.kind === "rejected") return Response.json({ error: guest.error }, { status: guest.status });
+      listing = guest.property;
+      rateKey = clientKey(request);
+    } else {
+      const auth = await requireHostUser();
+      if (auth.error) return auth.error;
+      const owned = await loadHostListings(admin, auth.user.id);
+      if (owned.kind === "unavailable") return unavailable("database");
+      listing = owned.properties.find((candidate) => candidate.id === propertyId) ?? null;
+      rateKey = clientKey(request, auth.user.id);
+    }
+    if (rateLimited(rateKey)) return Response.json({ error: "unavailable", code: "quota" }, { status: 429 });
     if (!listing?.id || listing.id !== propertyId || !listing.city) return unavailable("geocode");
 
-    const hostClient = tryCreateSupabaseAdminClient() ?? auth?.supabase ?? null;
-    const hostResults = await loadActiveLocalGuide(listing.id, kind, hostClient ?? undefined);
+    const hostResults = await loadActiveLocalGuide(listing.id, kind, admin);
     const nearby = nearbyFromHostOrGoogle(hostResults);
     if (nearby.source === "host") {
       return Response.json({

@@ -1,5 +1,12 @@
-import { isPrivateNetworkHostname, publicApiUrl } from "@/lib/public-app-url";
 import { FEMALE_ELEVENLABS_VOICE_ID } from "@/lib/elena-voice-ids";
+import {
+  HOST_TTS_USAGE_KEY_HEADER,
+  beginHostTtsPlaybackAction,
+  forgetHostTtsUsageKey,
+  hostTtsUsageKeyForAction,
+  rememberHostTtsUsageKey,
+} from "@/lib/host-tts-usage-key";
+import { isPrivateNetworkHostname, publicApiUrl } from "@/lib/public-app-url";
 
 export { FEMALE_ELEVENLABS_VOICE_ID };
 
@@ -182,7 +189,7 @@ export type VoiceProfile = {
 export const VOICE_PROFILES: VoiceProfile[] = [
   {
     id: "elena",
-    name: "Elena",
+    name: "Isabela",
     title: "Warm & Bilingual (Miami Hostess)",
     hint: "Warm, conversational hospitality tone",
     openaiVoice: FEMALE_OPENAI_VOICE,
@@ -191,8 +198,8 @@ export const VOICE_PROFILES: VoiceProfile[] = [
     rate: 0.93,
     pitch: 1.04,
     preview: {
-      es: "Hola. Soy Elena, tu anfitriona en Miami. Estoy aquí para lo que necesites. El Wi-Fi, el estacionamiento, o simplemente sentirte en casa. Dime, ¿cómo te ayudo?",
-      en: "Hi, I'm Elena, your Miami hostess. I'm right here if you need Wi-Fi, parking, or just a warm welcome. How can I help you?",
+      es: "Hola. Soy Isabela, tu anfitriona en Miami. Estoy aquí para lo que necesites. El Wi-Fi, el estacionamiento, o simplemente sentirte en casa. Dime, ¿cómo te ayudo?",
+      en: "Hi, I'm Isabela, your Miami hostess. I'm right here if you need Wi-Fi, parking, or just a warm welcome. How can I help you?",
     },
   },
   {
@@ -404,6 +411,7 @@ export async function speakHumanVoice(options: {
   if (providers.length === 0) {
     providers.push({ provider: "auto", apiKey: "" });
   }
+  const playbackAction = beginHostTtsPlaybackAction();
 
   for (const item of providers) {
     try {
@@ -418,6 +426,7 @@ export async function speakHumanVoice(options: {
         shouldCancel: options.shouldCancel,
         onPlaybackStart: options.onPlaybackStart,
         onPlaybackEnd: options.onPlaybackEnd,
+        playbackAction,
       });
       options.onEngine?.(item.provider === "auto" ? "elevenlabs" : item.provider);
       return;
@@ -1085,6 +1094,7 @@ export async function loadOpenAiTtsMpeg(
   voice: OpenAiTtsVoice,
   target?: HTMLAudioElement | null,
   lang?: ReplyLang,
+  actionId?: string,
 ): Promise<HTMLAudioElement> {
   const audio = unlockSpeechAudio(target) ?? target ?? unlockedAudio ?? new Audio();
   audio.setAttribute("playsinline", "true");
@@ -1097,13 +1107,20 @@ export async function loadOpenAiTtsMpeg(
   stopPcmPlayback();
   const session = pcmSession;
 
+  const playbackText = paceForSpeech(sanitizeForTts(text));
+  const playbackAction = actionId?.trim() || beginHostTtsPlaybackAction();
+  const playbackKey = hostTtsUsageKeyForAction(playbackAction);
   let ttsRes: Response;
   try {
     ttsRes = await fetch(publicApiUrl("/api/tts"), {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "audio/pcm" },
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "audio/pcm",
+        ...(playbackKey ? { [HOST_TTS_USAGE_KEY_HEADER]: playbackKey } : {}),
+      },
       body: JSON.stringify({
-        text: paceForSpeech(sanitizeForTts(text)),
+        text: playbackText,
         voice,
         speed: HOSPITALITY_TTS_SPEED,
         ...(lang ? { language: lang } : {}),
@@ -1125,6 +1142,9 @@ export async function loadOpenAiTtsMpeg(
     }
     return audio;
   }
+
+  if (ttsRes.status === 410) forgetHostTtsUsageKey(playbackAction);
+  else rememberHostTtsUsageKey(playbackAction, ttsRes.headers.get(HOST_TTS_USAGE_KEY_HEADER));
 
   const engine = ttsRes.headers.get("X-Tts-Engine") ?? "";
   const model = ttsRes.headers.get("X-Tts-Model") ?? "";
@@ -1396,9 +1416,10 @@ export async function playOpenAiTtsMpeg(
   target?: HTMLAudioElement | null,
   lang?: ReplyLang,
   waitUntilEnded = false,
+  actionId?: string,
 ): Promise<HTMLAudioElement> {
   try {
-    const audio = await loadOpenAiTtsMpeg(text, voice, target, lang);
+    const audio = await loadOpenAiTtsMpeg(text, voice, target, lang, actionId);
     if (waitUntilEnded) await pcmPlaybackEnded;
     return audio;
   } catch (cause) {
@@ -1422,6 +1443,7 @@ async function speakStudioAudio(options: {
   shouldCancel: () => boolean;
   onPlaybackStart?: () => void;
   onPlaybackEnd?: () => void;
+  playbackAction?: string;
 }) {
   const voice = studioVoiceForProfile(options.profile.id);
   options.onPlaybackStart?.();
@@ -1430,6 +1452,8 @@ async function speakStudioAudio(options: {
     voice,
     options.audioRef.current,
     detectUtteranceLang(options.text),
+    false,
+    options.playbackAction,
   );
   audio.dataset.ttsEnded = "";
   options.audioRef.current = audio;

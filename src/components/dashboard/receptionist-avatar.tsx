@@ -28,7 +28,7 @@ const GLOW: Record<ReceptionistPhase, string> = {
 export function ReceptionistAvatar({
   phase,
   size = "lg",
-  name = "Elena",
+  name = "Isabela",
 }: {
   phase: ReceptionistPhase;
   size?: "sm" | "lg";

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { fallbackRuntimeOriginFromRequest } from "../app/api/runtime-origin/route";
+import { fallbackRuntimeOriginFromRequest, publicRequestPort } from "../app/api/runtime-origin/route";
 import type { Reservation } from "./dashboard-data";
 import {
   GUEST_STAY_PATH_PREFIX,
@@ -264,6 +264,15 @@ export async function runGuestStayQrTests() {
   const ipv6Loopback = fallbackRuntimeOriginFromRequest({ protocol: "http", hostname: "::1", port: "3000" });
   assert(ipv6Loopback.hostname === "::1", "::1 stays ::1");
   const otherHost = fallbackRuntimeOriginFromRequest({ protocol: "https", hostname: "guest.example", port: "443" });
+  assert(
+    publicRequestPort({
+      protocol: "https",
+      forwardedHostPresent: true,
+      forwardedHostPort: null,
+      requestUrlPort: "3000",
+    }) === "443",
+    "HTTPS reverse proxy does not leak the internal Next.js port",
+  );
   assert(otherHost.hostname === "guest.example" && otherHost.origin.startsWith("https://guest.example"), "non-loopback request preserves its request origin");
 
   const printCopy = hostQrVisibleCopy({

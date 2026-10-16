@@ -21,7 +21,7 @@ export class GuestSafeBoundary extends Component<Props, State> {
     if (this.state.failed) {
       return (
         <div className="w-full min-w-0 max-w-full space-y-4 overflow-x-hidden rounded-2xl border border-slate-700 bg-slate-900 p-4 text-white shadow-xl sm:p-5">
-          <p className="text-lg font-bold">Elena · Receptionist</p>
+          <p className="text-lg font-bold">Isabela · Receptionist</p>
           <p className="text-sm text-slate-400">Voice is unavailable in this browser. Type below.</p>
           <form
             className="flex min-w-0 flex-col gap-2 sm:flex-row"

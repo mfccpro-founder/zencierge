@@ -1,4 +1,7 @@
 import { loadSupplyBoard, newSupplyLog, saveSnapshot, saveSupplyLog } from "@/lib/property-supplies-server";
+import { requireHostUser } from "@/lib/supabase-route";
+import { tryCreateSupabaseAdminClient } from "@/lib/supabase-admin";
+import { loadHostListings } from "@/lib/host-listings-server";
 import {
   applyTurnoverCounts,
   isSupplySku,
@@ -8,6 +11,8 @@ import {
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
+  const auth = await requireHostUser();
+  if (auth.error) return auth.error;
   let body: {
     propertyId?: string;
     reservationId?: string;
@@ -38,7 +43,16 @@ export async function POST(request: Request) {
     return Response.json({ error: "Add remaining counts for at least one consumable." }, { status: 400 });
   }
 
-  const board = await loadSupplyBoard([propertyId]);
+  const admin = tryCreateSupabaseAdminClient();
+  if (!admin) return Response.json({ error: "Service unavailable" }, { status: 503 });
+  const listings = await loadHostListings(admin, auth.user.id);
+  if (listings.kind === "unavailable") {
+    return Response.json({ error: "Service unavailable" }, { status: 503 });
+  }
+  if (!listings.properties.some((property) => property.id === propertyId)) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+  const board = await loadSupplyBoard(listings.properties, [propertyId]);
   const current = board.snapshots[0];
   if (!current) {
     return Response.json({ error: "Unknown property" }, { status: 404 });

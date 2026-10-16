@@ -8,10 +8,10 @@ import { ElenaAvatar } from "@/components/dashboard/elena-avatar";
 import ElenaVoiceWidget from "@/components/dashboard/elena-voice-widget";
 
 const PHASE_LABEL: Record<ReceptionistPhase, string> = {
-  idle: "Ready — press Test Call with Elena",
+  idle: "Ready — press Test Call with Isabela",
   listening: "Listening…",
   thinking: "Thinking…",
-  speaking: "Elena is speaking…",
+  speaking: "Isabela is speaking…",
 };
 
 export type ReceptionistLine = {
@@ -95,7 +95,7 @@ export function AiReceptionistStudio({
           </p>
           <h3 className="mt-1 text-lg font-semibold text-white">Live avatar session</h3>
           <p className="mt-1 max-w-xl text-xs text-cyan-50">
-            The backend is /api/avatar in English/Spanish (Miami / Miramar property). Elena speaks
+            The backend is /api/avatar in English/Spanish (Miami / Miramar property). Isabela speaks
             with a female voice in the live session.
           </p>
         </div>
@@ -130,12 +130,12 @@ export function AiReceptionistStudio({
             </div>
             <p className="text-xs font-semibold text-slate-900">
               {phase === "speaking"
-                ? "Elena is speaking…"
+                ? "Isabela is speaking…"
                 : phase === "listening"
                   ? "Listening…"
                   : phase === "thinking"
                     ? "Thinking…"
-                    : "Elena · Ready"}
+                    : "Isabela · Ready"}
             </p>
             <div className="flex items-end justify-center gap-1 h-6">
               {[0, 1, 2, 3, 4].map((bar) => (
@@ -234,7 +234,7 @@ export function AiReceptionistStudio({
               </>
             ) : (
               <>
-                <Phone className="h-4 w-4" /> Test Call with Elena
+                <Phone className="h-4 w-4" /> Test Call with Isabela
               </>
             )}
           </button>

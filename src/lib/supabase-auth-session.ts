@@ -9,15 +9,15 @@ export async function updateAuthSession(request: NextRequest) {
 
   const pending = parsePendingHostCookie(request.cookies.get(PENDING_HOST_COOKIE)?.value);
   if (pending) {
-    return { user: hostUserFromPending(pending), supabaseResponse };
+    return { user: hostUserFromPending(pending), supabase: null, supabaseResponse };
   }
 
-  if (hasDevHostCookie(request.cookies)) {
-    return { user: mockDevHostUser(), supabaseResponse };
+  if (supabaseEnvIssue() && hasDevHostCookie(request.cookies)) {
+    return { user: mockDevHostUser(), supabase: null, supabaseResponse };
   }
 
   if (supabaseEnvIssue()) {
-    return { user: null, supabaseResponse };
+    return { user: null, supabase: null, supabaseResponse };
   }
 
   try {
@@ -39,8 +39,8 @@ export async function updateAuthSession(request: NextRequest) {
       data: { user },
     } = await supabase.auth.getUser();
 
-    return { user, supabaseResponse };
+    return { user, supabase, supabaseResponse };
   } catch {
-    return { user: null, supabaseResponse };
+    return { user: null, supabase: null, supabaseResponse };
   }
 }

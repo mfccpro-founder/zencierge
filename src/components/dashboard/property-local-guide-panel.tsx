@@ -145,7 +145,7 @@ export function PropertyLocalGuidePanel({ propertyId }: { propertyId: string }) 
     <section className="space-y-2">
       <h4 className="text-xs font-semibold uppercase tracking-wide text-sky-800">Local Guide</h4>
       <p className="text-[11px] text-slate-600">
-        Host picks Elena can name out loud. These are not Google results.
+        Host picks Isabela can name out loud. These are not Google results.
       </p>
       <ul className="space-y-2">
         {rows.map((row) => (

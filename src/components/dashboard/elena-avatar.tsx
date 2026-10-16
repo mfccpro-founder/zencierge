@@ -28,7 +28,7 @@ export function ElenaAvatar({
       {ok ? (
         <img
           src={AVATAR_SRC}
-          alt="Elena · AI Concierge"
+          alt="Isabela · AI Concierge"
           width={size}
           height={size}
           className="h-full w-full scale-[1.65] origin-top rounded-full object-cover object-top"

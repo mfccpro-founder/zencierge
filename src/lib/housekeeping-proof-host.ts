@@ -194,8 +194,11 @@ export function isAcceptableHousekeepingProofOrigin(origin: string) {
 export function chooseHousekeepingProofShareOrigin(pageOrigin: string, reachableOrigin: string) {
   const reachable = reachableOrigin.trim().replace(/\/$/, "");
   const page = pageOrigin.trim().replace(/\/$/, "");
-  if (isHttpsOrigin(reachable) && isAcceptableHousekeepingProofOrigin(reachable)) return reachable;
+  // Prefer the HTTPS origin actually serving the authenticated Dashboard. This
+  // prevents a runtime helper or stale development setting from reintroducing
+  // localhost/:3000 into a link intended for another device.
   if (isHttpsOrigin(page) && isAcceptableHousekeepingProofOrigin(page)) return page;
+  if (isHttpsOrigin(reachable) && isAcceptableHousekeepingProofOrigin(reachable)) return reachable;
   if (isAcceptableHousekeepingProofOrigin(reachable)) return reachable;
   if (isAcceptableHousekeepingProofOrigin(page)) return page;
   return "";

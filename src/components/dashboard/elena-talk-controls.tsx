@@ -385,9 +385,9 @@ function ElenaSecureConnectModal() {
   const title = httpsRequired ? "Connect securely for voice" : "Microphone unavailable";
   const body = httpsRequired
     ? secureGuestHref
-      ? "This page is HTTP, so some phones block the microphone. If you have a real HTTPS guest URL configured, you can open it. Otherwise type a question or hear Elena speak."
-      : "This page is HTTP (for example a local network IP). Some phones block the microphone. Type a question or hear Elena speak. Do not prefix this address with https:// — the local server is HTTP only."
-    : "The microphone could not start. You can type your question, or tap Hear Elena speak for a spoken greeting.";
+      ? "This page is HTTP, so some phones block the microphone. If you have a real HTTPS guest URL configured, you can open it. Otherwise type a question or hear Isabela speak."
+      : "This page is HTTP (for example a local network IP). Some phones block the microphone. Type a question or hear Isabela speak. Do not prefix this address with https:// — the local server is HTTP only."
+    : "The microphone could not start. You can type your question, or tap Hear Isabela speak for a spoken greeting.";
 
   return createPortal(
     <div className="fixed inset-0 z-[80] flex items-end justify-center p-4 sm:items-center">
@@ -433,7 +433,7 @@ function ElenaSecureConnectModal() {
             className={`${guestPressClass} w-full rounded-xl bg-emerald-500 px-4 py-3 text-sm font-bold text-slate-950 hover:bg-emerald-400`}
             onClick={hearElenaFallback}
           >
-            Hear Elena speak
+            Hear Isabela speak
           </button>
           <button
             type="button"

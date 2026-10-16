@@ -232,7 +232,7 @@ body {
 /* Sidebar links: never use a white pill (default or selected). */
 a.host-nav-item {
   background-color: transparent !important;
-  color: rgb(226 232 240) !important;
+  color: #fff !important;
   box-shadow: none !important;
 }
 a.host-nav-item:hover,
@@ -245,9 +245,10 @@ a.host-nav-item:active {
   box-shadow: none !important;
 }
 a.host-nav-item[data-current="true"] {
-  background-color: rgb(14 165 233 / 0.22) !important;
+  background-color: rgb(3 105 161) !important;
+  border-left-color: rgb(125 211 252) !important;
   color: #fff !important;
-  box-shadow: none !important;
+  box-shadow: 0 8px 18px rgb(3 105 161 / 0.24) !important;
 }
 
 /* ── Founder Back Office ops theme — light sky-blue (Host Dashboard untouched) ── */
@@ -442,4 +443,3 @@ body.founder-ops-page {
   background-color: #eaf6ff !important;
   color: #1a405c !important;
 }
-

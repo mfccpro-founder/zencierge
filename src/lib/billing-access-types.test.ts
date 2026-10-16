@@ -1,10 +1,35 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import {
+import { registerHooks } from "node:module";
+import { pathToFileURL } from "node:url";
+import type { AdminSubscriberRow } from "./admin-billing";
+
+const projectSourceUrl = `${pathToFileURL(join(process.cwd(), "src")).href}/`;
+
+registerHooks({
+  resolve(specifier, context, nextResolve) {
+    if (specifier.startsWith("@/")) {
+      return nextResolve(
+        new URL(`./src/${specifier.slice(2)}.ts`, pathToFileURL(`${process.cwd()}/`)).href,
+        context,
+      );
+    }
+    if (
+      context.parentURL?.startsWith(projectSourceUrl) &&
+      (specifier.startsWith("./") || specifier.startsWith("../")) &&
+      !/\.[cm]?[jt]sx?$/.test(specifier)
+    ) {
+      return nextResolve(`${specifier}.ts`, context);
+    }
+    return nextResolve(specifier, context);
+  },
+});
+
+const {
   complimentaryEndsAtFromPreset,
   evaluateSquareCompSafety,
-} from "./complimentary-access-core";
-import {
+} = await import("./complimentary-access-core.ts");
+const {
   TRIAL_DAYS,
   buildTrialMetadata,
   isHostAccessGranted,
@@ -13,13 +38,12 @@ import {
   isTrialWindowOpen,
   trialDaysRemaining,
   trialEndsAtIso,
-} from "./zencierge-plans";
-import {
+} = await import("./zencierge-plans.ts");
+const {
   backOfficeCustomerStatusLabel,
   customerMatchesFilter,
   isTrialCustomer,
-} from "./backoffice-customers";
-import type { AdminSubscriberRow } from "./admin-billing";
+} = await import("./backoffice-customers.ts");
 
 function assert(condition: boolean, message: string) {
   if (!condition) throw new Error(message);
@@ -352,6 +376,12 @@ function runBillingAccessTypesTests() {
     "billing passes Square subscription status into access",
   );
   assert(billingRoute.includes("isHostAccessGranted"), "billing still uses host access helper");
+  assert(
+    billingRoute.includes("const trialActive = !stripeSandboxAccess.granted && metadataTrialActive") &&
+      billingRoute.includes('stripeSandboxAccess.granted\n    ? "active"') &&
+      billingRoute.includes("metadataTrialActive,"),
+    "Stripe sandbox paid access is not reported as an active trial while metadata remains observable",
+  );
 
   const propertiesRoute = readFileSync(join(root, "src/app/api/properties/route.ts"), "utf8");
   assert(

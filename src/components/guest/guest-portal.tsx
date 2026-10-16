@@ -60,7 +60,8 @@ function GuestPortalInner({
     if (addonBusy) return;
     setAddonBusy(addonId);
     try {
-      await startSquareCheckout({ kind: "guest_addon", addonId, propertyId });
+      if (!window.confirm("Continue to Square Checkout for this paid add-on? No charge is created until you approve it in Square.")) return;
+      await startSquareCheckout({ kind: "guest_addon", addonId, propertyId, acceptedPaidTerms: true });
     } catch (cause) {
       setAddonBusy(null);
       window.alert(cause instanceof Error ? cause.message : "Checkout failed");
@@ -214,7 +215,7 @@ function GuestPortalInner({
               ) : null}
 
               <p className="mt-3 text-[11px] text-slate-500">
-                Ask Elena for anything else about your stay — she answers in English or Spanish.
+                Ask Isabela for anything else about your stay — she answers in English or Spanish.
               </p>
             </div>
           ) : null}

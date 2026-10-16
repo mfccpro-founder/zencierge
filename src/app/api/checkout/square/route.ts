@@ -3,6 +3,7 @@ import { maybeCreateCheckoutBillingIntent } from "@/lib/square-checkout-billing-
 import { createSupabaseRouteClient } from "@/lib/supabase-route";
 import { parsePlanId } from "@/lib/zencierge-plans";
 import { publicOriginFromRequest } from "@/lib/public-app-url";
+import { hasExplicitPaidBillingConsent, paidBillingConsentRequiredResponse } from "@/lib/paid-billing-consent";
 
 export async function POST(request: Request) {
   let body: { planId?: string; billing?: string; email?: string; name?: string };
@@ -16,6 +17,7 @@ export async function POST(request: Request) {
   } catch {
     return Response.json({ error: "Invalid JSON" }, { status: 400 });
   }
+  if (!hasExplicitPaidBillingConsent(body)) return paidBillingConsentRequiredResponse();
 
   const planId = parsePlanId(body.planId);
   if (!planId) {

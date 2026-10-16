@@ -80,7 +80,7 @@ function hospitalityVoiceInstructions(language: TtsLanguage) {
       : "The script is English. Speak entirely in natural American English with South Florida hospitality. Do not switch to Spanish.";
 
   return [
-    "You are Elena, a warm boutique-stay concierge speaking aloud.",
+    "You are Isabela, a warm boutique-stay concierge speaking aloud.",
     "Automatically match the language of the text you are given: Spanish text → speak Spanish; English text → speak English. Never mix languages. Never translate the script.",
     languageLine,
     "Sound like a real person in the room: slight smile, easy breath, human timing.",
@@ -298,7 +298,7 @@ function resolveVoice(voice?: string) {
   return OPENAI_SPEECH_VOICES.has(value) ? value : "coral";
 }
 
-function resolveSpeechInput(input: {
+export function normalizeHostTtsSpeech(input: {
   text: string;
   voice?: string;
   language?: TtsLanguage | "auto";
@@ -326,7 +326,7 @@ export async function streamElenaSpeech(input: {
   speed?: number;
   openaiApiKey?: string;
 }): Promise<TtsStreamResult> {
-  const { text, language, speed, voice } = resolveSpeechInput(input);
+  const { text, language, speed, voice } = normalizeHostTtsSpeech(input);
   const openai = openaiClient(input.openaiApiKey);
   if (!openai) {
     throw new AdvancedAudioTtsError(
@@ -376,6 +376,59 @@ export async function streamElenaSpeech(input: {
   };
 }
 
+/**
+ * One OpenAI speech call per invocation. Primary uses the streaming format.
+ * A failed primary response does not call OpenAI again; the meter starts a
+ * fallback attempt and asks for `attempt: "fallback"`.
+ */
+export function createOpenAiHostTtsProvider(openaiApiKey?: string) {
+  return {
+    async synthesize(input: {
+      text: string;
+      voice: string;
+      language: TtsLanguage;
+      speed: number;
+      attempt: "primary" | "fallback";
+    }) {
+      const openai = openaiClient(openaiApiKey);
+      if (!openai) {
+        return {
+          ok: false as const,
+          message: "OPENAI_API_KEY is missing. Streaming TTS cannot run. Browser TTS was not used.",
+        };
+      }
+      const params = {
+        model: OPENAI_STREAM_TTS_MODEL,
+        voice: input.voice,
+        input: input.text,
+        instructions: hospitalityVoiceInstructions(input.language),
+        response_format: "pcm" as const,
+        speed: input.speed,
+      };
+      const speech =
+        input.attempt === "fallback"
+          ? await openai.audio.speech.create(params)
+          : await openai.audio.speech.create({ ...params, stream_format: "audio" });
+      if (!speech.ok || !speech.body) {
+        const detail = speech.ok ? "" : await speech.text().catch(() => "");
+        return {
+          ok: false as const,
+          message: `Streaming OpenAI TTS failed${speech.ok ? "" : ` (${speech.status})`}. ${detail.slice(0, 240)}`.trim(),
+        };
+      }
+      return {
+        ok: true as const,
+        stream: toWebStream(speech.body),
+        contentType: "audio/pcm" as const,
+        model: OPENAI_STREAM_TTS_MODEL,
+        voice: input.voice,
+        language: input.language,
+        sampleRate: OPENAI_TTS_PCM_RATE,
+      };
+    },
+  };
+}
+
 export type GuestElenaMp3Engine = "elevenlabs" | "openai";
 
 /** Exact max chars sent to paid guest MP3 providers (must match synthesizeGuestElenaMp3). */
@@ -413,7 +466,7 @@ function guestElenaOpenAiInstructions(language: TtsLanguage) {
       : "The script is English. Speak entirely in natural American English with South Florida hospitality. Do not switch to Spanish.";
 
   return [
-    "You are Elena, a warm, clear, smooth adult female hospitality concierge speaking aloud.",
+    "You are Isabela, a warm, clear, smooth adult female hospitality concierge speaking aloud.",
     "Automatically match the language of the text you are given: Spanish text → speak Spanish; English text → speak English. Never mix languages. Never translate the script.",
     languageLine,
     "Speak the supplied text naturally and verbatim.",

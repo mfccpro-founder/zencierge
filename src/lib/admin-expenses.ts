@@ -1,13 +1,13 @@
 import {
-  aggregateManualExpensesForMonth,
   expenseMonthDateBounds,
   mapBusinessExpenseRow,
+  resolveManualExpenseTotals,
   sanitizeBusinessExpenseInput,
   type BusinessExpenseInput,
   type BusinessExpenseRow,
   EXPENSE_BACKOFFICE_TIMEZONE,
 } from "@/lib/admin-expenses-shared";
-import { getAiUsageMonthSnapshot } from "@/lib/ai-usage";
+import { AI_USAGE_READ_UNAVAILABLE_NOTE, AI_USAGE_UNAVAILABLE_LABEL, getAiUsageMonthSnapshot } from "@/lib/ai-usage";
 import { incomeCalendarMonthUtcBounds } from "@/lib/admin-income";
 import { tryCreateSupabaseAdminClient } from "@/lib/supabase-admin";
 
@@ -24,14 +24,19 @@ export type AdminExpensesSnapshot = {
   monthLabel: string;
   monthYear: number;
   monthNumber: number;
-  manualExpensesThisMonthUsd: number;
-  payrollThisMonthUsd: number;
-  contractorsThisMonthUsd: number;
-  otherOperatingThisMonthUsd: number;
+  expensesReadUnavailable: boolean;
+  manualExpensesThisMonthUsd: number | null;
+  payrollThisMonthUsd: number | null;
+  contractorsThisMonthUsd: number | null;
+  otherOperatingThisMonthUsd: number | null;
   isabelaExactAiCostThisMonthUsd: number | null;
   isabelaExactAiCostLabel: string;
   isabelaAiPricingPartial: boolean;
   isabelaAiPricingNote: string | null;
+  isabelaReadIncomplete: boolean;
+  isabelaReadIncompleteNote: string | null;
+  isabelaReadUnavailable: boolean;
+  isabelaReadUnavailableNote: string | null;
   expenses: BusinessExpenseRow[];
 };
 
@@ -46,14 +51,19 @@ export async function getAdminExpensesSnapshot(now = new Date()): Promise<AdminE
     monthLabel: month.label,
     monthYear: month.year,
     monthNumber: month.month,
-    manualExpensesThisMonthUsd: 0,
-    payrollThisMonthUsd: 0,
-    contractorsThisMonthUsd: 0,
-    otherOperatingThisMonthUsd: 0,
+    expensesReadUnavailable: false,
+    manualExpensesThisMonthUsd: null,
+    payrollThisMonthUsd: null,
+    contractorsThisMonthUsd: null,
+    otherOperatingThisMonthUsd: null,
     isabelaExactAiCostThisMonthUsd: null,
     isabelaExactAiCostLabel: "—",
     isabelaAiPricingPartial: false,
     isabelaAiPricingNote: null,
+    isabelaReadIncomplete: false,
+    isabelaReadIncompleteNote: null,
+    isabelaReadUnavailable: false,
+    isabelaReadUnavailableNote: null,
     expenses: [],
     ...extra,
   });
@@ -62,6 +72,10 @@ export async function getAdminExpensesSnapshot(now = new Date()): Promise<AdminE
   if (!admin) {
     return empty({
       error: "SUPABASE_SERVICE_ROLE_KEY is not configured. Cannot read business_expenses.",
+      ...resolveManualExpenseTotals({ readFailed: true, rows: [] }),
+      isabelaReadUnavailable: true,
+      isabelaReadUnavailableNote: AI_USAGE_READ_UNAVAILABLE_NOTE,
+      isabelaExactAiCostLabel: AI_USAGE_UNAVAILABLE_LABEL,
     });
   }
 
@@ -84,13 +98,23 @@ export async function getAdminExpensesSnapshot(now = new Date()): Promise<AdminE
       error: expensesResult.error.message.includes("business_expenses")
         ? "business_expenses table is missing. Apply migration 20260906001500_business_expenses.sql."
         : expensesResult.error.message,
-      isabelaExactAiCostThisMonthUsd:
-        aiUsage.exactTrackedCostCents == null ? null : aiUsage.exactTrackedCostCents / 100,
-      isabelaExactAiCostLabel: aiUsage.exactTrackedCostLabel,
+      ...resolveManualExpenseTotals({ readFailed: true, rows: [] }),
+      isabelaExactAiCostThisMonthUsd: aiUsage.readUnavailable
+        ? null
+        : aiUsage.exactTrackedCostCents == null
+          ? null
+          : aiUsage.exactTrackedCostCents / 100,
       isabelaAiPricingPartial: aiUsage.totalsArePartial,
       isabelaAiPricingNote: aiUsage.totalsArePartial
-        ? "AI cost partially priced — OpenAI (and any other pending) usage awaits exact metering."
+        ? "Some AI costs are unknown. They are not shown as $0."
         : null,
+      isabelaReadIncomplete: aiUsage.readIncomplete,
+      isabelaReadIncompleteNote: aiUsage.readIncompleteNote,
+      isabelaReadUnavailable: aiUsage.readUnavailable,
+      isabelaReadUnavailableNote: aiUsage.readUnavailableNote,
+      isabelaExactAiCostLabel: aiUsage.readUnavailable
+        ? AI_USAGE_UNAVAILABLE_LABEL
+        : aiUsage.exactTrackedCostLabel,
     });
   }
 
@@ -98,7 +122,7 @@ export async function getAdminExpensesSnapshot(now = new Date()): Promise<AdminE
     .map(mapBusinessExpenseRow)
     .filter((row): row is BusinessExpenseRow => Boolean(row));
 
-  const totals = aggregateManualExpensesForMonth(expenses);
+  const totals = resolveManualExpenseTotals({ readFailed: false, rows: expenses });
   const exactUsd =
     aiUsage.exactTrackedCostCents == null ? null : aiUsage.exactTrackedCostCents / 100;
 
@@ -108,12 +132,18 @@ export async function getAdminExpensesSnapshot(now = new Date()): Promise<AdminE
       error: aiUsage.error,
       ...totals,
       expenses,
-      isabelaExactAiCostThisMonthUsd: exactUsd,
-      isabelaExactAiCostLabel: aiUsage.exactTrackedCostLabel,
+      isabelaExactAiCostThisMonthUsd: aiUsage.readUnavailable ? null : exactUsd,
       isabelaAiPricingPartial: aiUsage.totalsArePartial,
       isabelaAiPricingNote: aiUsage.totalsArePartial
-        ? "AI cost partially priced — OpenAI (and any other pending) usage awaits exact metering."
+        ? "Some AI costs are unknown. They are not shown as $0."
         : null,
+      isabelaReadIncomplete: aiUsage.readIncomplete,
+      isabelaReadIncompleteNote: aiUsage.readIncompleteNote,
+      isabelaReadUnavailable: aiUsage.readUnavailable,
+      isabelaReadUnavailableNote: aiUsage.readUnavailableNote,
+      isabelaExactAiCostLabel: aiUsage.readUnavailable
+        ? AI_USAGE_UNAVAILABLE_LABEL
+        : aiUsage.exactTrackedCostLabel,
     }),
   };
 }

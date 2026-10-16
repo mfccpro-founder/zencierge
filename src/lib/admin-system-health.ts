@@ -2,6 +2,7 @@ import {
   aggregateTtsEvents,
   buildSystemHealthHeader,
   countSquarePaymentsFromRows,
+  resolveSquareSubscriptionCounts,
   evaluateDependencyUnknownService,
   evaluateNotificationsConfig,
   evaluatePlatformHealth,
@@ -21,6 +22,10 @@ import {
 } from "@/lib/admin-system-health-shared";
 import { configuredPublicOrigin } from "@/lib/public-app-url";
 import { hasUsableSquareCredentials, preferMockSquareCheckout } from "@/lib/square-checkout";
+import {
+  readFounderHostSubscriptionPages,
+  readFounderSubscriptionPaymentPages,
+} from "@/lib/founder-backoffice-billing-read";
 import { tryCreateSupabaseAdminClient } from "@/lib/supabase-admin";
 
 /** Server-only Founder System Health. Do not import from Client Components. */
@@ -70,14 +75,18 @@ async function probeSupabase(): Promise<{
     return { clientReady: false, queryOk: false, latencyMs: null, errorMessage: null };
   }
   const started = Date.now();
-  const { error } = await admin.from("host_subscriptions").select("user_id").limit(1);
+  const read = await readFounderHostSubscriptionPages(admin, {
+    pageSize: 1,
+    maxRows: 1,
+    onCap: "window",
+  });
   const latencyMs = Date.now() - started;
-  if (error) {
+  if (read.error) {
     return {
       clientReady: true,
       queryOk: false,
       latencyMs,
-      errorMessage: error.message,
+      errorMessage: read.error,
     };
   }
   return { clientReady: true, queryOk: true, latencyMs, errorMessage: null };
@@ -129,50 +138,21 @@ async function loadTtsWindow(admin: NonNullable<ReturnType<typeof tryCreateSupab
   return { error: null as string | null, stats: aggregateTtsEvents(rows, SYSTEM_HEALTH_TTS_WINDOW_HOURS) };
 }
 
-/** Prefer canonical values while retaining legacy-only deployment fallbacks. */
-const SQUARE_PAYMENT_READ_ATTEMPTS = [
-  {
-    columns:
-      "status, payment_status, amount_usd, amount_paid, created_at, paid_at",
-    timeCol: "created_at" as const,
-  },
-  { columns: "status, amount_usd, created_at", timeCol: "created_at" as const },
-  { columns: "status, created_at", timeCol: "created_at" as const },
-  { columns: "payment_status, amount_paid, paid_at", timeCol: "paid_at" as const },
-  { columns: "payment_status, paid_at", timeCol: "paid_at" as const },
-];
-
-async function loadSubscriptionPaymentsTolerant(
-  admin: NonNullable<ReturnType<typeof tryCreateSupabaseAdminClient>>,
-  sinceIso: string,
-): Promise<{ rows: Record<string, unknown>[]; error: string | null }> {
-  let lastError: string | null = null;
-  for (const attempt of SQUARE_PAYMENT_READ_ATTEMPTS) {
-    const { data, error } = await admin
-      .from("subscription_payments")
-      .select(attempt.columns)
-      .gte(attempt.timeCol, sinceIso)
-      .order(attempt.timeCol, { ascending: false })
-      .limit(500);
-    if (!error) {
-      return { rows: (data ?? []) as unknown as Record<string, unknown>[], error: null };
-    }
-    lastError = error.message;
-    if (!/column|schema cache|does not exist/i.test(error.message)) {
-      return { rows: [], error: lastError };
-    }
-  }
-  return { rows: [], error: lastError };
-}
-
 async function loadSquareWindow(admin: NonNullable<ReturnType<typeof tryCreateSupabaseAdminClient>>) {
   const since = new Date(
     Date.now() - SYSTEM_HEALTH_SQUARE_WINDOW_DAYS * 24 * 60 * 60 * 1000,
   ).toISOString();
 
-  const [paymentsLoad, subsResult] = await Promise.all([
-    loadSubscriptionPaymentsTolerant(admin, since),
-    admin.from("host_subscriptions").select("status"),
+  const [paymentsLoad, subscriptionsLoad] = await Promise.all([
+    readFounderSubscriptionPaymentPages(admin, {
+      fromIso: since,
+      toIso: null,
+      pageSize: 500,
+      maxRows: 500,
+      onCap: "window",
+      newestFirst: true,
+    }),
+    readFounderHostSubscriptionPages(admin),
   ]);
 
   if (paymentsLoad.error) {
@@ -180,24 +160,19 @@ async function loadSquareWindow(admin: NonNullable<ReturnType<typeof tryCreateSu
   }
 
   const paymentCounts = countSquarePaymentsFromRows(paymentsLoad.rows);
-
-  let pastDueSubscriptions = 0;
-  let canceledSubscriptions = 0;
-  if (!subsResult.error) {
-    for (const row of (subsResult.data ?? []) as Record<string, unknown>[]) {
-      const status = String(row.status ?? "").toLowerCase();
-      if (status === "past_due") pastDueSubscriptions += 1;
-      if (status === "canceled" || status === "cancelled") canceledSubscriptions += 1;
-    }
-  }
+  const subscriptionCounts = resolveSquareSubscriptionCounts({
+    readFailed: Boolean(subscriptionsLoad.error),
+    rows: subscriptionsLoad.rows,
+  });
 
   const stats: SquareHealthWindowStats = {
     windowDays: SYSTEM_HEALTH_SQUARE_WINDOW_DAYS,
     succeeded: paymentCounts.succeeded,
     failed: paymentCounts.failed,
     refunded: paymentCounts.refunded,
-    pastDueSubscriptions,
-    canceledSubscriptions,
+    pastDueSubscriptions: subscriptionCounts.pastDueSubscriptions,
+    canceledSubscriptions: subscriptionCounts.canceledSubscriptions,
+    subscriptionsUnavailable: subscriptionCounts.subscriptionsUnavailable,
     latestPaymentAt: paymentCounts.latestPaymentAt,
     credentialsConfigured: hasUsableSquareCredentials(),
     mockCheckout: preferMockSquareCheckout(),
@@ -402,6 +377,7 @@ export {
   evaluateSquareHealth,
   buildSystemHealthHeader,
   countSquarePaymentsFromRows,
+  resolveSquareSubscriptionCounts,
   normalizeSquarePaymentState,
   normalizeSquarePaymentAt,
 } from "@/lib/admin-system-health-shared";

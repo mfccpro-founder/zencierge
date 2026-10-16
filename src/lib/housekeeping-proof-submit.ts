@@ -172,6 +172,7 @@ export type MemoryHousekeepingProofSubmitRows = {
   photos?: Array<{ task_id: string; review_status?: "pending" | "approved" | "rejected" }>;
   failFind?: boolean;
   failRpcCode?: string;
+  now?: Date;
 };
 
 export function createMemoryHousekeepingProofSubmitStore(rows: MemoryHousekeepingProofSubmitRows = {}) {
@@ -199,7 +200,7 @@ export function createMemoryHousekeepingProofSubmitStore(rows: MemoryHousekeepin
       const token = tokens.find((item) => item.token_hash === tokenHash);
       if (!token) throw new HousekeepingProofSubmitRpcError("ZP002");
       if (token.revoked_at) throw new HousekeepingProofSubmitRpcError("ZP005");
-      const nowMs = Date.now();
+      const nowMs = rows.now?.getTime() ?? Date.now();
       if (Number.isNaN(Date.parse(token.expires_at)) || new Date(token.expires_at).getTime() <= nowMs) {
         throw new HousekeepingProofSubmitRpcError("ZP004");
       }

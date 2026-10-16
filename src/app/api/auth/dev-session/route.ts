@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { allowDevHostSession, DEV_HOST_COOKIE } from "@/lib/dev-host-session";
+import { supabaseEnvIssue } from "@/lib/supabase-config";
 
 export const dynamic = "force-dynamic";
 
@@ -15,8 +16,11 @@ function cookieOptions() {
 }
 
 export async function POST() {
-  if (!allowDevHostSession()) {
-    return NextResponse.json({ error: "Local host preview is disabled in production." }, { status: 403 });
+  if (!allowDevHostSession() || !supabaseEnvIssue()) {
+    return NextResponse.json(
+      { error: "Local host preview is unavailable when Supabase Auth is configured." },
+      { status: 403 },
+    );
   }
   const store = await cookies();
   store.set(DEV_HOST_COOKIE, "1", cookieOptions());

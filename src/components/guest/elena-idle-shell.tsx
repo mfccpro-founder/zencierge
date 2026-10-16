@@ -11,7 +11,7 @@ export function ElenaIdleShell() {
         <div className="flex min-w-0 items-center gap-3">
           <ElenaAvatar size={52} />
           <div className="min-w-0 leading-tight">
-            <h2 className="truncate text-base font-bold sm:text-lg">Elena · Receptionist</h2>
+            <h2 className="truncate text-base font-bold sm:text-lg">Isabela · Receptionist</h2>
             <p className="text-[11px] text-slate-500">AI Voice Concierge</p>
           </div>
         </div>

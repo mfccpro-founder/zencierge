@@ -27,7 +27,7 @@ export default async function AdminHostsPage({
     return (
       <div className="rounded-2xl border border-rose-200 bg-rose-50 p-6 text-sm text-rose-800">
         This Back Office is restricted to superadmins. Add your email to ADMIN_EMAILS in .env.local or set role=superadmin in
-        your user metadata.
+        server app metadata.
       </div>
     );
   }

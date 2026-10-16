@@ -12,7 +12,10 @@ type BrowserClient = ReturnType<typeof createBrowserClient>;
 
 const globalForAuth = globalThis as typeof globalThis & {
   __zenciergeAuthBrowser?: BrowserClient;
+  __zenciergeAuthBrowserUrl?: string;
 };
+
+const browserClientOptions = { isSingleton: false } as const;
 
 function createDevBrowserStub(): BrowserClient {
   const pendingUser = () => {
@@ -49,10 +52,18 @@ export function createAuthBrowserClient() {
     throw new Error(issue);
   }
   if (typeof window === "undefined") {
-    return createBrowserClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    return createBrowserClient(SUPABASE_URL, SUPABASE_ANON_KEY, browserClientOptions);
   }
-  if (!globalForAuth.__zenciergeAuthBrowser) {
-    globalForAuth.__zenciergeAuthBrowser = createBrowserClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  if (
+    !globalForAuth.__zenciergeAuthBrowser ||
+    globalForAuth.__zenciergeAuthBrowserUrl !== SUPABASE_URL
+  ) {
+    globalForAuth.__zenciergeAuthBrowser = createBrowserClient(
+      SUPABASE_URL,
+      SUPABASE_ANON_KEY,
+      browserClientOptions,
+    );
+    globalForAuth.__zenciergeAuthBrowserUrl = SUPABASE_URL;
   }
   return globalForAuth.__zenciergeAuthBrowser;
 }

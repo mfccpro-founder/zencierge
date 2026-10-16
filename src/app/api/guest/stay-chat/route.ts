@@ -11,7 +11,9 @@ import {
   createSupabaseStayTokenStore,
   guestStayAdminClient,
   stayJson,
+  type StayTokenStore,
 } from "@/lib/guest-stay-token";
+import { createSupabaseGuestServiceRequestStore } from "@/lib/guest-service-requests";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -39,7 +41,10 @@ function rateLimited(key: string) {
   return false;
 }
 
-export async function POST(request: NextRequest) {
+export async function handleGuestStayChatHttp(
+  request: NextRequest,
+  injectedStore?: StayTokenStore,
+) {
   const lengthHeader = request.headers.get("content-length");
   if (lengthHeader) {
     const size = Number(lengthHeader);
@@ -59,16 +64,21 @@ export async function POST(request: NextRequest) {
     return stayJson({ error: "invalid" }, 400);
   }
 
-  const admin = guestStayAdminClient();
-  if (!admin) return stayJson({ error: "unavailable" }, 503);
+  const admin = injectedStore ? null : guestStayAdminClient();
+  if (!injectedStore && !admin) return stayJson({ error: "unavailable" }, 503);
 
   try {
     const result = await handleGuestStayChat({
       body,
-      store: createSupabaseStayTokenStore(admin),
+      store: injectedStore ?? createSupabaseStayTokenStore(admin!),
+      requestStore: admin ? createSupabaseGuestServiceRequestStore(admin) : undefined,
     });
     return stayJson(result.body, result.status);
   } catch {
     return stayJson({ error: "unavailable" }, 503);
   }
+}
+
+export async function POST(request: NextRequest) {
+  return handleGuestStayChatHttp(request);
 }

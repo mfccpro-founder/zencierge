@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { Property } from "@/lib/dashboard-data";
 import { smartLockItemFromProperty, type LockStatus, type SmartLockItem } from "@/lib/smart-locks";
+import { usePrivatePilotMode } from "@/components/pilot/private-pilot-context";
 
 const STATUS_LABEL: Record<LockStatus, string> = {
   online: "Online",
@@ -25,6 +26,7 @@ export function SmartLocksView({
   onViewPins: (propertyId: string) => void;
   onLinkLock: () => void;
 }) {
+  const privatePilot = usePrivatePilotMode();
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [syncedId, setSyncedId] = useState<string | null>(null);
   const devices: SmartLockItem[] = listings.map(smartLockItemFromProperty);
@@ -47,19 +49,21 @@ export function SmartLocksView({
         <div>
           <h2 className="text-2xl font-bold tracking-tight text-slate-900">Smart Lock Sync</h2>
           <p className="text-sm text-slate-600">
-            Monitor connected locks, battery, and guest PINs for each listing.
+            {privatePilot
+              ? "Pilot preview only. No physical lock is connected or controlled."
+              : "Monitor connected locks, battery, and guest PINs for each listing."}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800">
-            Seam API connected
+            {privatePilot ? "Simulation · no device control" : "Seam API connected"}
           </span>
           <button
             type="button"
             onClick={onLinkLock}
             className="rounded-md bg-sky-600 px-3.5 py-1.5 text-xs font-medium text-white shadow-sm transition-colors hover:bg-sky-500"
           >
-            + Link lock
+            {privatePilot ? "+ Simulated lock" : "+ Link lock"}
           </button>
         </div>
       </div>
@@ -115,7 +119,11 @@ export function SmartLocksView({
                   disabled={syncingId === lock.id}
                   className="rounded-md bg-sky-600 px-3.5 py-2 text-xs font-medium text-white transition-colors hover:bg-sky-500 disabled:opacity-60"
                 >
-                  {syncingId === lock.id ? "Syncing…" : syncedId === lock.id ? "Synced" : "Sync"}
+                  {syncingId === lock.id
+                    ? privatePilot ? "Simulating…" : "Syncing…"
+                    : syncedId === lock.id
+                      ? privatePilot ? "Preview updated" : "Synced"
+                      : privatePilot ? "Simulate sync" : "Sync"}
                 </button>
               </div>
             </div>

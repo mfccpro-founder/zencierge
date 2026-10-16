@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { QRCodeSVG } from "qrcode.react";
 import { resolveReachableAppOrigin } from "@/lib/public-app-url";
 import {
   HOUSEKEEPING_PROOF_HOST_COPY,
@@ -66,6 +67,8 @@ export function HousekeepingProofLinkCard() {
   const [sharing, setSharing] = useState(false);
   const [hasLink, setHasLink] = useState(false);
   const [shareReady, setShareReady] = useState(false);
+  const [shareUrl, setShareUrl] = useState("");
+  const [expiresAt, setExpiresAt] = useState("");
   const [notice, setNotice] = useState<Notice>(null);
   const [photoCount, setPhotoCount] = useState(0);
   const [reviewable, setReviewable] = useState(false);
@@ -142,6 +145,7 @@ export function HousekeepingProofLinkCard() {
   }, []);
 
   const effectivePropertyId = properties.some((row) => row.id === propertyId) ? propertyId : (properties[0]?.id ?? "");
+  const selectedProperty = properties.find((row) => row.id === effectivePropertyId) ?? null;
   const stays = reservationsForHousekeepingProofProperty(reservations, effectivePropertyId);
   const effectiveReservationId = stays.some((row) => row.id === reservationId) ? reservationId : (stays[0]?.id ?? "");
   const selectedStay = stays.find((row) => row.id === effectiveReservationId) ?? null;
@@ -186,6 +190,8 @@ export function HousekeepingProofLinkCard() {
     urlRef.current = "";
     setHasLink(false);
     setShareReady(false);
+    setShareUrl("");
+    setExpiresAt("");
     setBusy(false);
     generatingRef.current = false;
     clearReviewState();
@@ -370,6 +376,8 @@ export function HousekeepingProofLinkCard() {
       urlRef.current = url;
       setHasLink(true);
       setShareReady(Boolean(url));
+      setShareUrl(url);
+      setExpiresAt(parsed.expiresAt);
     } catch (error) {
       if (controller.signal.aborted || gen !== generateGen.current) return;
       if (error && typeof error === "object" && "name" in error && error.name === "AbortError") return;
@@ -391,6 +399,7 @@ export function HousekeepingProofLinkCard() {
     if (!url) return;
     urlRef.current = url;
     setShareReady(true);
+    setShareUrl(url);
     await navigator.clipboard.writeText(url);
     setNotice("copied");
   }
@@ -499,6 +508,8 @@ export function HousekeepingProofLinkCard() {
         urlRef.current = "";
         setHasLink(false);
         setShareReady(false);
+        setShareUrl("");
+        setExpiresAt("");
         setNotice("reviewApproved");
       } else {
         setCanIssueLink(true);
@@ -698,6 +709,23 @@ export function HousekeepingProofLinkCard() {
               )}
             </select>
           </label>
+          <div className="rounded-xl border border-slate-200 bg-white p-3" aria-label="Cleaner link selection summary">
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Confirm before sharing / Confirma antes de compartir</p>
+            <dl className="mt-2 grid gap-2 text-sm text-slate-800 sm:grid-cols-3">
+              <div>
+                <dt className="font-semibold text-slate-500">Property / Propiedad</dt>
+                <dd className="font-bold">{selectedProperty?.name ?? "—"}</dd>
+              </div>
+              <div>
+                <dt className="font-semibold text-slate-500">Stay / Estadía</dt>
+                <dd className="font-bold">{selectedStay ? `${selectedStay.checkIn} → ${selectedStay.checkOut}` : "—"}</dd>
+              </div>
+              <div>
+                <dt className="font-semibold text-slate-500">Valid until / Vigente hasta</dt>
+                <dd className="font-bold">{expiresAt ? formatHousekeepingProofReceivedAt(expiresAt) : "Generated with the secure link / Se muestra al crear el enlace"}</dd>
+              </div>
+            </dl>
+          </div>
           <div className="flex flex-col gap-2 sm:flex-row">
             <button
               type="button"
@@ -737,6 +765,25 @@ export function HousekeepingProofLinkCard() {
               </span>
             </button>
           </div>
+          {shareReady && shareUrl ? (
+            <div className="grid gap-4 rounded-xl border border-sky-200 bg-white p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+              <div className="min-w-0">
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Exact cleaner link / Enlace exacto</p>
+                <code className="mt-2 block break-all text-xs font-semibold text-sky-900">{shareUrl}</code>
+                <a
+                  href={shareUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-3 inline-flex min-h-11 items-center text-sm font-bold text-sky-800 underline"
+                >
+                  Open mobile form / Abrir formulario móvil
+                </a>
+              </div>
+              <div className="mx-auto rounded-xl border border-slate-200 bg-white p-2" aria-label="Cleaner link QR code">
+                <QRCodeSVG value={shareUrl} size={152} level="M" marginSize={1} title="Secure housekeeping mobile link" />
+              </div>
+            </div>
+          ) : null}
           {!canIssueLink && reviewable ? (
             <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2" aria-live="polite">
               <p className="text-sm text-emerald-950">{HOUSEKEEPING_PROOF_HOST_COPY.submissionReceived.en}</p>

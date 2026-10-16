@@ -184,6 +184,29 @@ export function aggregateManualExpensesForMonth(rows: BusinessExpenseRow[]) {
   };
 }
 
+/** A failed ledger read is null. A successful read with no rows is a real zero. */
+export function resolveManualExpenseTotals(input: { readFailed: boolean; rows: BusinessExpenseRow[] }): {
+  expensesReadUnavailable: boolean;
+  manualExpensesThisMonthUsd: number | null;
+  payrollThisMonthUsd: number | null;
+  contractorsThisMonthUsd: number | null;
+  otherOperatingThisMonthUsd: number | null;
+} {
+  if (input.readFailed) {
+    return {
+      expensesReadUnavailable: true,
+      manualExpensesThisMonthUsd: null,
+      payrollThisMonthUsd: null,
+      contractorsThisMonthUsd: null,
+      otherOperatingThisMonthUsd: null,
+    };
+  }
+  return {
+    expensesReadUnavailable: false,
+    ...aggregateManualExpensesForMonth(input.rows),
+  };
+}
+
 export function formatExpenseUsd(amount: number): string {
   return `$${amount.toLocaleString("en-US", {
     minimumFractionDigits: 2,

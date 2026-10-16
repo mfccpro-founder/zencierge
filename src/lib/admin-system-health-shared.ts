@@ -69,8 +69,10 @@ export type SquareHealthWindowStats = {
   succeeded: number;
   failed: number;
   refunded: number;
-  pastDueSubscriptions: number;
-  canceledSubscriptions: number;
+  pastDueSubscriptions: number | null;
+  canceledSubscriptions: number | null;
+  /** True when host_subscriptions could not be read. Counts stay null. */
+  subscriptionsUnavailable?: boolean;
   latestPaymentAt: string | null;
   credentialsConfigured: boolean;
   mockCheckout: boolean;
@@ -85,6 +87,41 @@ export function normalizeSquarePaymentState(row: Record<string, unknown>): strin
 export function normalizeSquarePaymentAt(row: Record<string, unknown>): string {
   const at = row.created_at ?? row.paid_at;
   return typeof at === "string" ? at : at != null ? String(at) : "";
+}
+
+const SQUARE_SUBSCRIPTION_UNAVAILABLE_LABEL = "— / No disponible";
+
+export function resolveSquareSubscriptionCounts(input: {
+  readFailed: boolean;
+  rows: Record<string, unknown>[];
+}): {
+  pastDueSubscriptions: number | null;
+  canceledSubscriptions: number | null;
+  subscriptionsUnavailable: boolean;
+} {
+  if (input.readFailed) {
+    return {
+      pastDueSubscriptions: null,
+      canceledSubscriptions: null,
+      subscriptionsUnavailable: true,
+    };
+  }
+  let pastDueSubscriptions = 0;
+  let canceledSubscriptions = 0;
+  for (const row of input.rows) {
+    const status = String(row.status ?? "").toLowerCase();
+    if (status === "past_due") pastDueSubscriptions += 1;
+    if (status === "canceled" || status === "cancelled") canceledSubscriptions += 1;
+  }
+  return {
+    pastDueSubscriptions,
+    canceledSubscriptions,
+    subscriptionsUnavailable: false,
+  };
+}
+
+function presentSquareSubscriptionCount(value: number | null): string {
+  return value == null ? SQUARE_SUBSCRIPTION_UNAVAILABLE_LABEL : String(value);
 }
 
 export function countSquarePaymentsFromRows(rows: Record<string, unknown>[]): {
@@ -184,14 +221,23 @@ export function evaluateSquareHealth(stats: SquareHealthWindowStats): {
   detailLines: string[];
   lastActivityAt: string | null;
 } {
+  const subscriptionsUnavailable =
+    stats.subscriptionsUnavailable === true ||
+    stats.pastDueSubscriptions == null ||
+    stats.canceledSubscriptions == null;
   const detailLines = [
     `Window: last ${stats.windowDays}d payments`,
     `Succeeded: ${stats.succeeded}`,
     `Failed cards/charges: ${stats.failed}`,
     `Refunded: ${stats.refunded}`,
-    `Past due subscriptions: ${stats.pastDueSubscriptions}`,
-    `Canceled subscriptions: ${stats.canceledSubscriptions}`,
+    `Past due subscriptions: ${presentSquareSubscriptionCount(stats.pastDueSubscriptions)}`,
+    `Canceled subscriptions: ${presentSquareSubscriptionCount(stats.canceledSubscriptions)}`,
   ];
+  if (subscriptionsUnavailable) {
+    detailLines.push(
+      "Host subscription status is degraded. Past due and canceled counts are unavailable.",
+    );
+  }
   if (stats.latestPaymentAt) detailLines.push(`Latest payment activity: ${stats.latestPaymentAt}`);
   detailLines.push(
     stats.credentialsConfigured
@@ -204,60 +250,78 @@ export function evaluateSquareHealth(stats: SquareHealthWindowStats): {
 
   const hasPaymentTraffic = stats.succeeded + stats.failed + stats.refunded > 0;
 
+  const withSubscriptionRead = (result: {
+    status: SystemHealthStatus;
+    reason: string;
+    detailLines: string[];
+    lastActivityAt: string | null;
+  }) => {
+    if (!subscriptionsUnavailable) return result;
+    if (result.status === "healthy" || result.status === "unknown") {
+      return {
+        status: "degraded" as const,
+        reason: "Host subscription status is degraded. Payment statistics are from a valid read.",
+        detailLines: result.detailLines,
+        lastActivityAt: result.lastActivityAt,
+      };
+    }
+    return result;
+  };
+
   if (!stats.credentialsConfigured && !hasPaymentTraffic) {
-    return {
+    return withSubscriptionRead({
       status: "unknown",
       reason: stats.mockCheckout
         ? "No recent activity — Square mock mode; no live payment traffic observed"
         : "No recent activity — Square credentials not configured and no payment rows observed",
       detailLines,
       lastActivityAt: stats.latestPaymentAt,
-    };
+    });
   }
 
   if (!hasPaymentTraffic) {
-    return {
+    return withSubscriptionRead({
       status: "unknown",
       reason: "No recent activity — no payment rows in the observation window",
       detailLines,
       lastActivityAt: stats.latestPaymentAt,
-    };
+    });
   }
 
   // Isolated or clustered card failures with ongoing succeeds = billing quality, not integration down.
   if (stats.succeeded > 0) {
     if (stats.failed > 0) {
-      return {
+      return withSubscriptionRead({
         status: "degraded",
         reason: "Square integration receiving payments; some customer cards failed (not system Down)",
         detailLines,
         lastActivityAt: stats.latestPaymentAt,
-      };
+      });
     }
-    return {
+    return withSubscriptionRead({
       status: "healthy",
       reason: "Recent successful Square payment activity observed",
       detailLines,
       lastActivityAt: stats.latestPaymentAt,
-    };
+    });
   }
 
   // Failures only — concerning but not proven "Square Down" without webhook observability.
   if (stats.failed >= 3) {
-    return {
+    return withSubscriptionRead({
       status: "degraded",
       reason: "Only failed charges observed recently — investigate; not marked Down without integration proof",
       detailLines,
       lastActivityAt: stats.latestPaymentAt,
-    };
+    });
   }
 
-  return {
+  return withSubscriptionRead({
     status: "degraded",
     reason: "Payment activity without recent successes",
     detailLines,
     lastActivityAt: stats.latestPaymentAt,
-  };
+  });
 }
 
 export function evaluateSupabaseProbe(input: {

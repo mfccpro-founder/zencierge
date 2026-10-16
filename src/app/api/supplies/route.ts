@@ -1,4 +1,6 @@
 import { requireHostUser } from "@/lib/supabase-route";
+import { tryCreateSupabaseAdminClient } from "@/lib/supabase-admin";
+import { loadHostListings } from "@/lib/host-listings-server";
 import { loadSupplyBoard, saveSnapshot, saveSupplyLog, newSupplyLog } from "@/lib/property-supplies-server";
 import {
   normalizeSnapshot,
@@ -11,9 +13,20 @@ import {
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
+  const auth = await requireHostUser();
+  if (auth.error) return auth.error;
+  const admin = tryCreateSupabaseAdminClient();
+  if (!admin) return Response.json({ error: "Service unavailable" }, { status: 503 });
+  const listings = await loadHostListings(admin, auth.user.id);
+  if (listings.kind === "unavailable") {
+    return Response.json({ error: "Service unavailable" }, { status: 503 });
+  }
   const url = new URL(request.url);
   const propertyId = url.searchParams.get("propertyId")?.trim();
-  const board = await loadSupplyBoard(propertyId ? [propertyId] : undefined);
+  if (propertyId && !listings.properties.some((property) => property.id === propertyId)) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+  const board = await loadSupplyBoard(listings.properties, propertyId ? [propertyId] : undefined);
   return Response.json(board);
 }
 
@@ -33,7 +46,13 @@ export async function PUT(request: Request) {
     return Response.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const board = await loadSupplyBoard();
+  const admin = tryCreateSupabaseAdminClient();
+  if (!admin) return Response.json({ error: "Service unavailable" }, { status: 503 });
+  const listings = await loadHostListings(admin, auth.user.id);
+  if (listings.kind === "unavailable") {
+    return Response.json({ error: "Service unavailable" }, { status: 503 });
+  }
+  const board = await loadSupplyBoard(listings.properties);
   const current =
     board.snapshots.find((row) => row.propertyId === (body.snapshot?.propertyId || body.propertyId)) ??
     (body.snapshot ? normalizeSnapshot(body.snapshot) : null);

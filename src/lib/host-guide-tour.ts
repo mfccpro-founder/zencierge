@@ -8,6 +8,8 @@ import { USER_GUIDE_PATH, guideableHostNavItems, isHostNavItemActive, normalizeP
 
 export const HOST_TOUR_COMMAND_EVENT = "zencierge-host-guide-tour";
 export const HOST_TOUR_HIGHLIGHT_EVENT = "zencierge-host-guide-highlight";
+export const HOST_TOUR_SPEECH_RATE = 0.82;
+const HOST_TOUR_INSTRUCTION_PAUSE = " … ";
 
 export type HostTourCommandDetail =
   | { type: "start" }
@@ -92,6 +94,11 @@ export function createTourState(): TourState {
   return { mode: "idle", index: 0, speech: "idle", pendingSpeak: false, generation: 0 };
 }
 
+/** Stop always ends the tour and cancels the browser narration. Pause is separate. */
+export function commandForRedStopButton(_state: Pick<TourState, "speech">): TourCommand {
+  return { type: "stop" };
+}
+
 function bump(state: TourState): TourState {
   return { ...state, generation: state.generation + 1 };
 }
@@ -106,8 +113,8 @@ export function applyTourCommand(state: TourState, command: TourCommand, stepCou
   }
 
   if (command.type === "start") {
-    const next = bump({ mode: "tour", index: 0, speech: "idle", pendingSpeak: false, generation: state.generation });
-    return { state: next, navigateIndex: 0, speak: true, cancel: true, pause: false, resume: false, highlightId: idAt(0), finished: false };
+    const next = bump({ mode: "tour", index: 0, speech: "idle", pendingSpeak: true, generation: state.generation });
+    return { state: next, navigateIndex: 0, speak: false, cancel: true, pause: false, resume: false, highlightId: idAt(0), finished: false };
   }
 
   if (command.type === "explain") {
@@ -200,8 +207,8 @@ export function applyTourCommand(state: TourState, command: TourCommand, stepCou
       return { state, navigateIndex: null, speak: false, cancel: false, pause: false, resume: false, highlightId: idAt(state.index), finished: false };
     }
     const index = state.index - 1;
-    const next = bump({ ...state, index, speech: "idle", pendingSpeak: false });
-    return { state: next, navigateIndex: index, speak: true, cancel: true, pause: false, resume: false, highlightId: idAt(index), finished: false };
+    const next = bump({ ...state, index, speech: "idle", pendingSpeak: true });
+    return { state: next, navigateIndex: index, speak: false, cancel: true, pause: false, resume: false, highlightId: idAt(index), finished: false };
   }
 
   if (command.type === "next") {
@@ -213,11 +220,23 @@ export function applyTourCommand(state: TourState, command: TourCommand, stepCou
       return { state: next, navigateIndex: null, speak: false, cancel: true, pause: false, resume: false, highlightId: null, finished: true };
     }
     const index = state.index + 1;
-    const next = bump({ ...state, index, speech: "idle", pendingSpeak: false });
-    return { state: next, navigateIndex: index, speak: true, cancel: true, pause: false, resume: false, highlightId: idAt(index), finished: false };
+    const next = bump({ ...state, index, speech: "idle", pendingSpeak: true });
+    return { state: next, navigateIndex: index, speak: false, cancel: true, pause: false, resume: false, highlightId: idAt(index), finished: false };
   }
 
   if (command.type === "routeSettled") {
+    if (state.pendingSpeak && command.locationMatchesCurrent) {
+      return {
+        state: { ...state, pendingSpeak: false },
+        navigateIndex: null,
+        speak: true,
+        cancel: false,
+        pause: false,
+        resume: false,
+        highlightId: idAt(state.index),
+        finished: false,
+      };
+    }
     return {
       state,
       navigateIndex: null,
@@ -272,8 +291,12 @@ export function markTourSpeaking(state: TourState): TourState {
 }
 
 export function buildSpokenScript(module: HostGuideModule) {
-  const steps = module.steps.map((step) => `${step.title}. ${step.body}`).join(" ");
-  return `${module.title}. ${module.summary} ${steps}`.replace(/\s+/g, " ").trim();
+  const sections = [
+    `${module.title}.`,
+    module.summary,
+    ...module.steps.map((step) => `${step.title}. ${step.body}`),
+  ];
+  return sections.join(HOST_TOUR_INSTRUCTION_PAUSE).replace(/\s+/g, " ").trim();
 }
 
 export function matchGuideModuleIndex(pathname: string, tab: string | null, modules: HostGuideModule[] = buildHostGuideModules("en")) {
@@ -282,6 +305,13 @@ export function matchGuideModuleIndex(pathname: string, tab: string | null, modu
     const item = items.find((row) => row.id === mod.id);
     return item ? isHostNavItemActive(pathname, tab, item) : false;
   });
+}
+
+export function isGuideModuleLocationActive(pathname: string, tab: string | null, module: HostGuideModule) {
+  const item = guideableHostNavItems().find((row) => row.id === module.id);
+  if (item) return isHostNavItemActive(pathname, tab, item);
+  const url = new URL(module.href, "https://zencierge.local");
+  return normalizePathname(pathname) === normalizePathname(url.pathname) && tab === url.searchParams.get("tab");
 }
 
 export function isUserGuidePath(pathname: string) {

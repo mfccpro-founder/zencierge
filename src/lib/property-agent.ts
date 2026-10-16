@@ -62,6 +62,12 @@ export function voiceIdFromAvatarName(name: string): VoiceProfileId {
   return "elena";
 }
 
+/** Display legacy Elena assignments as the current Isabela brand without rewriting stored property data. */
+export function displayAvatarName(name: string | null | undefined) {
+  const value = (name ?? "").trim();
+  return value.toLowerCase() === "elena" ? "Isabela" : value;
+}
+
 export function avatarNameFromVoiceId(id: VoiceProfileId): PropertyAvatarName {
   if (id === "austin") return "Austin";
   if (id === "sofia") return "Sofia";

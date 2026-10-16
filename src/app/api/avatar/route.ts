@@ -8,7 +8,10 @@ import {
   isNearbyPlaceIntent,
 } from "@/lib/receptionist-intent";
 import { answerGuestQuestion } from "@/lib/receptionist-replies";
-import { loadInboundProperty } from "@/lib/supabase-listings";
+import { requireHostUser } from "@/lib/supabase-route";
+import { tryCreateSupabaseAdminClient } from "@/lib/supabase-admin";
+import { loadHostListings } from "@/lib/host-listings-server";
+import { authorizeGuestProperty } from "@/lib/guest-property-access";
 
 type AvatarBody = {
   question?: string;
@@ -24,6 +27,7 @@ type AvatarBody = {
   To?: string;
   called?: string;
   Called?: string;
+  token?: string;
 };
 
 export async function POST(request: Request) {
@@ -35,12 +39,21 @@ export async function POST(request: Request) {
   }
 
   const question = body.question?.trim() ?? "";
-  const property = await loadInboundProperty({
-    property: body.property,
-    propertyId: body.propertyId ?? body.property?.id,
-    to: body.to ?? body.To,
-    calledNumber: body.called ?? body.Called,
-  });
+  const admin = tryCreateSupabaseAdminClient();
+  if (!admin) return Response.json({ error: "Service unavailable" }, { status: 503 });
+  const propertyId = (body.propertyId ?? body.property?.id ?? "").trim();
+  let property: Property | null;
+  if (Object.hasOwn(body, "token")) {
+    const guest = await authorizeGuestProperty({ admin, token: body.token, requestedPropertyId: propertyId });
+    if (guest.kind === "rejected") return Response.json({ error: guest.error }, { status: guest.status });
+    property = guest.property;
+  } else {
+    const auth = await requireHostUser();
+    if (auth.error) return auth.error;
+    const owned = await loadHostListings(admin, auth.user.id);
+    if (owned.kind === "unavailable") return Response.json({ error: "Service unavailable" }, { status: 503 });
+    property = propertyId ? owned.properties.find((candidate) => candidate.id === propertyId) ?? null : owned.properties[0] ?? null;
+  }
   if (!question || !property?.name || !property.city) {
     return Response.json({ error: "question and property are required" }, { status: 400 });
   }

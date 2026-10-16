@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, forwardRef, useImperativeHandle } from "react";
+import { useMemo, useRef, useState, useSyncExternalStore, forwardRef, useImperativeHandle } from "react";
 import {
   ChevronUp,
   Headphones,
@@ -9,6 +9,10 @@ import {
   Wand2,
   X,
 } from "lucide-react";
+import {
+  readStoredHostBriefingLanguage,
+  type VoiceBriefingLanguage,
+} from "@/lib/smart-voice-briefing";
 
 type GuideLang = "en" | "es";
 
@@ -18,8 +22,7 @@ type Chapter = {
   caption: { en: string; es: string };
 };
 
-const STORAGE_KEY = "zencierge.hideAvatarGuide";
-const DURATION = 80;
+export const ONBOARDING_VIDEO_DURATION_SECONDS = 41;
 
 const CHAPTERS: Chapter[] = [
   {
@@ -29,12 +32,12 @@ const CHAPTERS: Chapter[] = [
       es: "Bienvenida — tutorial del anfitrión",
     },
     caption: {
-      en: "Hi, I'm Elena. In under a minute I'll show you how to set up a property, test the voice simulator, and share the guest portal link.",
-      es: "Hola, soy Elena. En un minuto te muestro cómo configurar una propiedad, probar el simulador de voz y compartir el enlace del Portal del Huésped.",
+      en: "Hi, I'm Isabela. In under a minute I'll show you how to set up a property, test the voice simulator, and share the guest portal link.",
+      es: "Hola, soy Isabela. En un minuto te muestro cómo configurar una propiedad, probar el simulador de voz y compartir el enlace del Portal del Huésped.",
     },
   },
   {
-    at: 14,
+    at: 8,
     title: {
       en: "Configure properties & the AI handbook",
       es: "Configura propiedades y el handbook de IA",
@@ -45,18 +48,18 @@ const CHAPTERS: Chapter[] = [
     },
   },
   {
-    at: 32,
+    at: 17,
     title: {
       en: "Test the voice simulator",
       es: "Prueba el simulador de voz",
     },
     caption: {
-      en: "Go to Voice Concierge, pick the listing, and tap Test Call with Elena. Ask for Wi-Fi or the grocery store — I answer from that unit's handbook.",
-      es: "Ve a Voice Concierge, elige el listing y pulsa Test Call with Elena. Pregunta el Wi-Fi o el súper: respondo con el handbook de esa unidad.",
+      en: "Go to Voice Concierge, pick the listing, and tap Test Call with Isabela. Ask for Wi-Fi or the grocery store — I answer from that unit's handbook.",
+      es: "Ve a Voice Concierge, elige el listing y pulsa Test Call with Isabela. Pregunta el Wi-Fi o el súper: respondo con el handbook de esa unidad.",
     },
   },
   {
-    at: 50,
+    at: 26,
     title: {
       en: "Share the Guest Portal link",
       es: "Comparte el Portal del Huésped",
@@ -67,7 +70,7 @@ const CHAPTERS: Chapter[] = [
     },
   },
   {
-    at: 66,
+    at: 34,
     title: {
       en: "Calendar Sync · Airbnb & Vrbo iCal",
       es: "Sincronización de calendarios · iCal Airbnb y Vrbo",
@@ -81,37 +84,35 @@ const CHAPTERS: Chapter[] = [
 
 const copy = {
   en: {
-    tooltip: "👋 See how Zencierge works (1 min demo)",
-    badge: "AI Guide",
-    title: "Meet your AI Concierge Guide",
+    tooltip: "Open the welcome tutorial",
+    badge: "Help",
+    title: "Welcome tutorial",
     play: "Play demo",
     pause: "Pause",
     setup: "Start Setup Wizard",
     testCall: "Test Voice Call",
     guestLink: "Open Guest Portal setup",
-    dontShow: "Don't show again on login",
     close: "Close",
-    open: "Open demo",
+    open: "Help",
     chapter: "Jump to topic",
   },
   es: {
-    tooltip: "👋 Mira cómo funciona Zencierge (demo 1 min)",
-    badge: "Guía IA",
-    title: "Conoce a tu guía Concierge IA",
+    tooltip: "Abrir el tutorial de bienvenida",
+    badge: "Ayuda",
+    title: "Tutorial de bienvenida",
     play: "Reproducir demo",
     pause: "Pausa",
     setup: "Iniciar asistente de alta",
     testCall: "Probar llamada de voz",
     guestLink: "Configurar Portal del Huésped",
-    dontShow: "No volver a mostrar al entrar",
     close: "Cerrar",
-    open: "Abrir demo",
+    open: "Ayuda",
     chapter: "Saltar al tema",
   },
 };
 
 function formatTime(seconds: number) {
-  const safe = Math.max(0, Math.min(DURATION, Math.floor(seconds)));
+  const safe = Math.max(0, Math.min(ONBOARDING_VIDEO_DURATION_SECONDS, Math.floor(seconds)));
   const mm = Math.floor(safe / 60);
   const ss = String(safe % 60).padStart(2, "0");
   return `${mm}:${ss}`;
@@ -125,7 +126,16 @@ function chapterForTime(time: number): Chapter {
   return current;
 }
 
-export const CALENDAR_SYNC_AT = 66;
+export const CALENDAR_SYNC_AT = 34;
+
+function subscribeHostLanguage(onStoreChange: () => void) {
+  window.addEventListener("storage", onStoreChange);
+  window.addEventListener("zencierge-host-language", onStoreChange);
+  return () => {
+    window.removeEventListener("storage", onStoreChange);
+    window.removeEventListener("zencierge-host-language", onStoreChange);
+  };
+}
 
 export type AiAvatarGuideHandle = {
   openCalendarSync: () => void;
@@ -139,70 +149,48 @@ type AiAvatarGuideProps = {
 
 export const AiAvatarGuide = forwardRef<AiAvatarGuideHandle, AiAvatarGuideProps>(
   function AiAvatarGuide({ onTestVoiceCall, onStartSetup }, ref) {
-  const [mounted, setMounted] = useState(false);
-  const [hidden, setHidden] = useState(false);
   const [expanded, setExpanded] = useState(false);
-  const [lang, setLang] = useState<GuideLang>("en");
+  const lang = useSyncExternalStore<VoiceBriefingLanguage>(
+    subscribeHostLanguage,
+    readStoredHostBriefingLanguage,
+    () => "en",
+  ) as GuideLang;
   const [playing, setPlaying] = useState(false);
   const [time, setTime] = useState(0);
-  const [dontShow, setDontShow] = useState(false);
   const [modal, setModal] = useState(false);
 
-  const playingRef = useRef(false);
-  const timeRef = useRef(0);
-  const speechGen = useRef(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   const labels = copy[lang];
   const activeChapter = useMemo(() => chapterForTime(time), [time]);
 
-  useEffect(() => {
-    setHidden(window.localStorage.getItem(STORAGE_KEY) === "1");
-    setMounted(true);
-  }, []);
-
-  useEffect(() => {
-    playingRef.current = playing;
-  }, [playing]);
-
-  useEffect(() => {
-    timeRef.current = time;
-  }, [time]);
-
   useImperativeHandle(ref, () => ({
     openCalendarSync: () => {
-      setHidden(false);
       setExpanded(true);
       setModal(true);
-      timeRef.current = CALENDAR_SYNC_AT;
       setTime(CALENDAR_SYNC_AT);
       setPlaying(false);
     },
     openTutorial: () => {
-      setHidden(false);
       setExpanded(true);
       setModal(true);
-      timeRef.current = 0;
       setTime(0);
       setPlaying(false);
     },
   }));
 
-  if (!mounted) return null;
-  if (hidden && !expanded) return null;
-
   const persistHide = () => {
-    if (dontShow) window.localStorage.setItem(STORAGE_KEY, "1");
     setExpanded(false);
     setModal(false);
     setPlaying(false);
-    speechGen.current += 1;
     videoRef.current?.pause();
-    if (dontShow) setHidden(true);
+  };
+
+  const closeTutorial = () => {
+    persistHide();
   };
 
   const seekTo = (seconds: number) => {
-    timeRef.current = seconds;
     setTime(seconds);
     const video = videoRef.current;
     if (video && Number.isFinite(seconds) && video.readyState >= 1) {
@@ -221,37 +209,18 @@ export const AiAvatarGuide = forwardRef<AiAvatarGuideHandle, AiAvatarGuideProps>
         >
           <div className="flex items-start justify-between gap-3 px-4 pt-4 pb-3 border-b border-slate-800">
             <div>
-              <p className="text-[10px] uppercase tracking-wider text-violet-300 font-semibold">
-                🎓 Video Guide / Tutorial
-              </p>
               <h3 id="ai-guide-title" className="text-sm font-semibold text-white mt-0.5">
                 {labels.title}
               </h3>
             </div>
             <div className="flex items-center gap-2">
-              <div className="flex rounded-lg border border-slate-800 bg-slate-900 p-0.5">
-                {(["en", "es"] as const).map((code) => (
-                  <button
-                    key={code}
-                    type="button"
-                    onClick={() => setLang(code)}
-                    className={`px-2 py-1 text-[10px] font-semibold rounded-md ${
-                      lang === code
-                        ? "bg-emerald-500/20 text-emerald-300"
-                        : "text-slate-400 hover:text-slate-200"
-                    }`}
-                  >
-                    {code === "en" ? "English" : "Español"}
-                  </button>
-                ))}
-              </div>
               <button
                 type="button"
-                onClick={persistHide}
-                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
+                onClick={closeTutorial}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-700 bg-slate-900 text-white hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
                 aria-label={labels.close}
               >
-                <X className="h-4 w-4" />
+                <X className="h-5 w-5" />
               </button>
             </div>
           </div>
@@ -268,9 +237,10 @@ export const AiAvatarGuide = forwardRef<AiAvatarGuideHandle, AiAvatarGuideProps>
                 className="w-full h-full rounded-xl object-contain bg-black"
                 onTimeUpdate={(event) => {
                   const seconds = event.currentTarget.currentTime;
-                  timeRef.current = seconds;
                   setTime(seconds);
                 }}
+                onPlay={() => setPlaying(true)}
+                onPause={() => setPlaying(false)}
               >
                 <source src="/onboarding.mp4?v=1" type="video/mp4" />
               </video>
@@ -321,9 +291,7 @@ export const AiAvatarGuide = forwardRef<AiAvatarGuideHandle, AiAvatarGuideProps>
             <button
               type="button"
               onClick={() => {
-                setExpanded(false);
-                setModal(false);
-                setPlaying(false);
+                closeTutorial();
                 onTestVoiceCall();
               }}
               className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2.5 text-[11px] font-semibold text-slate-200 hover:bg-slate-800"
@@ -344,15 +312,6 @@ export const AiAvatarGuide = forwardRef<AiAvatarGuideHandle, AiAvatarGuideProps>
             </button>
           </div>
 
-          <label className="flex items-center gap-2 px-4 pb-4 text-[11px] text-slate-500 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={dontShow}
-              onChange={(event) => setDontShow(event.target.checked)}
-              className="accent-emerald-500"
-            />
-            {labels.dontShow}
-          </label>
         </div>
   );
 
@@ -363,7 +322,7 @@ export const AiAvatarGuide = forwardRef<AiAvatarGuideHandle, AiAvatarGuideProps>
           type="button"
           className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
           aria-label={labels.close}
-          onClick={persistHide}
+          onClick={closeTutorial}
         />
         <div className="relative z-10">{panel}</div>
       </div>
@@ -383,8 +342,12 @@ export const AiAvatarGuide = forwardRef<AiAvatarGuideHandle, AiAvatarGuideProps>
         <button
           type="button"
           onClick={() => {
-            setModal(false);
-            setExpanded((value) => !value);
+            if (expanded) {
+              closeTutorial();
+              return;
+            }
+            setModal(true);
+            setExpanded(true);
           }}
           className="relative flex h-16 w-16 items-center justify-center rounded-full border border-emerald-500/40 bg-slate-950 shadow-lg shadow-emerald-500/20 avatar-breathe"
           aria-label={expanded ? labels.close : labels.open}

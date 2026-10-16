@@ -44,11 +44,12 @@ export function runHostGuideTourTests() {
   let state = createTourState();
   let fx = applyTourCommand(state, { type: "start" }, 16, ids);
   assert(fx.state.mode === "tour" && fx.state.index === 0 && fx.navigateIndex === 0 && fx.cancel, "start");
-  assert(fx.speak && !fx.state.pendingSpeak && fx.highlightId === "overview", "start speaks immediately while navigating");
+  assert(!fx.speak && fx.state.pendingSpeak && fx.highlightId === "overview", "start waits for Overview before speaking");
   state = fx.state;
 
   fx = applyTourCommand(state, { type: "routeSettled", locationMatchesCurrent: true }, 16, ids);
-  assert(!fx.speak && !fx.cancel && fx.navigateIndex === null, "routeSettled must not cancel or speak again");
+  assert(fx.speak && !fx.cancel && fx.navigateIndex === null, "routeSettled starts speech after the target opens");
+  assert(!fx.state.pendingSpeak, "routeSettled clears pending speech");
   assert(fx.state.generation === state.generation, "routeSettled does not bump generation");
   state = fx.state;
 
@@ -71,24 +72,25 @@ export function runHostGuideTourTests() {
 
   const beforeNextGen = state.generation;
   fx = applyTourCommand(state, { type: "next" }, 16, ids);
-  assert(fx.state.index === 1 && fx.navigateIndex === 1 && fx.cancel && fx.speak, "next: one cancel, one nav, immediate speak");
-  assert(fx.state.generation > beforeNextGen && !fx.state.pendingSpeak, "next invalidates generation and does not wait for URL");
+  assert(fx.state.index === 1 && fx.navigateIndex === 1 && fx.cancel && !fx.speak, "next: one cancel, one nav, no early speech");
+  assert(fx.state.generation > beforeNextGen && fx.state.pendingSpeak, "next invalidates generation and waits for URL");
   state = fx.state;
 
   const settledAfterNext = applyTourCommand(state, { type: "routeSettled", locationMatchesCurrent: true }, 16, ids);
-  assert(!settledAfterNext.speak && !settledAfterNext.cancel, "routeSettled after next is silent");
+  assert(settledAfterNext.speak && !settledAfterNext.cancel, "routeSettled after next starts the requested narration");
+  state = settledAfterNext.state;
 
   const beforePrevGen = state.generation;
   fx = applyTourCommand(state, { type: "previous" }, 16, ids);
-  assert(fx.state.index === 0 && fx.navigateIndex === 0 && fx.cancel && fx.speak, "previous: one cancel, one nav, immediate speak");
-  assert(fx.state.generation > beforePrevGen && !fx.state.pendingSpeak, "previous does not wait for URL");
+  assert(fx.state.index === 0 && fx.navigateIndex === 0 && fx.cancel && !fx.speak, "previous: one cancel, one nav, no early speech");
+  assert(fx.state.generation > beforePrevGen && fx.state.pendingSpeak, "previous waits for URL");
   state = fx.state;
 
   fx = applyTourCommand(state, { type: "next" }, 16, ids);
   const rapidFirst = fx;
   fx = applyTourCommand(rapidFirst.state, { type: "next" }, 16, ids);
   assert(fx.state.index === 2 && fx.state.generation > rapidFirst.state.generation, "rapid next keeps only latest generation");
-  assert(fx.speak && fx.cancel && fx.navigateIndex === 2, "rapid next speaks newest target only");
+  assert(!fx.speak && fx.cancel && fx.navigateIndex === 2 && fx.state.pendingSpeak, "rapid next leaves only the newest target pending");
   const staleRapid = applyTourCommand(fx.state, { type: "speechEnded", generation: rapidFirst.state.generation }, 16, ids);
   assert(staleRapid.state.speech === fx.state.speech && staleRapid.state.generation === fx.state.generation, "stale rapid generation cannot restart speech");
   state = fx.state;
@@ -111,7 +113,9 @@ export function runHostGuideTourTests() {
   assert(ids[state.index] === "elena-voice", "query-tab neighbor is Elena Voice");
   fx = applyTourCommand(state, { type: "next" }, 16, ids);
   assert(fx.navigateIndex === 7 && ids[7] === "guest-qr" && en[7]!.href.includes("tab=guest-qr"), "query-tab next navigates to Guest QR href");
-  assert(fx.speak && fx.cancel, "query-tab next still speaks immediately");
+  assert(!fx.speak && fx.cancel && fx.state.pendingSpeak, "query-tab next waits for the tab to open");
+  const querySettled = applyTourCommand(fx.state, { type: "routeSettled", locationMatchesCurrent: true }, 16, ids);
+  assert(querySettled.speak && !querySettled.state.pendingSpeak, "query-tab speaks after the tab opens");
   state = fx.state;
 
   for (let i = state.index; i < 15; i += 1) {

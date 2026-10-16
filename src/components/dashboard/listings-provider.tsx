@@ -9,11 +9,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { properties as seedProperties, type Property, type Reservation } from "@/lib/dashboard-data";
-import {
-  fetchListings,
-  upsertReservation,
-} from "@/lib/supabase-listings";
+import type { Property, Reservation } from "@/lib/dashboard-data";
 
 type ListingsContextValue = {
   properties: Property[];
@@ -34,23 +30,27 @@ export function ListingsProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    const result = await fetchListings();
+    const response = await fetch("/api/properties", { cache: "no-store" });
+    const result = (await response.json().catch(() => ({}))) as {
+      error?: string;
+      properties?: Property[];
+      reservations?: Reservation[];
+    };
+    if (!response.ok || !Array.isArray(result.properties) || !Array.isArray(result.reservations)) {
+      throw new Error(result.error ?? "Could not load listings");
+    }
     setProperties(result.properties);
     setReservations(result.reservations);
   }, []);
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     void (async () => {
       try {
         await refresh();
         if (!cancelled) setError(null);
       } catch (cause) {
         if (!cancelled) {
-          const loft = seedProperties.find((property) => property.id === "prop-1") ?? seedProperties[0];
-          setProperties([loft]);
-          setReservations([]);
           setError(cause instanceof Error ? cause.message : "Could not reach Supabase");
         }
       } finally {
@@ -85,7 +85,13 @@ export function ListingsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const saveReservation = useCallback(async (reservation: Reservation) => {
-    await upsertReservation(reservation);
+    const response = await fetch("/api/reservations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(reservation),
+    });
+    const payload = (await response.json().catch(() => ({}))) as { error?: string };
+    if (!response.ok) throw new Error(payload.error ?? "Could not save reservation");
     await refresh();
     setError(null);
   }, [refresh]);

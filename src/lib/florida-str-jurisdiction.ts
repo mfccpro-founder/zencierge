@@ -54,7 +54,7 @@ function platformsTopic(city: string, licenseNote: string): StrTopic {
   return {
     id: "platforms",
     title: "Cumplimiento en Airbnb, Vrbo y reservas directas",
-    summary: `En ${city}, el anuncio debe coincidir con el registro local, las reglas del edificio y lo que Elena y NeighborShield dicen a los huéspedes.`,
+    summary: `En ${city}, el anuncio debe coincidir con el registro local, las reglas del edificio y lo que Isabela y NeighborShield dicen a los huéspedes.`,
     bullets: [
       licenseNote,
       "Reglas de la casa: horarios de silencio, ocupación, estacionamiento y fiestas. El manual y el anuncio deben citar las mismas horas.",

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { CreditCard, Loader2 } from "lucide-react";
 import { useSubscriptionTier } from "@/hooks/use-subscription-tier";
 import { startSquareCheckout } from "@/lib/start-square-checkout";
@@ -19,11 +19,8 @@ export function HostBillingSummary() {
   const tier = useSubscriptionTier();
   const [busy, setBusy] = useState<"change" | "pay" | null>(null);
   const [changing, setChanging] = useState(false);
-  const [pendingPlan, setPendingPlan] = useState<ZenciergePlanId>(tier.planId);
-
-  useEffect(() => {
-    if (!tier.loading) setPendingPlan(tier.planId);
-  }, [tier.loading, tier.planId]);
+  const [pendingPlan, setPendingPlan] = useState<ZenciergePlanId | null>(null);
+  const selectedPlan = pendingPlan ?? tier.planId;
 
   const statusLabel =
     tier.status === "trial"
@@ -36,10 +33,12 @@ export function HostBillingSummary() {
 
   const checkout = async (planId: ZenciergePlanId, kind: "change" | "pay") => {
     if (busy) return;
+    const plan = ZENCIERGE_PLANS[planId];
+    if (!window.confirm(`Continue to paid Checkout for ${plan.name} at ${usd.format(plan.monthlyUsd)} per month? No charge is created until you approve it in Square.`)) return;
     setBusy(kind);
     trackUpgradeClick(planId, "settings");
     try {
-      await startSquareCheckout({ kind: "host_subscription", planId, billing: "monthly" });
+      await startSquareCheckout({ kind: "host_subscription", planId, billing: "monthly", acceptedPaidTerms: true });
     } catch (cause) {
       setBusy(null);
       window.alert(cause instanceof Error ? cause.message : "Checkout failed");
@@ -108,7 +107,7 @@ export function HostBillingSummary() {
             New plan
             <select
               className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-900"
-              value={pendingPlan}
+              value={selectedPlan}
               onChange={(event) => setPendingPlan(parsePlanId(event.target.value) ?? tier.planId)}
             >
               {ZENCIERGE_PLAN_IDS.map((id) => (
@@ -120,15 +119,15 @@ export function HostBillingSummary() {
           </label>
           <button
             type="button"
-            disabled={busy !== null || pendingPlan === tier.planId}
-            onClick={() => void checkout(pendingPlan, "change")}
+            disabled={busy !== null || selectedPlan === tier.planId}
+            onClick={() => void checkout(selectedPlan, "change")}
             className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
           >
             {busy === "change" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
             Confirm change
           </button>
           <div className="w-full pt-2">
-            <PlanFeatureList planId={pendingPlan} tone="light" />
+            <PlanFeatureList planId={selectedPlan} tone="light" />
           </div>
         </div>
       ) : null}

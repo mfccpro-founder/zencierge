@@ -29,6 +29,17 @@ export function originFor(protocol: string, hostname: string, port: string | nul
   return `${protocol}://${hostname}${suffix}`;
 }
 
+export function publicRequestPort(input: {
+  protocol: string;
+  forwardedHostPresent: boolean;
+  forwardedHostPort: string | null;
+  requestUrlPort: string;
+}) {
+  if (input.forwardedHostPort) return input.forwardedHostPort;
+  if (input.forwardedHostPresent) return input.protocol === "https" ? "443" : "80";
+  return input.requestUrlPort || (input.protocol === "https" ? "443" : "3000");
+}
+
 /** Keep the request host as-is. Loopback is never rewritten to a LAN address. */
 export function fallbackRuntimeOriginFromRequest(input: {
   protocol: string;
@@ -85,7 +96,15 @@ export async function GET(request: Request) {
     .trim();
 
   const parsed = parseHost(hostHeader);
-  const requestPort = parsed.port || url.port || (protocol === "https" ? "443" : "3000");
+  // When a reverse proxy supplies the public host without an explicit port,
+  // do not leak the internal Next.js listener port from request.url. The
+  // forwarded protocol determines the public default port.
+  const requestPort = publicRequestPort({
+    protocol,
+    forwardedHostPresent: Boolean(forwardedHost),
+    forwardedHostPort: parsed.port,
+    requestUrlPort: url.port,
+  });
   const fallback = fallbackRuntimeOriginFromRequest({
     protocol,
     hostname: parsed.hostname,

@@ -12,8 +12,10 @@ import {
   canStartHousekeepingProofSubmit,
   formatHousekeepingProofDueAt,
   housekeepingProofClientPhotoIssue,
+  housekeepingDemoStartLabel,
   housekeepingProofPhotoFormData,
   housekeepingProofRequestBody,
+  housekeepingProofSubmitRequirements,
   housekeepingProofShellShouldKeepLastGood,
   housekeepingProofShellShouldPoll,
   housekeepingProofShowsFinish,
@@ -117,6 +119,18 @@ export function runHousekeepingProofShellTests() {
   assert(canStartHousekeepingProofSubmit({ uploading: false, submitting: false, showFinish: true }), "submit can start");
   assert(!canStartHousekeepingProofSubmit({ uploading: true, submitting: false, showFinish: true }), "submit blocked while uploading");
   assert(!canStartHousekeepingProofSubmit({ uploading: false, submitting: true, showFinish: true }), "submit blocked while submitting");
+  const pendingNote = housekeepingProofSubmitRequirements({
+    demoStatus: "in_progress",
+    hasSavedPhoto: true,
+    reportNote: "",
+  });
+  assert(pendingNote.workStarted && pendingNote.photoSaved && !pendingNote.noteMatches, "empty placeholder is reported as a pending note");
+  const readyToSend = housekeepingProofSubmitRequirements({
+    demoStatus: "in_progress",
+    hasSavedPhoto: true,
+    reportNote: "Ya entregué las dos toallas",
+  });
+  assert(Object.values(readyToSend).every(Boolean), "all send requirements pass with the exact completion note");
   assert(interpretHousekeepingProofSubmitPayload(200, { ok: true, status: "submitted", idempotent: false }) === "success", "submit success");
   assert(interpretHousekeepingProofSubmitPayload(200, { ok: true, status: "submitted", idempotent: false, extra: 1 }) === "unavailable", "submit extra keys rejected");
   assert(interpretHousekeepingProofSubmitPayload(410, { error: "expired" }) === "expired", "submit expired");
@@ -282,6 +296,10 @@ export function runHousekeepingProofShellTests() {
   assert(!canStartHousekeepingProofPhotoUpload({ uploading: true, file: dummy }), "duplicate upload click prevented");
   assert(canStartHousekeepingProofPhotoUpload({ uploading: false, file: dummy }), "idle upload allowed");
   assert(!canStartHousekeepingProofPhotoUpload({ uploading: false, file: null }), "upload requires a selected file");
+  assert(housekeepingDemoStartLabel("assigned").en === "Start work", "assigned task offers start action");
+  assert(housekeepingDemoStartLabel("in_progress").en === "Work started", "started task persists visibly after reload");
+  assert(shellSource.includes('setProgressNotice("failed")'), "progress failure is rendered explicitly");
+  assert(shellSource.includes('role="alert"'), "progress failure is announced accessibly");
 
   assert(interpretHousekeepingProofUploadPayload(200, { ok: true }) === "success", "upload success");
   assert(interpretHousekeepingProofUploadPayload(400, { error: "invalid" }) === "invalid", "upload invalid");

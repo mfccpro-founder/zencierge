@@ -129,9 +129,18 @@ function runSquareBillingCorrelationSchemaTests() {
     "upsert user_id ambiguity migration exists",
   );
   assert(
-    migrationNames[migrationNames.length - 1] ===
-      EXPECTED_UPSERT_AMBIGUITY_MIGRATION,
-    "upsert user_id ambiguity migration is the latest migration",
+    migrationNames.includes("20260928153000_ai_usage_tts_meter_foundation.sql"),
+    "tts meter foundation migration exists",
+  );
+  assert(
+    migrationNames.indexOf("20260927160000_founder_backoffice_subscription_payments_text_casts.sql") <
+      migrationNames.indexOf("20260928153000_ai_usage_tts_meter_foundation.sql"),
+    "tts meter foundation follows the payment text-cast migration",
+  );
+  assert(
+    migrationNames.indexOf(EXPECTED_UPSERT_AMBIGUITY_MIGRATION) <
+      migrationNames.indexOf("20260926140000_founder_backoffice_billing_read.sql"),
+    "founder billing read follows the user_id ambiguity migration",
   );
   assert(
     migrationNames.indexOf(EXPECTED_RPC_OWNER_STATUS_MIGRATION) >
@@ -283,7 +292,7 @@ function runSquareBillingCorrelationSchemaTests() {
     schemaSql.indexOf(ACL_END) + ACL_END.length,
   );
   assert(
-    !/\b(grant|revoke)\b[\s\S]*?\bpublic\.(host_subscriptions|subscription_payments)\b/i.test(
+    !/\b(grant|revoke)\b[^;]*\b(?:table\s+)?public\.(host_subscriptions|subscription_payments)\b/i.test(
       schemaAfterAclContract,
     ),
     "later canonical schema statements do not override baseline billing ACLs",

@@ -70,6 +70,11 @@ export async function runHousekeepingProofHostTests() {
     chooseHousekeepingProofShareOrigin("http://localhost:3000", "https://tunnel.example") === "https://tunnel.example",
     "tunnel https wins over loopback",
   );
+  assert(
+    chooseHousekeepingProofShareOrigin("https://zencierge-demo-host.tail4dbe04.ts.net", "https://zencierge-demo-host.tail4dbe04.ts.net:3000") ===
+      "https://zencierge-demo-host.tail4dbe04.ts.net",
+    "the serving HTTPS Dashboard origin prevents a stale :3000 origin",
+  );
 
   const parsed = parseHousekeepingProofOptionsPayload({
     ok: true,

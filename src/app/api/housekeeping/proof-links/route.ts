@@ -11,6 +11,7 @@ import {
   issueHousekeepingProofLink,
   createSupabaseHousekeepingProofStore,
 } from "@/lib/housekeeping-proof";
+import { createSupabaseGuestServiceRequestStore } from "@/lib/guest-service-requests";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -45,6 +46,13 @@ export async function POST(request: NextRequest) {
       store: createSupabaseHousekeepingProofStore(admin),
       ownershipStore: housekeepingProofOwnershipStore(admin),
     });
+    if (result.status === 200 && body && typeof body === "object" && !Array.isArray(body)) {
+      const reservationId = typeof (body as { reservationId?: unknown }).reservationId === "string" ? (body as { reservationId: string }).reservationId : "";
+      const stage = typeof (body as { stage?: unknown }).stage === "string" ? (body as { stage: string }).stage : "";
+      const { data, error } = await admin.from("housekeeping_proof_tasks").select("id").eq("reservation_id", reservationId).eq("stage", stage).maybeSingle();
+      if (error || !data || typeof data.id !== "string") return housekeepingProofJson({ error: "unavailable" }, 503);
+      await createSupabaseGuestServiceRequestStore(admin).linkProofForReservation(reservationId, data.id);
+    }
     return housekeepingProofJson(result.body, result.status);
   } catch {
     return housekeepingProofJson({ error: "unavailable" }, 503);

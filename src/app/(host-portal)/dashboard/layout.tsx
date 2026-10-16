@@ -6,9 +6,12 @@ import { HostShellProvider } from "@/components/dashboard/host-shell-context";
 import { HostSidebar } from "@/components/dashboard/host-sidebar";
 import { HostShellHeader } from "@/components/dashboard/host-shell-header";
 import { InteractiveConciergeTour } from "@/components/InteractiveConciergeTour";
+import { PrivatePilotProvider } from "@/components/pilot/private-pilot-context";
+import { privatePilotSafeMode } from "@/lib/private-pilot-safety";
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   return (
+    <PrivatePilotProvider enabled={privatePilotSafeMode()}>
     <FeatureRequestProvider>
       <ListingsProvider>
         <HostShellProvider>
@@ -17,7 +20,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
             <div className="flex min-w-0 flex-1 flex-col">
               <HostShellHeader />
               <DashboardTabScroll />
-              <div className="min-w-0 flex-1 overflow-x-hidden p-6 lg:p-8">
+              <div className="min-w-0 flex-1 overflow-x-clip p-6 lg:p-8">
                 <InteractiveConciergeTour />
                 {children}
               </div>
@@ -26,5 +29,6 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
         </HostShellProvider>
       </ListingsProvider>
     </FeatureRequestProvider>
+    </PrivatePilotProvider>
   );
 }

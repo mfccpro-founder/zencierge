@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import {
   Battery,
   Building2,
@@ -31,7 +31,6 @@ import {
 import { PropertyLocalGuidePanel } from "@/components/dashboard/property-local-guide-panel";
 import { useListings } from "@/components/dashboard/listings-provider";
 import { useSubscriptionTier } from "@/hooks/use-subscription-tier";
-import { getSupabase } from "@/lib/supabase";
 import {
   PROPERTY_AVATAR_NAMES,
   PROPERTY_TIMEZONES,
@@ -39,6 +38,10 @@ import {
 } from "@/lib/property-agent";
 
 import { SmartLocksView } from "@/components/dashboard/smart-locks-view";
+import {
+  readStoredHostBriefingLanguage,
+  type VoiceBriefingLanguage,
+} from "@/lib/smart-voice-briefing";
 import {
   LOCK_VENDOR_META,
   inferLockVendor,
@@ -50,6 +53,15 @@ import {
 
 type CityFilter = "all" | PropertyCity;
 type OccupancyFilter = "all" | OccupancyStatus;
+
+function subscribePropertyLanguage(onStoreChange: () => void) {
+  window.addEventListener("storage", onStoreChange);
+  window.addEventListener("zencierge-host-language", onStoreChange);
+  return () => {
+    window.removeEventListener("storage", onStoreChange);
+    window.removeEventListener("zencierge-host-language", onStoreChange);
+  };
+}
 
 type ModalMode =
   | { kind: "closed" }
@@ -170,8 +182,14 @@ export function PropertiesView() {
 }
 
 function PropertiesViewInner() {
-  const { properties: listings, saveProperty, applyHandbook, loading, error } = useListings();
-  const { canAddProperty, planName, maxProperties, isActive } = useSubscriptionTier();
+  const { properties: listings, saveProperty, loading, error } = useListings();
+  const { canAddProperty, planName, maxProperties, isActive, loading: subscriptionLoading } = useSubscriptionTier();
+  const language = useSyncExternalStore<VoiceBriefingLanguage>(
+    subscribePropertyLanguage,
+    readStoredHostBriefingLanguage,
+    () => "en",
+  );
+  const handledOverviewAdd = useRef(false);
   const [cityFilter, setCityFilter] = useState<CityFilter>("all");
   const [occupancyFilter, setOccupancyFilter] = useState<OccupancyFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -217,6 +235,14 @@ function PropertiesViewInner() {
     setCreateDraft(emptyDraft);
     setModal({ kind: "create" });
   };
+
+  useEffect(() => {
+    if (handledOverviewAdd.current || loading || subscriptionLoading) return;
+    if (new URLSearchParams(window.location.search).get("action") !== "add") return;
+    handledOverviewAdd.current = true;
+    document.getElementById("add-property-button")?.click();
+    window.history.replaceState(null, "", "/dashboard/properties");
+  }, [loading, subscriptionLoading]);
 
   const closeModal = () => setModal({ kind: "closed" });
 
@@ -264,21 +290,14 @@ function PropertiesViewInner() {
     if (modal.kind !== "handbook") return;
     const selectedPropertyId = modal.propertyId;
     const currentHandbookText = handbookDraft.trim();
+    const selectedProperty = listings.find((property) => property.id === selectedPropertyId);
+    if (!selectedProperty) {
+      window.alert("Property is no longer available");
+      return;
+    }
     setSavingHandbook(true);
     try {
-      const supabase = getSupabase();
-      const { error: updateError } = await supabase
-        .from("properties")
-        .update({ ai_handbook: currentHandbookText })
-        .eq("id", selectedPropertyId);
-
-      if (updateError) {
-        console.error(updateError);
-        window.alert(updateError.message);
-        return;
-      }
-
-      applyHandbook(selectedPropertyId, currentHandbookText);
+      await saveProperty({ ...selectedProperty, handbook: currentHandbookText });
       closeModal();
       setSaveToast("Handbook saved");
     } catch (cause) {
@@ -296,6 +315,7 @@ function PropertiesViewInner() {
     const next: Property = {
       ...createDraft,
       name,
+      city: createDraft.city.trim(),
       address: createDraft.address.trim(),
       doorCode: createDraft.doorCode.trim(),
       smartlock: createDraft.smartlock.trim() || "Smartlock",
@@ -360,9 +380,9 @@ function PropertiesViewInner() {
         <div className="flex items-start gap-2">
           <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-sky-700" />
           <div>
-            <p className="text-sm font-semibold text-slate-900">Elena AI · listing knowledge</p>
+            <p className="text-sm font-semibold text-slate-900">Isabela AI · listing knowledge</p>
             <p className="mt-0.5 text-xs text-slate-700">
-              Door codes, Wi-Fi, parking, and the AI handbook on each listing are the prompts Elena reads on guest calls.
+              Door codes, Wi-Fi, parking, and the AI handbook on each listing are the prompts Isabela reads on guest calls.
               Open the voice studio for line, language, and avatar settings.
             </p>
           </div>
@@ -371,7 +391,7 @@ function PropertiesViewInner() {
           href="/dashboard/voice-agent"
           className="shrink-0 rounded-lg border border-sky-300 bg-white px-3 py-1.5 text-xs font-bold text-sky-900 hover:bg-sky-100"
         >
-          Elena voice settings
+          Isabela voice settings
         </Link>
       </div>
 
@@ -444,6 +464,7 @@ function PropertiesViewInner() {
         </div>
 
         <button
+          id="add-property-button"
           type="button"
           onClick={openCreate}
           className="inline-flex items-center justify-center gap-2 rounded-xl bg-sky-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-sky-500 disabled:opacity-50"
@@ -453,7 +474,22 @@ function PropertiesViewInner() {
         </button>
       </div>
 
-      {filtered.length === 0 ? (
+      {listings.length === 0 && !loading ? (
+        <div className="rounded-2xl border border-sky-200 bg-sky-50 px-6 py-10 text-center">
+          <Building2 className="mx-auto h-8 w-8 text-sky-400" />
+          <p className="mt-3 text-sm font-semibold text-slate-900">
+            {language === "es" ? "Agrega tu primera propiedad" : "Add your first property"}
+          </p>
+          <button
+            type="button"
+            onClick={openCreate}
+            className="mt-4 inline-flex items-center justify-center gap-2 rounded-xl bg-sky-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-sky-500"
+          >
+            <Plus className="h-4 w-4" />
+            {language === "es" ? "Agrega tu primera propiedad" : "Add your first property"}
+          </button>
+        </div>
+      ) : filtered.length === 0 ? (
         <div className="rounded-2xl border border-sky-200 bg-sky-50 px-6 py-10 text-center">
           <Building2 className="mx-auto h-8 w-8 text-sky-400" />
           <p className="mt-3 text-sm font-medium text-slate-800">
@@ -644,22 +680,26 @@ function PropertiesViewInner() {
                     <label className="mb-1.5 block text-xs font-medium text-slate-600">
                       City
                     </label>
-                    <select
+                    <input
+                      type="text"
+                      required
+                      maxLength={120}
+                      list="property-city-suggestions"
                       value={createDraft.city}
                       onChange={(event) =>
                         setCreateDraft((draft) => ({
                           ...draft,
-                          city: event.target.value as PropertyCity,
+                          city: event.target.value,
                         }))
                       }
+                      placeholder="Enter any city"
                       className="w-full rounded-xl border border-sky-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-sky-500"
-                    >
+                    />
+                    <datalist id="property-city-suggestions">
                       {propertyCities.map((city) => (
-                        <option key={city} value={city}>
-                          {city}
-                        </option>
+                        <option key={city} value={city} />
                       ))}
-                    </select>
+                    </datalist>
                   </div>
                   <div>
                     <label className="mb-1.5 block text-xs font-medium text-slate-600">

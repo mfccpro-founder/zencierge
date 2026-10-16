@@ -102,7 +102,7 @@ export default function ElenaVoiceWidget({ property }: { property?: Property }) 
     } catch (cause) {
       if (cause instanceof AutoplayBlockedError) {
         setIsAudioReadyToPlay(true);
-        setStatus("Tap to hear Elena");
+        setStatus("Tap to hear Isabela");
         return;
       }
       pendingSpeakRef.current = { text, lang };
@@ -129,7 +129,7 @@ export default function ElenaVoiceWidget({ property }: { property?: Property }) 
     }
     if (!greetedRef.current) {
       greetedRef.current = true;
-      const hello = "Hi, I'm Elena, your stay concierge. How can I help?";
+      const hello = "Hi, I'm Isabela, your stay concierge. How can I help?";
       setReplyText(hello);
       if (!beginTurn()) return;
       void (async () => {
@@ -230,8 +230,8 @@ export default function ElenaVoiceWidget({ property }: { property?: Property }) 
     }
     const fallback =
       lang === "en"
-        ? "Hi, I'm Elena. I'm here — tell me what you need."
-        : "Claro, soy Elena. Todo listo por aquí; dime qué necesitas y te ayudo enseguida.";
+        ? "Hi, I'm Isabela. I'm here — tell me what you need."
+        : "Claro, soy Isabela. Todo listo por aquí; dime qué necesitas y te ayudo enseguida.";
     return { displayText: fallback, spokenText: fallback, lang };
   };
 
@@ -321,7 +321,7 @@ export default function ElenaVoiceWidget({ property }: { property?: Property }) 
         <div className="flex min-w-0 items-center gap-3">
           <ElenaAvatar size={52} />
           <div className="min-w-0 leading-tight">
-            <h2 className="truncate text-base font-bold sm:text-lg">Elena · Receptionist</h2>
+            <h2 className="truncate text-base font-bold sm:text-lg">Isabela · Receptionist</h2>
             <p className="text-[11px] text-slate-500">AI Voice Concierge</p>
           </div>
         </div>
@@ -347,7 +347,7 @@ export default function ElenaVoiceWidget({ property }: { property?: Property }) 
           captureArmedRef.current = false;
           unlockAudio();
           const line =
-            "Hi, I'm Elena. This page is on HTTP, so the microphone is blocked. Type your question and I will answer out loud.";
+            "Hi, I'm Isabela. This page is on HTTP, so the microphone is blocked. Type your question and I will answer out loud.";
           setReplyText(line);
           if (!beginTurn()) return;
           void (async () => {
@@ -407,7 +407,7 @@ export default function ElenaVoiceWidget({ property }: { property?: Property }) 
         </div>
       ) : null}
       {audioPending && !replyText ? (
-        <p className="text-xs text-sky-800">Elena is typing…</p>
+        <p className="text-xs text-sky-800">Isabela is typing…</p>
       ) : null}
       {replyText ? (
         <div className="mr-0 break-words rounded-2xl rounded-tl-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm leading-relaxed text-slate-900 sm:mr-4">
@@ -441,7 +441,7 @@ export default function ElenaVoiceWidget({ property }: { property?: Property }) 
           })}
           className={`${guestPressClass} w-full rounded-xl bg-emerald-500 px-4 py-4 text-base font-bold text-slate-950 shadow-lg hover:bg-emerald-400`}
         >
-          Tap to hear Elena
+          Tap to hear Isabela
         </button>
       ) : null}
 

@@ -1,5 +1,6 @@
 import type { Property } from "@/lib/dashboard-data";
 import type { LanguageMode, ReplyLang } from "@/lib/human-voice";
+import { displayAvatarName } from "@/lib/property-agent";
 import {
   accessVerificationReply,
   detectGuestIntent,
@@ -97,7 +98,7 @@ export function answerGuestQuestion({
   const property = matchProperty(guestText, listings, fallback);
   const night = nightNote(hours, lang);
   const name = property.name;
-  const agent = property.assignedAvatarName?.trim() || "Elena";
+  const agent = displayAvatarName(property.assignedAvatarName) || "Isabela";
   const intent = detectGuestIntent(guestText);
 
   if (intent === "connection_check") {

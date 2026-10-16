@@ -8,6 +8,7 @@ import { HousekeepingProofLinkCard } from "@/components/dashboard/housekeeping-p
 import { HousekeepingReportsHistory } from "@/components/dashboard/housekeeping-reports-history";
 import { SupplyTrackingView } from "@/components/dashboard/supply-tracking-view";
 import { TeamCleanersAccessPanel } from "@/components/dashboard/team-cleaners-access";
+import { GuestServiceRequestsCard } from "@/components/dashboard/guest-service-requests-card";
 
 const TABS = [
   { id: "inspections", href: "/dashboard/housekeeping", label: "Inspections" },
@@ -46,6 +47,7 @@ function HousekeepingOpsInner() {
       {active === "reports" ? <HousekeepingReportsHistory /> : null}
       {active === "inspections" ? (
         <>
+          <GuestServiceRequestsCard />
           <HousekeepingProofLinkCard />
           <HousekeepingPanel />
         </>

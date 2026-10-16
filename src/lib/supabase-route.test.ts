@@ -18,6 +18,8 @@ export function runSupabaseRouteTests() {
   assert(routeSource.includes("return requireHostAuthContext()"), "requireHostUser delegates without changing caller shape");
   assert(routeSource.includes("supabase.auth.getUser()"), "supabase-auth source comes from getUser");
   assert(routeSource.includes("hasDevHostCookie"), "dev-fallback source comes from the cookie branch");
+  assert(routeSource.includes("privatePilotHostAuthorized"), "host APIs enforce the private-pilot allowlist");
+  assert(routeSource.includes("status: 403"), "non-pilot accounts are rejected without becoming unauthenticated");
   assert(!routeSource.includes("isMockDevHostUserId"), "auth module does not classify provenance by mock UUID");
 }
 

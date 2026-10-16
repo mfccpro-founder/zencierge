@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { PAID_BILLING_CONSENT_VERSION } from "@/lib/paid-billing-consent";
 import {
   ZENCIERGE_PLANS,
   type BillingCycle,
@@ -342,6 +343,7 @@ export function SquareSubscriptionCardForm({
   } | null>(null);
   const [postalCode, setPostalCode] = useState("");
   const [cardholderName, setCardholderName] = useState("");
+  const [acceptedPaidTerms, setAcceptedPaidTerms] = useState(false);
   const [tokenizationDiagnostic, setTokenizationDiagnostic] =
     useState<SafeTokenizationDiagnostic | null>(null);
   const [sandboxMode, setSandboxMode] = useState(false);
@@ -487,6 +489,10 @@ export function SquareSubscriptionCardForm({
       recordSubmitStage("blocked_submitLocked");
       return;
     }
+    if (!acceptedPaidTerms) {
+      setError("Confirm the displayed recurring price before subscribing.");
+      return;
+    }
     setSubmitting(true);
     setError(null);
     setTokenizationDiagnostic(null);
@@ -577,6 +583,8 @@ export function SquareSubscriptionCardForm({
           verificationToken,
           cardholderName: cardholderName.trim() || undefined,
           postalCode: postalCode.trim() || undefined,
+          acceptedPaidTerms: true,
+          consentVersion: PAID_BILLING_CONSENT_VERSION,
         }),
       });
       recordSubmitStage("fetch_response_received", {
@@ -791,6 +799,7 @@ export function SquareSubscriptionCardForm({
           submitting ||
           submitLocked ||
           Boolean(success)
+          || !acceptedPaidTerms
         }
         className="mt-6 w-full rounded-xl bg-sky-500 px-4 py-3 text-sm font-semibold text-slate-950 transition enabled:hover:bg-sky-400 disabled:cursor-not-allowed disabled:opacity-50"
       >
@@ -808,6 +817,10 @@ export function SquareSubscriptionCardForm({
                   ? "Subscribed"
                   : "Subscribe"}
       </button>
+      <label className="mt-4 flex items-start gap-2 text-xs leading-relaxed text-slate-300">
+        <input type="checkbox" checked={acceptedPaidTerms} onChange={(event) => setAcceptedPaidTerms(event.target.checked)} className="mt-0.5" />
+        <span>I accept the displayed {billingLabel.toLowerCase()} price and authorize creation of the recurring subscription only when I press Subscribe.</span>
+      </label>
       <p className="mt-3 text-[11px] leading-relaxed text-slate-500">
         Card details are tokenized by Square. Zencierge never receives your full
         card number or CVV.

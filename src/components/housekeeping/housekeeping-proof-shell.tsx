@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { HOUSEKEEPING_DEMO_PROGRESS_PATH, HOUSEKEEPING_DEMO_REPORT_NOTE } from "@/lib/housekeeping-mobile-demo-shared";
 
 export const HOUSEKEEPING_PROOF_VALIDATE_PATH = "/api/housekeeping/proof";
 export const HOUSEKEEPING_PROOF_UPLOAD_PATH = "/api/housekeeping/proof/upload";
@@ -22,6 +23,7 @@ export type HousekeepingProofShellState =
 
 export type HousekeepingProofPublicStage = "post_checkout" | "ready_for_checkin";
 export type HousekeepingProofPublicStatus = "open" | "submitted" | "needs_attention";
+export type HousekeepingDemoStatus = "loading" | "assigned" | "in_progress" | "evidence_submitted" | "completed" | "unavailable";
 
 export type HousekeepingProofTaskView = {
   propertyName: string;
@@ -52,6 +54,15 @@ export const HOUSEKEEPING_PROOF_SHELL_COPY = {
   finishUnavailable: {
     en: "Could not finish and send. Try again.",
     es: "No se pudo terminar y enviar. Inténtalo de nuevo.",
+  },
+  sendRequirements: { en: "Before sending", es: "Antes de enviar" },
+  requirementReady: { en: "Ready", es: "Listo" },
+  requirementPending: { en: "Pending", es: "Pendiente" },
+  workStartedRequirement: { en: "Work has been started", es: "El trabajo está iniciado" },
+  photoRequirement: { en: "At least one saved photo", es: "Al menos una foto guardada" },
+  noteRequirement: {
+    en: `Enter this exact completion note: ${HOUSEKEEPING_DEMO_REPORT_NOTE}`,
+    es: `Escribe exactamente esta nota de finalización: ${HOUSEKEEPING_DEMO_REPORT_NOTE}`,
   },
   status: {
     open: { en: "Open", es: "Abierta" },
@@ -159,6 +170,18 @@ export function canStartHousekeepingProofSubmit(input: {
   return input.showFinish && !input.uploading && !input.submitting;
 }
 
+export function housekeepingProofSubmitRequirements(input: {
+  demoStatus: HousekeepingDemoStatus;
+  hasSavedPhoto: boolean;
+  reportNote: string;
+}) {
+  return {
+    workStarted: input.demoStatus === "in_progress",
+    photoSaved: input.hasSavedPhoto,
+    noteMatches: input.reportNote === HOUSEKEEPING_DEMO_REPORT_NOTE,
+  };
+}
+
 export function housekeepingProofShellShouldPoll(state: HousekeepingProofShellState) {
   return state === "open" || state === "submitted" || state === "needs_attention";
 }
@@ -169,6 +192,12 @@ export function housekeepingProofShellShouldKeepLastGood(httpStatus: number) {
 
 export function canStartHousekeepingProofPhotoUpload(input: { uploading: boolean; file: File | null }) {
   return Boolean(input.file) && !input.uploading;
+}
+
+export function housekeepingDemoStartLabel(status: HousekeepingDemoStatus) {
+  return status === "in_progress" || status === "evidence_submitted" || status === "completed"
+    ? { en: "Work started", es: "Trabajo iniciado" }
+    : { en: "Start work", es: "Iniciar trabajo" };
 }
 
 export function housekeepingProofClientPhotoIssue(file: File | null): "empty" | "oversized" | "type" | null {
@@ -291,6 +320,11 @@ export function HousekeepingProofShell({ token }: { token: string }) {
   const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [sessionHadUpload, setSessionHadUpload] = useState(false);
+  const [demoStatus, setDemoStatus] = useState<HousekeepingDemoStatus>("loading");
+  const [demoAccepted, setDemoAccepted] = useState(false);
+  const [reportNote, setReportNote] = useState("");
+  const [progressBusy, setProgressBusy] = useState(false);
+  const [progressNotice, setProgressNotice] = useState<"started" | "failed" | null>(null);
   const [notice, setNotice] = useState<"success" | "invalid" | "unavailable" | "finishUnavailable" | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const uploadAbortRef = useRef<AbortController | null>(null);
@@ -303,6 +337,56 @@ export function HousekeepingProofShell({ token }: { token: string }) {
   const validateInFlight = useRef(false);
   const uploadingRef = useRef(false);
   const submittingRef = useRef(false);
+
+  const demoProgress = useCallback(async (action: "status" | "accept" | "start" | "report", note?: string) => {
+    const response = await fetch(HOUSEKEEPING_DEMO_PROGRESS_PATH, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+      cache: "no-store",
+      credentials: "omit",
+      referrer: "no-referrer",
+      body: JSON.stringify(action === "report" ? { token, action, reportNote: note } : { token, action }),
+    });
+    let payload: { status?: string; accepted?: boolean; reportNote?: string | null };
+    try {
+      payload = await response.json() as typeof payload;
+    } catch {
+      throw new Error("unavailable");
+    }
+    if (!response.ok || typeof payload.status !== "string") throw new Error("unavailable");
+    if (["assigned", "in_progress", "evidence_submitted", "completed"].includes(payload.status)) {
+      setDemoStatus(payload.status as Exclude<typeof demoStatus, "loading" | "unavailable">);
+    }
+    setDemoAccepted(payload.accepted === true);
+    if (typeof payload.reportNote === "string") setReportNote(payload.reportNote);
+    return payload;
+  }, [token]);
+
+  useEffect(() => {
+    if (!task || state === "submitted") return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void demoProgress("status").catch(() => { if (!cancelled) setDemoStatus("unavailable"); });
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [task, state, demoProgress]);
+
+  async function moveDemo(action: "accept" | "start") {
+    if (progressBusy) return;
+    setProgressBusy(true);
+    setProgressNotice(null);
+    try {
+      const payload = await demoProgress(action);
+      if (action === "start" && payload.status === "in_progress") setProgressNotice("started");
+    } catch {
+      setProgressNotice("failed");
+    } finally {
+      setProgressBusy(false);
+    }
+  }
 
   function resetFile() {
     setSelected(null);
@@ -590,6 +674,11 @@ export function HousekeepingProofShell({ token }: { token: string }) {
     setSubmitting(true);
     setNotice(null);
     try {
+      if (reportNote !== HOUSEKEEPING_DEMO_REPORT_NOTE) {
+        setNotice("finishUnavailable");
+        return;
+      }
+      await demoProgress("report", reportNote);
       const response = await fetch(HOUSEKEEPING_PROOF_SUBMIT_PATH, {
         method: "POST",
         headers: {
@@ -653,11 +742,18 @@ export function HousekeepingProofShell({ token }: { token: string }) {
   const showPhotos = housekeepingProofShowsPhotoCapture(state, task);
   const showFinish = housekeepingProofShowsFinish(state, task, sessionHadUpload);
   const finishEnabled = canStartHousekeepingProofSubmit({ uploading, submitting, showFinish });
+  const submitRequirements = housekeepingProofSubmitRequirements({
+    demoStatus,
+    hasSavedPhoto: showFinish,
+    reportNote,
+  });
+  const allSubmitRequirementsMet = Object.values(submitRequirements).every(Boolean);
   const dueLabel = showTask && task ? formatHousekeepingProofDueAt(task.dueAt) : null;
   const stageCopy = showTask && task ? HOUSEKEEPING_PROOF_SHELL_COPY.stage[task.stage] : null;
   const statusCopy = showTask && task ? HOUSEKEEPING_PROOF_SHELL_COPY.status[task.status] : null;
   const pickCopy = selected || notice === "success" ? HOUSEKEEPING_PROOF_SHELL_COPY.takeAnother : HOUSEKEEPING_PROOF_SHELL_COPY.takePhoto;
   const captureBusy = uploading || submitting;
+  const startCopy = housekeepingDemoStartLabel(demoStatus);
 
   return (
     <div className="relative z-10 min-h-dvh w-full min-w-0 overflow-x-hidden bg-gradient-to-b from-[#071833] via-[#0b2a4a] to-[#082238] text-slate-100 touch-manipulation">
@@ -671,6 +767,26 @@ export function HousekeepingProofShell({ token }: { token: string }) {
               {task.propertyName.trim() || HOUSEKEEPING_PROOF_SHELL_COPY.brand}
             </h1>
             <p className="mt-2 text-sm text-slate-300">{task.city}</p>
+            <div className="mt-5 rounded-2xl border border-amber-300/40 bg-amber-300/10 p-4">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-amber-200">Demonstration · Demo Housekeeping</p>
+              <p className="mt-2 text-sm font-semibold text-white">Isabela: Deliver two clean towels to the guest, photograph the completed delivery, and send the report for host approval.</p>
+              <p className="mt-1 text-sm text-amber-100/80">Isabela: Entrega dos toallas limpias, fotografía la entrega terminada y envía el reporte para aprobación del anfitrión.</p>
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              <button type="button" disabled={progressBusy || demoAccepted || demoStatus !== "assigned"} onClick={() => void moveDemo("accept")} className="min-h-11 rounded-2xl border border-cyan-300 px-3 text-sm font-semibold disabled:opacity-50">{demoAccepted ? "Accepted" : "Accept task"}</button>
+              <button type="button" disabled={progressBusy || !demoAccepted || demoStatus !== "assigned"} onClick={() => void moveDemo("start")} className="min-h-11 rounded-2xl bg-cyan-500 px-3 text-sm font-semibold text-[#071833] disabled:opacity-50">
+                {progressBusy ? "Starting…" : startCopy.en}
+                <span className="mt-1 block text-xs font-normal">{progressBusy ? "Iniciando…" : startCopy.es}</span>
+              </button>
+            </div>
+            <div className="mt-3" aria-live="polite">
+              {demoStatus === "in_progress" || progressNotice === "started" ? (
+                <p className="text-sm text-emerald-200">Work started and saved. / Trabajo iniciado y guardado.</p>
+              ) : null}
+              {progressNotice === "failed" ? (
+                <p role="alert" className="text-sm text-rose-200">Could not start the work. Check your connection and try again. / No se pudo iniciar el trabajo. Revisa la conexión e inténtalo de nuevo.</p>
+              ) : null}
+            </div>
             <div className="mt-6 space-y-3">
               <div className="rounded-2xl border border-cyan-400/25 bg-[#0d3258]/85 p-4">
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-300">Stage</p>
@@ -749,10 +865,45 @@ export function HousekeepingProofShell({ token }: { token: string }) {
                   </button>
                 ) : null}
                 {showFinish ? (
+                  <label className="block text-sm font-semibold text-cyan-50">
+                    Completion note / Nota de finalización
+                    <textarea
+                      value={reportNote}
+                      onChange={(event) => {
+                        setReportNote(event.target.value);
+                        setNotice(null);
+                      }}
+                      maxLength={300}
+                      placeholder={HOUSEKEEPING_DEMO_REPORT_NOTE}
+                      aria-describedby="housekeeping-send-requirements"
+                      className="mt-2 min-h-24 w-full rounded-2xl border border-cyan-400/40 bg-[#0d3258] px-3 py-3 text-base text-white outline-none focus:border-cyan-300"
+                    />
+                  </label>
+                ) : null}
+                {showFinish ? (
+                  <div id="housekeeping-send-requirements" className="rounded-2xl border border-cyan-400/30 bg-[#082747] p-4" aria-live="polite">
+                    <p className="text-sm font-semibold text-cyan-50">
+                      {HOUSEKEEPING_PROOF_SHELL_COPY.sendRequirements.en} / {HOUSEKEEPING_PROOF_SHELL_COPY.sendRequirements.es}
+                    </p>
+                    {([
+                      [submitRequirements.workStarted, HOUSEKEEPING_PROOF_SHELL_COPY.workStartedRequirement],
+                      [submitRequirements.photoSaved, HOUSEKEEPING_PROOF_SHELL_COPY.photoRequirement],
+                      [submitRequirements.noteMatches, HOUSEKEEPING_PROOF_SHELL_COPY.noteRequirement],
+                    ] as const).map(([met, copy]) => (
+                      <p key={copy.en} className={`mt-2 text-sm ${met ? "text-emerald-200" : "text-amber-200"}`}>
+                        {met ? "✓" : "•"} {copy.en} — {met ? HOUSEKEEPING_PROOF_SHELL_COPY.requirementReady.en : HOUSEKEEPING_PROOF_SHELL_COPY.requirementPending.en}
+                        <span className="mt-0.5 block text-xs opacity-80">
+                          {copy.es} — {met ? HOUSEKEEPING_PROOF_SHELL_COPY.requirementReady.es : HOUSEKEEPING_PROOF_SHELL_COPY.requirementPending.es}
+                        </span>
+                      </p>
+                    ))}
+                  </div>
+                ) : null}
+                {showFinish ? (
                   <button
                     type="button"
                     className="flex min-h-11 w-full items-center justify-center rounded-2xl border border-cyan-300 bg-cyan-400/20 px-4 py-3 text-sm font-semibold text-cyan-50 disabled:opacity-60"
-                    disabled={!finishEnabled}
+                    disabled={!finishEnabled || !allSubmitRequirementsMet}
                     aria-busy={submitting}
                     onClick={() => void onFinish()}
                   >

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -33,6 +33,10 @@ import { HostHeroBanner } from "@/components/dashboard/host-hero-banner";
 import { SmartVoiceBriefingCard } from "@/components/dashboard/smart-voice-briefing-card";
 import { dashboardTabFromPath } from "@/lib/dashboard-nav";
 import type { NavId } from "@/lib/dashboard-data";
+import {
+  readStoredHostBriefingLanguage,
+  type VoiceBriefingLanguage,
+} from "@/lib/smart-voice-briefing";
 
 const pageMeta: Record<NavId, { title: string; subtitle: string }> = {
   overview: {
@@ -52,7 +56,7 @@ const pageMeta: Record<NavId, { title: string; subtitle: string }> = {
     subtitle: "Net profit, ADR, occupancy, and payouts",
   },
   voice: {
-    title: "Elena Voice Concierge",
+    title: "Isabela Voice Concierge",
     subtitle: "AI receptionist and guest QR cards",
   },
   settings: {
@@ -61,12 +65,26 @@ const pageMeta: Record<NavId, { title: string; subtitle: string }> = {
   },
 };
 
+function subscribeHostLanguage(onStoreChange: () => void) {
+  window.addEventListener("storage", onStoreChange);
+  window.addEventListener("zencierge-host-language", onStoreChange);
+  return () => {
+    window.removeEventListener("storage", onStoreChange);
+    window.removeEventListener("zencierge-host-language", onStoreChange);
+  };
+}
+
 export function DashboardApp(_props: { initialTab?: NavId } = {}) {
   const pathname = usePathname() || "/dashboard";
   const router = useRouter();
   const activeTab = dashboardTabFromPath(pathname);
   const [selectedCall, setSelectedCall] = useState<Call | null>(calls[0]);
   const avatarGuideRef = useRef<AiAvatarGuideHandle>(null);
+  const hostLanguage = useSyncExternalStore<VoiceBriefingLanguage>(
+    subscribeHostLanguage,
+    readStoredHostBriefingLanguage,
+    () => "en",
+  );
   const meta = pageMeta[activeTab];
 
   const lockView = activeTab === "finances";
@@ -89,7 +107,10 @@ export function DashboardApp(_props: { initialTab?: NavId } = {}) {
         ) : null}
         {activeTab === "properties" ? <PropertiesView /> : null}
         {activeTab === "calendar" ? (
-          <CalendarView onWatchSyncGuide={() => avatarGuideRef.current?.openCalendarSync()} />
+          <CalendarView
+            onWatchSyncGuide={() => avatarGuideRef.current?.openCalendarSync()}
+            tutorialLabel={hostLanguage === "es" ? "Ayuda" : "Help"}
+          />
         ) : null}
         {activeTab === "finances" ? <FinancesView /> : null}
         {activeTab === "settings" ? <SettingsView /> : null}
@@ -109,7 +130,21 @@ function OverviewPanel({
   selectedCall: Call | null;
   setSelectedCall: (call: Call | null) => void;
 }) {
-  const { properties, reservations } = useListings();
+  const { properties, reservations, loading: listingsLoading } = useListings();
+  const language = useSyncExternalStore<VoiceBriefingLanguage>(
+    subscribeHostLanguage,
+    readStoredHostBriefingLanguage,
+    () => "en",
+  );
+
+  const addPropertyLabel =
+    language === "es"
+      ? !listingsLoading && properties.length === 0
+        ? "Agrega tu primera propiedad"
+        : "Añadir propiedad"
+      : !listingsLoading && properties.length === 0
+        ? "Add your first property"
+        : "Add property";
   const upcoming = reservations
     .filter((item) => item.checkIn >= calendarToday)
     .sort((a, b) => a.checkIn.localeCompare(b.checkIn) || a.checkInTime.localeCompare(b.checkInTime))
@@ -124,6 +159,25 @@ function OverviewPanel({
   return (
     <div className="space-y-8">
       <SmartVoiceBriefingCard />
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-sky-200 bg-sky-50 px-5 py-4 shadow-sm">
+        <div>
+          <p className="text-sm font-bold text-slate-900">
+            {language === "es" ? "Propiedades y acceso" : "Properties & access"}
+          </p>
+          <p className="mt-1 text-xs text-slate-700">
+            {language === "es"
+              ? "Usa el formulario existente; se aplicará el límite de propiedades de tu plan."
+              : "Use the existing form; your plan’s property limit will be enforced."}
+          </p>
+        </div>
+        <Link
+          href="/dashboard/properties?action=add"
+          className="inline-flex items-center justify-center gap-2 rounded-xl bg-sky-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-sky-500"
+        >
+          <Building2 className="h-4 w-4" />
+          {addPropertyLabel}
+        </Link>
+      </div>
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between">

@@ -117,6 +117,7 @@ export async function runHousekeepingProofSubmitTests() {
 
   function baseStore(overrides: Parameters<typeof createMemoryHousekeepingProofSubmitStore>[0] = {}) {
     return createMemoryHousekeepingProofSubmitStore({
+      now,
       tokens: [
         {
           token_hash: tokenHash,
@@ -296,6 +297,11 @@ export async function runHousekeepingProofSubmitTests() {
   assert(routeSrc.includes("no-store") || routeSrc.includes("housekeepingProofJson"), "safe json helper");
   assert(!routeSrc.includes("console."), "route does not log");
   assert(!/localStorage|createBrowserClient/.test(routeSrc), "route stays server-only");
+  const routeSuccess = routeSrc.indexOf("if (result.status === 200)");
+  const routeTaskLookup = routeSrc.indexOf('.from("housekeeping_proof_tokens")');
+  const routeRequestTransition = routeSrc.indexOf('markByProofTask(data.task_id, "evidence_submitted")');
+  assert(routeSuccess >= 0 && routeSuccess < routeTaskLookup, "route links only after successful submit");
+  assert(routeTaskLookup < routeRequestTransition, "route resolves server task before request transition");
 
   // Concurrent double-submit contract: second call after first mutation is idempotent with no rewrite.
   const concurrent = baseStore();

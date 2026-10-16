@@ -13,7 +13,6 @@ import {
 } from "lucide-react";
 import { HostHeroBanner } from "@/components/dashboard/host-hero-banner";
 import { useListings } from "@/components/dashboard/listings-provider";
-import { reservations as seedReservations } from "@/lib/dashboard-data";
 import {
   compileChargebackDossiers,
   formatChargebackDossierText,
@@ -49,22 +48,19 @@ export function ChargebackShieldView() {
   const [openId, setOpenId] = useState<string | null>(null);
 
   const dossiers = useMemo(() => {
-    const rows = reservations.length ? reservations : seedReservations;
-    return compileChargebackDossiers(properties, rows);
+    return compileChargebackDossiers(properties, reservations);
   }, [properties, reservations]);
 
   if (loading && properties.length === 0) {
     return <p className="text-sm text-slate-500">Loading reservations…</p>;
   }
 
-  const complete = dossiers.filter((row) => row.coverage === "complete").length;
-
   return (
     <div className="space-y-6">
       <HostHeroBanner
         tone="shield"
         title="Chargeback Shield"
-        subtitle="A dispute dossier for every reservation — house-rules signatures, smart-lock timestamps, voice logs, and turnover proofs."
+        subtitle="Draft evidence inventory. Missing records are shown explicitly and are never inferred."
       />
 
       <div className="grid gap-3 sm:grid-cols-3">
@@ -75,8 +71,8 @@ export function ChargebackShieldView() {
         </div>
         <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 shadow-sm">
           <p className="text-[11px] font-semibold uppercase tracking-wider text-sky-800">Chargeback-ready</p>
-          <p className="mt-1 text-2xl font-extrabold text-slate-900">{complete}</p>
-          <p className="mt-1 text-xs text-sky-800">Signature + lock + comms + housekeeping</p>
+          <p className="mt-1 text-2xl font-extrabold text-slate-900">No registrado</p>
+          <p className="mt-1 text-xs text-sky-800">No score is inferred from reservation status</p>
         </div>
         <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 shadow-sm">
           <p className="text-[11px] font-semibold uppercase tracking-wider text-sky-800">AirCover exhibit</p>
@@ -86,7 +82,7 @@ export function ChargebackShieldView() {
           >
             Open PDF / forensic builder →
           </Link>
-          <p className="mt-1 text-xs text-sky-800">Attach this pack when a claim is filed</p>
+          <p className="mt-1 text-xs text-sky-800">Draft only; verify source evidence before filing</p>
         </div>
       </div>
 
@@ -120,7 +116,7 @@ export function ChargebackShieldView() {
                     <span
                       className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-bold ${COVERAGE_STYLE[dossier.coverage]}`}
                     >
-                      {COVERAGE_LABEL[dossier.coverage]} · {dossier.coveragePct}%
+                      {dossier.coveragePct === null ? "Evidence not recorded" : `${COVERAGE_LABEL[dossier.coverage]} · ${dossier.coveragePct}%`}
                     </span>
                     <ChevronDown
                       className={`h-5 w-5 shrink-0 transition-transform duration-300 ${open ? "rotate-180 text-white" : "text-sky-600"}`}
@@ -169,7 +165,7 @@ export function ChargebackShieldView() {
                             className="inline-flex items-center gap-1.5 rounded-xl border border-sky-200 bg-white px-3 py-2 text-xs font-bold text-slate-800 hover:bg-sky-100"
                           >
                             <FileWarning className="h-3.5 w-3.5" />
-                            File AirCover exhibit
+                            Prepare claim draft
                           </Link>
                         </div>
                       </div>

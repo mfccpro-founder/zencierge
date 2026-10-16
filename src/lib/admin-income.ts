@@ -1,4 +1,5 @@
 import { getAdminBillingSnapshot, formatDate } from "@/lib/admin-billing";
+import { readFounderSubscriptionPaymentPages } from "@/lib/founder-backoffice-billing-read";
 import { tryCreateSupabaseAdminClient } from "@/lib/supabase-admin";
 import {
   parsePlanId,
@@ -59,9 +60,11 @@ export type AdminIncomeSnapshot = {
   rangeMonthEndUtc: string;
   rangeYtdStartUtc: string;
   rangeYtdEndUtc: string;
-  collectedThisMonthUsd: number;
-  collectedYtdUsd: number;
-  mrrUsd: number;
+  collectedThisMonthUsd: number | null;
+  collectedYtdUsd: number | null;
+  /** Null when host_subscriptions could not be read. Independent of collected cash. */
+  mrrUsd: number | null;
+  paymentsReadUnavailable: boolean;
   mrrNote: "Recurring run-rate — not cash collected";
   successfulPaymentsThisMonth: number;
   failedPaymentsThisMonth: number;
@@ -210,6 +213,37 @@ export function resolveIncomePlanLabel(input: {
   return { planId: null, planLabel: "Unknown" };
 }
 
+/**
+ * A failed payments read drops collected cash. MRR is passed through unchanged,
+ * including null when the subscription read itself failed.
+ */
+export function resolveBackOfficeIncomeRead(input: {
+  paymentsReadFailed: boolean;
+  collectedThisMonthUsd: number;
+  collectedYtdUsd: number;
+  mrrUsd: number | null;
+}): {
+  paymentsReadUnavailable: boolean;
+  collectedThisMonthUsd: number | null;
+  collectedYtdUsd: number | null;
+  mrrUsd: number | null;
+} {
+  if (input.paymentsReadFailed) {
+    return {
+      paymentsReadUnavailable: true,
+      collectedThisMonthUsd: null,
+      collectedYtdUsd: null,
+      mrrUsd: input.mrrUsd,
+    };
+  }
+  return {
+    paymentsReadUnavailable: false,
+    collectedThisMonthUsd: input.collectedThisMonthUsd,
+    collectedYtdUsd: input.collectedYtdUsd,
+    mrrUsd: input.mrrUsd,
+  };
+}
+
 export function formatIncomeUsd(amount: number): string {
   return `$${amount.toLocaleString("en-US", {
     minimumFractionDigits: 2,
@@ -268,70 +302,15 @@ async function loadPaymentsInRange(
   fromIso: string,
   toIso: string,
 ): Promise<{ rows: NormalizedPayment[]; error: string | null }> {
-  const attempts = [
-    {
-      columns:
-        "id, user_id, host_email, amount_usd, amount_paid, plan_id, status, payment_status, provider_payment_id, gateway_payment_id, created_at, paid_at",
-      order: "created_at",
-      fromCol: "created_at",
-    },
-    {
-      columns: "id, user_id, host_email, amount_usd, plan_id, status, provider_payment_id, created_at",
-      order: "created_at",
-      fromCol: "created_at",
-    },
-    {
-      columns: "id, user_id, amount_usd, plan_id, status, provider_payment_id, created_at",
-      order: "created_at",
-      fromCol: "created_at",
-    },
-    {
-      columns: "id, user_id, host_email, amount_paid, plan_id, payment_status, provider_payment_id, paid_at",
-      order: "paid_at",
-      fromCol: "paid_at",
-    },
-    {
-      columns: "id, user_id, amount_usd, status, created_at",
-      order: "created_at",
-      fromCol: "created_at",
-    },
-  ];
-
-  let lastError: string | null = null;
-  for (const attempt of attempts) {
-    const pageSize = 1000;
-    const all: Record<string, unknown>[] = [];
-    let from = 0;
-    let schemaOk = true;
-    while (true) {
-      const { data, error } = await admin
-        .from("subscription_payments")
-        .select(attempt.columns)
-        .gte(attempt.fromCol, fromIso)
-        .lt(attempt.fromCol, toIso)
-        .order(attempt.order, { ascending: false })
-        .range(from, from + pageSize - 1);
-      if (error) {
-        lastError = error.message;
-        if (/column|schema cache|does not exist/i.test(error.message)) {
-          schemaOk = false;
-          break;
-        }
-        return { rows: [], error: lastError };
-      }
-      const batch = (data ?? []) as unknown as Record<string, unknown>[];
-      all.push(...batch);
-      if (batch.length < pageSize) break;
-      from += pageSize;
-      if (from > 50_000) break;
-    }
-    if (!schemaOk) continue;
-    return {
-      rows: all.map(normalizePaymentRow).filter((row): row is NormalizedPayment => Boolean(row)),
-      error: null,
-    };
-  }
-  return { rows: [], error: lastError };
+  const read = await readFounderSubscriptionPaymentPages(admin, {
+    fromIso,
+    toIso,
+  });
+  if (read.error) return { rows: [], error: read.error };
+  return {
+    rows: read.rows.map(normalizePaymentRow).filter((row): row is NormalizedPayment => Boolean(row)),
+    error: null,
+  };
 }
 
 export function aggregateIncomePayments(input: {
@@ -345,14 +324,15 @@ export function aggregateIncomePayments(input: {
   transactionFilter: "succeeded" | "failed" | "all";
 }): Pick<
   AdminIncomeSnapshot,
-  | "collectedThisMonthUsd"
-  | "collectedYtdUsd"
   | "successfulPaymentsThisMonth"
   | "failedPaymentsThisMonth"
   | "revenueByPlan"
   | "monthlyTrend"
   | "transactions"
-> {
+> & {
+  collectedThisMonthUsd: number;
+  collectedYtdUsd: number;
+} {
   const monthStart = input.monthStartUtc.getTime();
   const monthEnd = input.monthEndUtc.getTime();
   const ytdStart = input.ytdStartUtc.getTime();
@@ -478,9 +458,10 @@ export async function getAdminIncomeSnapshot(input?: {
     rangeMonthEndUtc: month.endUtc.toISOString(),
     rangeYtdStartUtc: ytd.startUtc.toISOString(),
     rangeYtdEndUtc: ytd.endUtc.toISOString(),
-    collectedThisMonthUsd: 0,
-    collectedYtdUsd: 0,
-    mrrUsd: 0,
+    collectedThisMonthUsd: null,
+    collectedYtdUsd: null,
+    mrrUsd: null,
+    paymentsReadUnavailable: false,
     mrrNote: "Recurring run-rate — not cash collected",
     successfulPaymentsThisMonth: 0,
     failedPaymentsThisMonth: 0,
@@ -495,6 +476,10 @@ export async function getAdminIncomeSnapshot(input?: {
   if (!admin) {
     return empty({
       error: "SUPABASE_SERVICE_ROLE_KEY is not configured. Cannot read subscription_payments.",
+      paymentsReadUnavailable: true,
+      collectedThisMonthUsd: null,
+      collectedYtdUsd: null,
+      mrrUsd: null,
     });
   }
 
@@ -509,7 +494,12 @@ export async function getAdminIncomeSnapshot(input?: {
       error: paymentsLoad.error.includes("subscription_payments")
         ? "subscription_payments is missing or unreadable."
         : paymentsLoad.error,
-      mrrUsd: billing.metrics.mrr,
+      ...resolveBackOfficeIncomeRead({
+        paymentsReadFailed: true,
+        collectedThisMonthUsd: 0,
+        collectedYtdUsd: 0,
+        mrrUsd: billing.metrics.mrr,
+      }),
     });
   }
 
@@ -533,9 +523,14 @@ export async function getAdminIncomeSnapshot(input?: {
     ...empty({
       serviceRoleReady: true,
       error: paymentsLoad.error ?? billing.error,
-      mrrUsd: billing.metrics.mrr,
     }),
     ...aggregated,
+    ...resolveBackOfficeIncomeRead({
+      paymentsReadFailed: false,
+      collectedThisMonthUsd: aggregated.collectedThisMonthUsd,
+      collectedYtdUsd: aggregated.collectedYtdUsd,
+      mrrUsd: billing.metrics.mrr,
+    }),
   };
 }
 

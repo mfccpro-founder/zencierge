@@ -1,4 +1,5 @@
 import { createSupabaseAdminClient } from "@/lib/supabase-admin";
+import { readFounderHostSubscriptionPages, readFounderSubscriptionPaymentPages } from "@/lib/founder-backoffice-billing-read";
 import { isComplimentaryWindowOpen } from "@/lib/complimentary-access-core";
 import {
   isTrialWindowOpen,
@@ -42,7 +43,8 @@ export type AdminBillingSnapshot = {
   error: string | null;
   subscribers: AdminSubscriberRow[];
   metrics: {
-    mrr: number;
+    /** Null when host_subscriptions could not be read. Zero is a valid empty catalog. */
+    mrr: number | null;
     alDia: number;
     morosos: number;
     cancelados: number;
@@ -125,50 +127,11 @@ export function paymentStateFromRow(
   return "al_dia";
 }
 
-type AdminClient = ReturnType<typeof createSupabaseAdminClient>;
-
-type LoadedPayments = { rows: Record<string, unknown>[]; error: string | null };
-
-/**
- * Prefer populated canonical payment values while retaining row-level legacy
- * fallbacks. Older deployments may expose only one column family.
- */
-async function loadSubscriptionPayments(admin: AdminClient): Promise<LoadedPayments> {
-  const attempts = [
-    {
-      columns:
-        "id, user_id, subscription_id, amount_usd, amount_paid, status, payment_status, created_at, paid_at",
-      order: "created_at",
-    },
-    { columns: "id, user_id, subscription_id, amount_usd, status, created_at", order: "created_at" },
-    { columns: "id, user_id, amount_usd, status, created_at", order: "created_at" },
-    { columns: "id, user_id, subscription_id, amount_paid, payment_status, paid_at", order: "paid_at" },
-    { columns: "id, user_id, amount_paid, payment_status, paid_at", order: "paid_at" },
-  ];
-  let lastError: string | null = null;
-  for (const attempt of attempts) {
-    const { data, error } = await admin
-      .from("subscription_payments")
-      .select(attempt.columns)
-      .order(attempt.order, { ascending: false })
-      .limit(500);
-    if (!error) {
-      return { rows: (data ?? []) as unknown as Record<string, unknown>[], error: null };
-    }
-    lastError = error.message;
-    // Only retry with another column set when it is a schema mismatch.
-    if (!/column|schema cache|does not exist/i.test(error.message)) {
-      break;
-    }
-  }
-  return { rows: [], error: lastError };
-}
-
 export async function getAdminBillingSnapshot(): Promise<AdminBillingSnapshot> {
   const now = new Date();
   const generatedAt = now.toISOString();
   const emptyMetrics = {
-    mrr: 0,
+    mrr: null as number | null,
     alDia: 0,
     morosos: 0,
     cancelados: 0,
@@ -191,10 +154,16 @@ export async function getAdminBillingSnapshot(): Promise<AdminBillingSnapshot> {
     };
   }
 
-  const [usersResult, subsResult, paymentsLoad] = await Promise.all([
+  const [usersResult, subscriptionsLoad, paymentsLoad] = await Promise.all([
     admin.auth.admin.listUsers({ page: 1, perPage: 200 }),
-    admin.from("host_subscriptions").select("*").order("created_at", { ascending: false }),
-    loadSubscriptionPayments(admin),
+    readFounderHostSubscriptionPages(admin),
+    readFounderSubscriptionPaymentPages(admin, {
+      fromIso: null,
+      toIso: null,
+      pageSize: 500,
+      maxRows: 500,
+      onCap: "window",
+    }),
   ]);
 
   if (usersResult.error || !usersResult.data) {
@@ -208,7 +177,8 @@ export async function getAdminBillingSnapshot(): Promise<AdminBillingSnapshot> {
   }
 
   const users = usersResult.data.users;
-  const subs = (subsResult.data ?? []) as Record<string, unknown>[];
+  const subscriptionsReadUnavailable = Boolean(subscriptionsLoad.error);
+  const subs = subscriptionsReadUnavailable ? [] : subscriptionsLoad.rows;
   const payments = paymentsLoad.rows;
   const subsByUser = new Map(subs.map((row) => [String(row.user_id), row]));
   // Payments may reference the host directly (user_id) or through the Square
@@ -341,10 +311,12 @@ export async function getAdminBillingSnapshot(): Promise<AdminBillingSnapshot> {
   return {
     generatedAt,
     serviceRoleReady: true,
-    error: paymentsLoad.error ?? subsResult.error?.message ?? null,
+    error: paymentsLoad.error ?? subscriptionsLoad.error,
     subscribers: rows,
     metrics: {
-      mrr: payingRows.reduce((sum, row) => sum + row.monthlyUsd, 0),
+      mrr: subscriptionsReadUnavailable
+        ? null
+        : payingRows.reduce((sum, row) => sum + row.monthlyUsd, 0),
       alDia: payingRows.length,
       morosos: rows.filter((row) => row.paymentState === "moroso").length,
       cancelados: rows.filter((row) => row.paymentState === "cancelado").length,

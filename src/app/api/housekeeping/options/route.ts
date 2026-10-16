@@ -1,9 +1,19 @@
-import { fetchListings } from "@/lib/supabase-listings";
+import { loadHostListings } from "@/lib/host-listings-server";
+import { tryCreateSupabaseAdminClient } from "@/lib/supabase-admin";
+import { requireHostUser } from "@/lib/supabase-route";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const { properties, reservations } = await fetchListings();
+  const auth = await requireHostUser();
+  if (auth.error) return auth.error;
+  const admin = tryCreateSupabaseAdminClient();
+  if (!admin) return Response.json({ error: "Service unavailable" }, { status: 503 });
+  const listings = await loadHostListings(admin, auth.user.id);
+  if (listings.kind === "unavailable") {
+    return Response.json({ error: "Service unavailable" }, { status: 503 });
+  }
+  const { properties, reservations } = listings;
   return Response.json({
     properties: properties.map((property) => ({
       id: property.id,

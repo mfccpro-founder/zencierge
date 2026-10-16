@@ -1,8 +1,7 @@
 import { randomUUID } from "node:crypto";
-import fs from "node:fs";
-import path from "node:path";
 import { tryCreateSupabaseAdminClient } from "@/lib/supabase-admin";
-import { fetchListings } from "@/lib/supabase-listings";
+import { loadHostListings } from "@/lib/host-listings-server";
+import { requireHostUser } from "@/lib/supabase-route";
 import {
   HOUSEKEEPING_STORAGE_BUCKET,
   housekeepingStoragePath,
@@ -10,7 +9,7 @@ import {
   type HousekeepingReport,
   type HousekeepingReportPhoto,
 } from "@/lib/housekeeping-photos";
-import { localPhotoDir, saveHousekeepingReport } from "@/lib/housekeeping-reports-store";
+import { saveHousekeepingReport } from "@/lib/housekeeping-reports-store";
 import { notifyHostOfHousekeepingReport } from "@/lib/notify-housekeeping-report";
 
 export const dynamic = "force-dynamic";
@@ -19,13 +18,29 @@ const MAX_BYTES = 12 * 1024 * 1024;
 const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif", "image/jpg"]);
 
 export async function GET(request: Request) {
-  const propertyId = new URL(request.url).searchParams.get("propertyId")?.trim() || "";
-  const { listHousekeepingReports } = await import("@/lib/housekeeping-reports-store");
-  let reports = listHousekeepingReports(propertyId || undefined);
-
+  const auth = await requireHostUser();
+  if (auth.error) return auth.error;
   const admin = tryCreateSupabaseAdminClient();
-  if (admin) {
-    let query = admin.from("housekeeping_reports").select("*").order("created_at", { ascending: false }).limit(80);
+  if (!admin) return Response.json({ error: "Service unavailable" }, { status: 503 });
+  const listings = await loadHostListings(admin, auth.user.id);
+  if (listings.kind === "unavailable") {
+    return Response.json({ error: "Service unavailable" }, { status: 503 });
+  }
+  const ownedIds = new Set(listings.properties.map((property) => property.id));
+  const propertyId = new URL(request.url).searchParams.get("propertyId")?.trim() || "";
+  if (propertyId && !ownedIds.has(propertyId)) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+  const { listHousekeepingReports } = await import("@/lib/housekeeping-reports-store");
+  let reports = listHousekeepingReports(propertyId || undefined).filter((row) => ownedIds.has(row.propertyId));
+
+  if (ownedIds.size) {
+    let query = admin
+      .from("housekeeping_reports")
+      .select("*")
+      .in("property_id", [...ownedIds])
+      .order("created_at", { ascending: false })
+      .limit(80);
     if (propertyId) query = query.eq("property_id", propertyId);
     const { data } = await query;
     if (data?.length) {
@@ -50,6 +65,14 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const auth = await requireHostUser();
+  if (auth.error) return auth.error;
+  const admin = tryCreateSupabaseAdminClient();
+  if (!admin) return Response.json({ error: "Service unavailable" }, { status: 503 });
+  const listings = await loadHostListings(admin, auth.user.id);
+  if (listings.kind === "unavailable") {
+    return Response.json({ error: "Service unavailable" }, { status: 503 });
+  }
   let form: FormData;
   try {
     form = await request.formData();
@@ -74,20 +97,20 @@ export async function POST(request: Request) {
     return Response.json({ error: "Add at least one photo." }, { status: 400 });
   }
 
-  const { properties } = await fetchListings();
-  const property = properties.find((row) => row.id === propertyId);
+  const property = listings.properties.find((row) => row.id === propertyId);
+  if (!property) return Response.json({ error: "Forbidden" }, { status: 403 });
+  if (reservationId !== "unscheduled") {
+    const reservation = listings.reservations.find((row) => row.id === reservationId);
+    if (!reservation || reservation.propertyId !== propertyId) {
+      return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
+  }
   const propertyName = property?.name ?? propertyId;
   const propertyCity = property?.city ?? "";
-
-  const admin = tryCreateSupabaseAdminClient();
-  if (admin) {
-    await admin.storage.createBucket(HOUSEKEEPING_STORAGE_BUCKET, { public: true }).catch(() => undefined);
-  }
 
   const createdAt = new Date().toISOString();
   const reportId = randomUUID();
   const photos: HousekeepingReportPhoto[] = [];
-  fs.mkdirSync(localPhotoDir(), { recursive: true });
 
   for (const file of files) {
     if (file.size > MAX_BYTES) {
@@ -101,35 +124,31 @@ export async function POST(request: Request) {
     const ext = extensionFor(file.name, type);
     const photoId = randomUUID();
     const buffer = Buffer.from(await file.arrayBuffer());
-    const localName = `${photoId}.${ext}`;
-    fs.writeFileSync(path.join(localPhotoDir(), localName), buffer);
-    let imageUrl = `/uploads/housekeeping/${localName}`;
-    let storagePath = `local/${localName}`;
-
-    if (admin) {
-      const remotePath = housekeepingStoragePath(propertyId, reservationId, `${Date.now()}-${photoId}.${ext}`);
-      const { error: uploadError } = await admin.storage.from(HOUSEKEEPING_STORAGE_BUCKET).upload(remotePath, buffer, {
-        contentType: type.startsWith("image/") ? type : "image/jpeg",
-        upsert: false,
-      });
-      if (!uploadError) {
-        storagePath = remotePath;
-        imageUrl = admin.storage.from(HOUSEKEEPING_STORAGE_BUCKET).getPublicUrl(remotePath).data.publicUrl;
-      }
-      await admin.from("housekeeping_photos").insert({
-        id: photoId,
-        property_id: propertyId,
-        reservation_id: reservationId,
-        category,
-        storage_path: storagePath,
-        image_url: imageUrl,
-        captured_at: createdAt,
-        staff_name: staffName,
-        content_type: type,
-        file_size: file.size,
-        notes,
-        report_id: reportId,
-      });
+    const storagePath = housekeepingStoragePath(propertyId, reservationId, `${Date.now()}-${photoId}.${ext}`);
+    const { error: uploadError } = await admin.storage.from(HOUSEKEEPING_STORAGE_BUCKET).upload(storagePath, buffer, {
+      contentType: type.startsWith("image/") ? type : "image/jpeg",
+      upsert: false,
+    });
+    if (uploadError) {
+      return Response.json({ error: "Photo storage is unavailable; nothing was recorded locally." }, { status: 503 });
+    }
+    const imageUrl = admin.storage.from(HOUSEKEEPING_STORAGE_BUCKET).getPublicUrl(storagePath).data.publicUrl;
+    const { error: photoError } = await admin.from("housekeeping_photos").insert({
+      id: photoId,
+      property_id: propertyId,
+      reservation_id: reservationId,
+      category,
+      storage_path: storagePath,
+      image_url: imageUrl,
+      captured_at: createdAt,
+      staff_name: staffName,
+      content_type: type,
+      file_size: file.size,
+      notes,
+      report_id: reportId,
+    });
+    if (photoError) {
+      return Response.json({ error: "Photo metadata could not be recorded." }, { status: 503 });
     }
 
     photos.push({ id: photoId, imageUrl, storagePath });

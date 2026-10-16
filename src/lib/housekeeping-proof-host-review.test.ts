@@ -371,6 +371,11 @@ export async function runHousekeepingProofHostReviewTests() {
   assert(libSrc.includes("housekeepingProofCreatedBy(input.userId, input.hostAuthSource)"), "reviewedBy from createdBy helper");
   assert(libSrc.includes(HOUSEKEEPING_PROOF_REVIEW_RPC), "review RPC name");
   assert(libSrc.includes("stayLinksPostOwnershipGate"), "review reuses ownership gate");
+  const reviewSuccess = reviewRoute.indexOf("if (result.status === 200");
+  const reviewTaskLookup = reviewRoute.indexOf('.from("housekeeping_proof_tasks")');
+  const reviewRequestTransition = reviewRoute.indexOf('decision === "approve" ? "completed" : "needs_attention"');
+  assert(reviewSuccess >= 0 && reviewSuccess < reviewTaskLookup, "route links only after successful review");
+  assert(reviewTaskLookup < reviewRequestTransition, "route resolves server task before request completion");
 
   function reviewBody(extra: Record<string, unknown> = {}) {
     return { reservationId: "res-1", stage: "post_checkout", decision: "approve", ...extra };

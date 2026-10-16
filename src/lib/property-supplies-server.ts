@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createSupabaseAdminClient } from "@/lib/supabase-admin";
-import { fetchListings } from "@/lib/supabase-listings";
+import type { Property } from "@/lib/dashboard-data";
 import {
   logFromRow,
   snapshotToRows,
@@ -23,10 +23,9 @@ export function tryAdmin() {
   }
 }
 
-export async function loadSupplyBoard(propertyIds?: string[]) {
-  const listings = await fetchListings();
-  const ids = propertyIds?.length ? propertyIds : listings.properties.map((property) => property.id);
-  const names = Object.fromEntries(listings.properties.map((property) => [property.id, property.name]));
+export async function loadSupplyBoard(properties: Property[], propertyIds?: string[]) {
+  const ids = propertyIds?.length ? propertyIds : properties.map((property) => property.id);
+  const names = Object.fromEntries(properties.map((property) => [property.id, property.name]));
   const admin = tryAdmin();
   let remote: PropertySupplySnapshot[] = [];
   let logs: SupplyLogEntry[] = [];
@@ -53,7 +52,7 @@ export async function loadSupplyBoard(propertyIds?: string[]) {
     return found ? normalizeSnapshot(found) : seedSnapshotForProperty(id);
   });
 
-  return { snapshots, logs, names, persisted, properties: listings.properties };
+  return { snapshots, logs, names, persisted, properties };
 }
 
 export async function saveSnapshot(snapshot: PropertySupplySnapshot) {

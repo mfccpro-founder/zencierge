@@ -1,9 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { recordAiUsageEvent, safeRecordAiUsageEvent } from "@/lib/ai-usage";
-import { requireHostAuthContext } from "@/lib/supabase-route";
+import { createAiUsageAudioStorage } from "@/lib/ai-usage-audio";
+import { hostTtsMeterEnabled } from "@/lib/host-tts-meter-flag";
+import { serveHostTtsMeter } from "@/lib/host-tts-meter";
+import { HOST_TTS_USAGE_KEY_HEADER } from "@/lib/host-tts-usage-key";
+import { requireHostAuthContext, createSupabaseRouteClient } from "@/lib/supabase-route";
+import { tryCreateSupabaseAdminClient } from "@/lib/supabase-admin";
 import {
   AdvancedAudioTtsError,
   OPENAI_STREAM_TTS_MODEL,
+  createOpenAiHostTtsProvider,
   hostTtsInputText,
   streamElenaSpeech,
 } from "@/lib/tts-synthesize";
@@ -36,6 +42,11 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  if (!hostTtsMeterEnabled()) return postUnmeteredHostTts(req);
+  return postMeteredHostTts(req);
+}
+
+async function postUnmeteredHostTts(req: NextRequest) {
   let inputCharacters = 0;
   const hostId = await optionalHostUserId();
 
@@ -50,7 +61,7 @@ export async function POST(req: NextRequest) {
       apiKey?: string;
     };
 
-    const rawText = body.text || "Hi, I'm Elena. How can I help you today?";
+    const rawText = body.text || "Hi, I'm Isabela. How can I help you today?";
     const text = hostTtsInputText(rawText);
     inputCharacters = text.length;
     const requested =
@@ -122,6 +133,81 @@ export async function POST(req: NextRequest) {
         stream: false,
       },
       { status: isKeyIssue ? 503 : 502 },
+    );
+  }
+}
+
+async function postMeteredHostTts(req: NextRequest) {
+  try {
+    const supabase = await createSupabaseRouteClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    const userId = user?.id?.trim() ?? "";
+    if (!UUID_RE.test(userId)) {
+      return NextResponse.json({ error: "Unauthorized", code: "unauthorized", stream: false }, { status: 401 });
+    }
+
+    const admin = tryCreateSupabaseAdminClient();
+    if (!admin) {
+      return NextResponse.json(
+        { error: "Host TTS meter is not configured.", code: "meter_unavailable", stream: false },
+        { status: 503 },
+      );
+    }
+
+    const body = (await req.json()) as {
+      text?: string;
+      voice?: string;
+      voiceProfile?: string;
+      speed?: number;
+      language?: string;
+      provider?: "auto" | "elevenlabs" | "openai" | "openai-audio";
+      apiKey?: string;
+    };
+    const requested =
+      body.voice ?? (body.voiceProfile === "sarah" || body.voiceProfile === "austin" ? "shimmer" : "coral");
+    const result = await serveHostTtsMeter({
+      rpc: admin,
+      storage: createAiUsageAudioStorage((bucket) => admin.storage.from(bucket)),
+      provider: createOpenAiHostTtsProvider(body.provider === "elevenlabs" ? undefined : body.apiKey?.trim()),
+      userId,
+      usageKey: req.headers.get(HOST_TTS_USAGE_KEY_HEADER),
+      text: body.text || "Hi, I'm Isabela. How can I help you today?",
+      voice: requested,
+      language: body.language === "es" || body.language === "en" ? body.language : "auto",
+      speed: body.speed,
+    });
+
+    if (!result.ok) {
+      const headers = new Headers();
+      if (result.usageKey) headers.set(HOST_TTS_USAGE_KEY_HEADER, result.usageKey);
+      return NextResponse.json(
+        { error: result.error, code: result.code, engine: null, voice: requested, stream: false },
+        { status: result.status, headers },
+      );
+    }
+
+    return new NextResponse(result.stream, {
+      headers: {
+        "Content-Type": result.contentType,
+        "Cache-Control": "no-store, no-transform",
+        "X-Accel-Buffering": "no",
+        "X-Reply-Language": result.language,
+        "X-Tts-Voice": result.voice,
+        "X-Tts-Engine": "openai-tts-stream",
+        "X-Tts-Model": result.model,
+        "X-Tts-Stream": "1",
+        "X-Tts-Sample-Rate": String(result.sampleRate),
+        [HOST_TTS_USAGE_KEY_HEADER]: result.usageKey,
+      },
+    });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Could not generate speech audio";
+    console.error("[tts] Metered streaming TTS failed:", message);
+    return NextResponse.json(
+      { error: message, code: "ADVANCED_AUDIO_FAILED", engine: null, stream: false },
+      { status: 502 },
     );
   }
 }

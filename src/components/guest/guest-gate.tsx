@@ -154,7 +154,7 @@ function GateForm({
         <p className="text-[10px] font-semibold uppercase tracking-widest text-emerald-400/80">Zencierge · Guest Check-in</p>
         <h1 className="mt-2 break-words text-2xl font-semibold tracking-tight text-white sm:text-3xl">Welcome to {propertyName}</h1>
         <p className="mt-3 text-sm leading-relaxed text-slate-400">
-          Verify your check-in to unlock the Wi-Fi credentials, door access code, and Elena AI — your 24/7 bilingual concierge.
+          Verify your check-in to unlock the Wi-Fi credentials, door access code, and Isabela AI — your 24/7 bilingual concierge.
         </p>
 
         <form onSubmit={onSubmit} className="mt-6 space-y-3">

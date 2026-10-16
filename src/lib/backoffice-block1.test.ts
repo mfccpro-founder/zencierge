@@ -41,7 +41,9 @@ function runBackOfficeBlock1Tests() {
   assert(overview.includes("metrics.complimentary"), "Overview shows complimentary count");
   assert(overview.includes("metrics.trials"), "Overview shows trial count");
   assert(overview.includes("getAiUsageMonthSnapshot"), "Overview shows measured Isabela usage");
-  assert(overview.includes("Exact cost") || overview.includes("exactTrackedCostLabel"), "Overview shows exact cost label");
+  assert(overview.includes("Estimated tariff") || overview.includes("exactTrackedCostLabel"), "Overview shows estimated tariff");
+  assert(overview.includes("readIncomplete"), "Overview distinguishes an incomplete read");
+  assert(overview.includes("readUnavailable"), "Overview distinguishes an unavailable read");
   assert(!overview.includes("Usage tracking not instrumented yet"), "Isabela usage is instrumented");
   assert(overview.includes("getAdminSystemHealthSnapshot"), "Overview shows live System Health");
   assert(overview.includes("Open System Health") || overview.includes("/backoffice/system"), "Overview links to System");
@@ -99,8 +101,14 @@ function runBackOfficeBlock1Tests() {
     "utf8",
   );
   assert(isabelaPage.includes("getAiUsageMonthSnapshot"), "Isabela Usage page reads measured events");
-  assert(isabelaPage.includes("Exact tracked cost") || isabelaPage.includes("exactTrackedCostLabel"), "Isabela Usage shows exact cost");
-  assert(isabelaPage.includes("Awaiting exact pricing") || isabelaPage.includes("pendingExactPricing"), "Isabela Usage shows pending pricing");
+  assert(isabelaPage.includes("Estimated tariff cost") || isabelaPage.includes("exactTrackedCostLabel"), "Isabela Usage shows estimated tariff");
+  assert(isabelaPage.includes("Cost unknown") || isabelaPage.includes("pendingExactPricing"), "Isabela Usage shows unknown cost");
+  assert(isabelaPage.includes("readIncomplete"), "Isabela Usage distinguishes an incomplete read");
+  assert(isabelaPage.includes("readUnavailable"), "Isabela Usage distinguishes an unavailable read");
+  assert(
+    /readUnavailable\s*\?\s*"TTS usage is unavailable"\s*:\s*"All measured TTS this month"/.test(isabelaPage),
+    "All measured TTS this month is hidden when the read is unavailable",
+  );
   assert(!isabelaPage.includes("BackOfficeComingNext"), "Isabela Usage is no longer Coming next");
   assert(!isabelaPage.includes("Pricing not configured yet"), "Phase 1 pricing stub removed");
 
@@ -127,6 +135,8 @@ function runBackOfficeBlock1Tests() {
     "utf8",
   );
   assert(payrollPage.includes("getAdminExpensesSnapshot"), "Payroll & Expenses uses live expenses snapshot");
+  assert(payrollPage.includes("isabelaReadUnavailable"), "Payroll propagates an unavailable TTS read");
+  assert(payrollPage.includes("AI_USAGE_UNAVAILABLE_LABEL"), "Payroll shows the unavailable TTS label");
   assert(!payrollPage.includes("BackOfficeComingNext"), "Payroll & Expenses is no longer Coming next");
   assert(payrollPage.includes("BackOfficeExpensesPanel"), "Payroll & Expenses mounts CRUD panel");
   assert(
@@ -144,7 +154,11 @@ function runBackOfficeBlock1Tests() {
   );
   assert(profitPage.includes("getAdminProfitSnapshot"), "Profit uses live profit snapshot");
   assert(!profitPage.includes("BackOfficeComingNext"), "Profit is no longer Coming next");
-  assert(profitPage.includes("Net Operating Profit"), "Profit shows net operating profit");
+  assert(profitPage.includes("presentOperatingResult"), "Profit shows the operating result");
+  assert(
+    readFileSync(join(root, "src/lib/admin-profit-shared.ts"), "utf8").includes("Net Operating Profit"),
+    "a complete month still has a net operating profit label",
+  );
   assert(
     /href: "\/backoffice\/profit"[\s\S]*?status: "ready"/.test(nav),
     "Profit nav marked ready",

@@ -5,6 +5,12 @@ import {
   type StayErrorCode,
   type StayTokenStore,
 } from "@/lib/guest-stay-token";
+import {
+  createAuthorizedTowelRequest,
+  isTwoTowelsRequest,
+  towelRequestConfirmation,
+  type GuestServiceRequestStore,
+} from "@/lib/guest-service-requests";
 
 /** Server-only module. Do not import from Client Components. */
 if (typeof window !== "undefined") {
@@ -489,6 +495,7 @@ export function guestStayChatSuccessBody(reply: string, lang: GuestStayChatLang)
 export async function handleGuestStayChat(input: {
   body: unknown;
   store: StayTokenStore;
+  requestStore?: GuestServiceRequestStore;
   now?: Date;
 }): Promise<{ status: number; body: Record<string, unknown> }> {
   const parsed = parseGuestStayChatBody(input.body);
@@ -508,6 +515,16 @@ export async function handleGuestStayChat(input: {
   if (!facts) return { status: 503, body: { error: "unavailable" } };
 
   const lang = resolveGuestStayChatLang(parsed.message, parsed.preferredLang);
+  if (isTwoTowelsRequest(parsed.message)) {
+    if (!input.requestStore) return { status: 503, body: { error: "unavailable" } };
+    const saved = await createAuthorizedTowelRequest({
+      rawToken: parsed.token,
+      tokenStore: input.store,
+      requestStore: input.requestStore,
+    });
+    if (!saved) return { status: 503, body: { error: "unavailable" } };
+    return { status: 200, body: guestStayChatSuccessBody(towelRequestConfirmation(lang), lang) };
+  }
   const intent = detectGuestStayChatIntent(parsed.message);
   const reply = guestStayChatReply(intent, lang, facts);
   return { status: 200, body: guestStayChatSuccessBody(reply, lang) };

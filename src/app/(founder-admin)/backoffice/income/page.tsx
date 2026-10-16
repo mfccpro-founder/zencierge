@@ -4,6 +4,7 @@ import {
   getAdminIncomeSnapshot,
   type IncomePaymentStatus,
 } from "@/lib/admin-income";
+import { PROFIT_UNAVAILABLE_LABEL } from "@/lib/admin-profit-shared";
 import { IncomeTransactionFilter } from "@/components/admin/income-transaction-filter";
 
 export const metadata: Metadata = {
@@ -34,6 +35,9 @@ export default async function BackOfficeIncomePage({
   const params = searchParams ? await searchParams : {};
   const transactionFilter = parseFilter(params.status);
   const snapshot = await getAdminIncomeSnapshot({ transactionFilter });
+  const cashLabel = (amount: number | null) =>
+    snapshot.paymentsReadUnavailable || amount == null ? PROFIT_UNAVAILABLE_LABEL : formatIncomeUsd(amount);
+  const mrrLabel = snapshot.mrrUsd == null ? PROFIT_UNAVAILABLE_LABEL : formatIncomeUsd(snapshot.mrrUsd);
 
   return (
     <div className="space-y-8">
@@ -57,27 +61,43 @@ export default async function BackOfficeIncomePage({
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3">
         <Kpi
           label="Collected this month"
-          value={formatIncomeUsd(snapshot.collectedThisMonthUsd)}
-          detail={`Succeeded payments · ${snapshot.monthLabel}`}
+          value={cashLabel(snapshot.collectedThisMonthUsd)}
+          detail={
+            snapshot.paymentsReadUnavailable
+              ? "Subscription payments are unavailable"
+              : `Succeeded payments · ${snapshot.monthLabel}`
+          }
         />
         <Kpi
           label="Collected YTD"
-          value={formatIncomeUsd(snapshot.collectedYtdUsd)}
-          detail={`Succeeded payments · ${snapshot.ytdLabel}`}
+          value={cashLabel(snapshot.collectedYtdUsd)}
+          detail={
+            snapshot.paymentsReadUnavailable
+              ? "Subscription payments are unavailable"
+              : `Succeeded payments · ${snapshot.ytdLabel}`
+          }
         />
         <Kpi
           label="MRR"
-          value={formatIncomeUsd(snapshot.mrrUsd)}
-          detail={snapshot.mrrNote}
+          value={mrrLabel}
+          detail={snapshot.mrrUsd == null ? "Host subscriptions are unavailable" : snapshot.mrrNote}
         />
         <Kpi
           label="Successful payments"
-          value={snapshot.successfulPaymentsThisMonth.toLocaleString("en-US")}
+          value={
+            snapshot.paymentsReadUnavailable
+              ? PROFIT_UNAVAILABLE_LABEL
+              : snapshot.successfulPaymentsThisMonth.toLocaleString("en-US")
+          }
           detail="This month · succeeded only"
         />
         <Kpi
           label="Failed payments"
-          value={snapshot.failedPaymentsThisMonth.toLocaleString("en-US")}
+          value={
+            snapshot.paymentsReadUnavailable
+              ? PROFIT_UNAVAILABLE_LABEL
+              : snapshot.failedPaymentsThisMonth.toLocaleString("en-US")
+          }
           detail="This month · excluded from collected revenue"
         />
       </div>
@@ -86,7 +106,9 @@ export default async function BackOfficeIncomePage({
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <h2 className="text-base font-bold text-slate-900">Revenue by plan (YTD)</h2>
           <p className="mt-1 text-xs text-slate-500">Succeeded payments only</p>
-          {snapshot.revenueByPlan.length === 0 ? (
+          {snapshot.paymentsReadUnavailable ? (
+            <p className="mt-3 text-sm text-slate-600">{PROFIT_UNAVAILABLE_LABEL}</p>
+          ) : snapshot.revenueByPlan.length === 0 ? (
             <p className="mt-3 text-sm text-slate-600">No succeeded payments YTD yet.</p>
           ) : (
             <ul className="mt-4 space-y-2 text-sm text-slate-800">
@@ -108,7 +130,9 @@ export default async function BackOfficeIncomePage({
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <h2 className="text-base font-bold text-slate-900">Monthly collected trend</h2>
           <p className="mt-1 text-xs text-slate-500">Last {snapshot.monthlyTrend.length} months · succeeded only</p>
-          {snapshot.monthlyTrend.every((row) => row.collectedUsd === 0) ? (
+          {snapshot.paymentsReadUnavailable ? (
+            <p className="mt-3 text-sm text-slate-600">{PROFIT_UNAVAILABLE_LABEL}</p>
+          ) : snapshot.monthlyTrend.every((row) => row.collectedUsd === 0) ? (
             <p className="mt-3 text-sm text-slate-600">No succeeded payments in this window yet.</p>
           ) : (
             <ul className="mt-4 space-y-2 text-sm text-slate-800">
@@ -140,7 +164,9 @@ export default async function BackOfficeIncomePage({
           <IncomeTransactionFilter current={transactionFilter} />
         </div>
 
-        {snapshot.transactions.length === 0 ? (
+        {snapshot.paymentsReadUnavailable ? (
+          <p className="mt-4 text-sm text-slate-600">{PROFIT_UNAVAILABLE_LABEL}</p>
+        ) : snapshot.transactions.length === 0 ? (
           <p className="mt-4 text-sm text-slate-600">No {transactionFilter} payments in the loaded window.</p>
         ) : (
           <div className="mt-4 overflow-x-auto">

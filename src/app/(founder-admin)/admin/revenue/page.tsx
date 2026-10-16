@@ -17,7 +17,7 @@ export default async function AdminRevenuePage() {
   if (!isSuperAdmin(auth.user)) {
     return (
       <div className="rounded-2xl border border-rose-200 bg-rose-50 p-6 text-sm text-rose-800">
-        Superadmin only. Add your email to ADMIN_EMAILS or set user metadata role to superadmin.
+        Superadmin only. Add your email to ADMIN_EMAILS or set the server app metadata role to superadmin.
       </div>
     );
   }

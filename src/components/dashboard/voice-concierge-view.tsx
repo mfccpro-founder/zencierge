@@ -11,7 +11,7 @@ import { askAvatarReply, conciergeSpokenText, type ConciergeLiveResult } from "@
 import { GoogleMapsLiveResults } from "@/components/dashboard/google-maps-live-results";
 import { HostGuideResults } from "@/components/dashboard/host-guide-results";
 import type { LocalGuidePublicResult } from "@/lib/local-guide-shared";
-import { localTimeLabel, phonesMatch, voiceIdFromAvatarName } from "@/lib/property-agent";
+import { displayAvatarName, localTimeLabel, phonesMatch, voiceIdFromAvatarName } from "@/lib/property-agent";
 import { useHeygenRepeatAvatar } from "@/components/dashboard/use-heygen-repeat";
 import {
   VOICE_PROFILES,
@@ -860,7 +860,7 @@ export function VoiceConciergeView() {
           {
             id: nextId(),
             speaker: "system",
-            text: "Elena could not reply just now. Try again or type your question.",
+            text: "Isabela could not reply just now. Try again or type your question.",
           },
         ]);
         if (testCallActiveRef.current) {
@@ -1212,7 +1212,7 @@ export function VoiceConciergeView() {
             }}
             className="mb-3 w-full text-center text-xs font-medium text-sky-800 hover:underline"
           >
-            Elena is responding... (tap to cancel)
+            Isabela is responding... (tap to cancel)
           </button>
         ) : null}
         {tapToListen ? (
@@ -1249,7 +1249,7 @@ export function VoiceConciergeView() {
           streamReady={streamReady || heygen.ready}
           connectionLabel={
             heygen.ready
-              ? "Elena live · EN/ES · female voice"
+              ? "Isabela live · EN/ES · female voice"
               : streamReady
                 ? "Audio stream ready · hospitality TTS"
                 : "Standby · No media session"
@@ -1479,7 +1479,7 @@ export function VoiceConciergeView() {
                         {item.assignedPhoneNumber || "No DID yet"}
                       </div>
                       <div className="mt-1 text-[11px] text-slate-600">
-                        {item.assignedAvatarName} · {item.name} · {item.timezone}
+                        {displayAvatarName(item.assignedAvatarName)} · {item.name} · {item.timezone}
                       </div>
                       <div className="mt-0.5 text-[10px] text-slate-500">
                         Local {localTimeLabel(item.timezone)}
@@ -1639,7 +1639,7 @@ function VoiceHealthCheckPanel({
             </li>
           ))
         ) : (
-          <li>No events yet. Press Test Call with Elena.</li>
+          <li>No events yet. Press Test Call with Isabela.</li>
         )}
       </ol>
       <div className="mt-2 flex flex-wrap gap-2">

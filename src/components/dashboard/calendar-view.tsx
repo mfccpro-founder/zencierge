@@ -126,7 +126,13 @@ function propertyName(id: string, listings: Property[]) {
   return listings.find((property) => property.id === id)?.name ?? id;
 }
 
-export function CalendarView({ onWatchSyncGuide }: { onWatchSyncGuide?: () => void }) {
+export function CalendarView({
+  onWatchSyncGuide,
+  tutorialLabel = "Help",
+}: {
+  onWatchSyncGuide?: () => void;
+  tutorialLabel?: string;
+}) {
   const { properties, reservations, saveReservation, loading, error } = useListings();
   const today = parseDay(calendarToday);
   const [mode, setMode] = useState<ViewMode>("month");
@@ -403,7 +409,7 @@ export function CalendarView({ onWatchSyncGuide }: { onWatchSyncGuide?: () => vo
             className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
           >
             <Video className="h-3.5 w-3.5 text-sky-600" />
-            Watch 30s Guide
+            {tutorialLabel}
           </button>
           {allLive ? (
             <p className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700">

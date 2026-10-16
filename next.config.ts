@@ -16,6 +16,7 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: [
     ...lanIpv4Addresses(),
     ...(publicHostname ? [publicHostname] : []),
+    "zencierge-demo-host.tail4dbe04.ts.net",
     "*.trycloudflare.com",
     "*.loca.lt",
     "*.localtunnel.me",

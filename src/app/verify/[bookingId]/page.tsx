@@ -1,4 +1,4 @@
-import { GuestVerifyWizard } from "@/components/guest/guest-verify-wizard";
+import { GuestStayShell } from "@/components/guest/guest-stay-shell";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -12,5 +12,7 @@ export default async function GuestVerifyPage({
   params: Promise<{ bookingId: string }>;
 }) {
   const { bookingId } = await params;
-  return <GuestVerifyWizard bookingId={bookingId} />;
+  // Legacy booking IDs are no longer authorization. Only a valid guest-stay
+  // token can resolve stay metadata or secrets through the server endpoints.
+  return <GuestStayShell token={bookingId} />;
 }

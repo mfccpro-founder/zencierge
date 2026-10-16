@@ -1,0 +1,39 @@
+name: Cloudflare pilot build verification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      STRIPE_SANDBOX_ACCESS_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Verify private-demo safety and entitlement
+        run: |
+          node --experimental-strip-types src/lib/private-pilot-safety.test.ts
+          node --experimental-strip-types src/lib/private-pilot-entitlement.test.ts
+      - run: npm run build:cloudflare
+      - name: Bundle and measure without deploying
+        shell: bash
+        run: |
+          set -o pipefail
+          npx wrangler deploy --dry-run 2>&1 | tee .cloudflare-dry-run.txt
+          node scripts/check-cloudflare-worker-size.mjs .cloudflare-dry-run.txt
+      - name: Retain dry-run evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: zencierge-private-demo-cloudflare-dry-run
+          path: .cloudflare-dry-run.txt
+          if-no-files-found: error

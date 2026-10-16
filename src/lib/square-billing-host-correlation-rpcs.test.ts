@@ -140,8 +140,9 @@ function runSquareBillingHostCorrelationRpcTests() {
     "upsert user_id ambiguity migration timestamp is unique",
   );
   assert(
-    migrationNames[migrationNames.length - 1] === UPSERT_AMBIGUITY_MIGRATION,
-    "upsert user_id ambiguity migration is latest",
+    migrationNames.indexOf(UPSERT_AMBIGUITY_MIGRATION) <
+      migrationNames.indexOf("20260927160000_founder_backoffice_subscription_payments_text_casts.sql"),
+    "founder billing read follows the user_id ambiguity migration",
   );
   assert(
     migrationNames.indexOf(OWNER_STATUS_MIGRATION) >

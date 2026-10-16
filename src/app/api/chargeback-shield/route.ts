@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { properties as seedProperties, reservations as seedReservations } from "@/lib/dashboard-data";
 import { compileChargebackDossiers, formatChargebackDossierText } from "@/lib/chargeback-shield";
-import { fetchListings } from "@/lib/supabase-listings";
 import { requireHostUser } from "@/lib/supabase-route";
+import { tryCreateSupabaseAdminClient } from "@/lib/supabase-admin";
+import { loadHostListings } from "@/lib/host-listings-server";
 
 export const dynamic = "force-dynamic";
 
@@ -12,17 +12,14 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const reservationId = searchParams.get("reservation");
 
-  let properties = seedProperties;
-  let reservations = seedReservations;
-  try {
-    const live = await fetchListings();
-    if (live.properties.length) properties = live.properties;
-    if (live.reservations.length) reservations = live.reservations;
-  } catch {
-    /* seed fallback */
+  const admin = tryCreateSupabaseAdminClient();
+  if (!admin) return NextResponse.json({ error: "Service unavailable" }, { status: 503 });
+  const live = await loadHostListings(admin, auth.user.id);
+  if (live.kind === "unavailable") {
+    return NextResponse.json({ error: "Service unavailable" }, { status: 503 });
   }
 
-  const dossiers = compileChargebackDossiers(properties, reservations);
+  const dossiers = compileChargebackDossiers(live.properties, live.reservations);
   if (reservationId) {
     const hit = dossiers.find((row) => row.reservationId === reservationId);
     if (!hit) return NextResponse.json({ error: "Dossier not found" }, { status: 404 });

@@ -42,7 +42,7 @@ function HostSidebarInner() {
         />
       ) : null}
       <aside
-        className={`z-40 h-screen w-64 shrink-0 flex-col border-r border-indigo-950/40 bg-slate-800 md:sticky md:top-0 ${
+        className={`z-40 h-screen w-[min(18rem,calc(100vw-2rem))] shrink-0 flex-col border-r border-slate-700 bg-slate-900 shadow-2xl md:sticky md:top-0 md:w-72 md:shadow-none ${
           mobileNavOpen ? "fixed inset-y-0 left-0 flex" : "hidden md:flex"
         }`}
       >
@@ -60,7 +60,7 @@ function HostSidebarInner() {
 
         <nav
           aria-label="Main"
-          className="host-sidebar-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3"
+          className="host-sidebar-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-4"
         >
           <div className="space-y-1">
             {HOST_NAV_SECTIONS.map((section) => {
@@ -68,13 +68,13 @@ function HostSidebarInner() {
               if (standaloneItem) {
                 const itemActive = isHostNavItemActive(pathname, tab, standaloneItem);
                 return (
-                  <div key={section.id} className="mt-2 border-t border-white/10 pt-2">
+                  <div key={section.id} className="mt-2 border-t border-white/15 pt-2">
                     <Link
                       href={standaloneItem.href}
                       data-nav-id={standaloneItem.id}
                       aria-current={itemActive ? "page" : undefined}
                       onClick={() => setMobileNavOpen(false)}
-                      className={`host-nav-item flex w-full items-center rounded-lg px-3 py-1.5 text-sm font-medium ${
+                      className={`host-nav-item flex min-h-11 w-full items-center rounded-lg border-l-[3px] border-l-transparent px-3 py-2 text-sm font-semibold transition-colors ${
                         tourNavId === standaloneItem.id ? "ring-2 ring-sky-400 ring-offset-1 ring-offset-slate-800" : ""
                       }`}
                       data-current={itemActive ? "true" : "false"}
@@ -88,15 +88,15 @@ function HostSidebarInner() {
               const expanded = openIds.includes(section.id);
               const sectionActive = section.id === activeSectionId;
               return (
-                <div key={section.id} className="rounded-xl">
+                <div key={section.id} className="rounded-xl py-0.5">
                   <button
                     type="button"
                     onClick={() => toggleSection(section.id)}
                     aria-expanded={expanded}
-                    className={`flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-[11px] font-bold uppercase tracking-wider transition-colors ${
+                    className={`flex min-h-10 w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-xs font-bold uppercase tracking-[0.09em] text-white transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 ${
                       sectionActive
-                        ? "bg-white/10 text-white"
-                        : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
+                        ? "bg-white/10"
+                        : "bg-transparent"
                     }`}
                   >
                     <span className="min-w-0 leading-snug">{section.label}</span>
@@ -105,7 +105,7 @@ function HostSidebarInner() {
                     />
                   </button>
                   {expanded ? (
-                    <div className="mt-0.5 space-y-0.5 pb-1 pl-1">
+                    <div className="mt-1 space-y-1 pb-1">
                       {section.items.map((item) => {
                         const active = isHostNavItemActive(pathname, tab, item);
                         const tour =
@@ -118,8 +118,8 @@ function HostSidebarInner() {
                             data-tour={tour}
                             aria-current={active ? "page" : undefined}
                             data-current={active ? "true" : "false"}
-                            className={`host-nav-item flex w-full items-center rounded-lg py-1.5 text-sm font-medium ${
-                              item.nested ? "px-3 pl-5" : "px-3"
+                            className={`host-nav-item flex min-h-10 w-full items-center rounded-lg border-l-[3px] border-l-transparent py-2 text-sm font-semibold transition-colors ${
+                              item.nested ? "px-3 pl-6" : "px-3"
                             } ${tourNavId === item.id ? "ring-2 ring-sky-400 ring-offset-1 ring-offset-slate-800" : ""}`}
                           >
                             {item.label}
@@ -130,7 +130,7 @@ function HostSidebarInner() {
                         <button
                           type="button"
                           onClick={openFeatureRequest}
-                          className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium text-slate-200 hover:bg-white/10 hover:text-white"
+                          className="flex min-h-10 w-full items-center gap-2 rounded-lg border-l-[3px] border-l-transparent px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
                         >
                           <Lightbulb className="h-3.5 w-3.5" />
                           Request a Feature
@@ -143,21 +143,6 @@ function HostSidebarInner() {
             })}
           </div>
         </nav>
-
-        <div className="shrink-0 border-t border-white/10 p-3">
-          <div className="flex items-center justify-between rounded-xl border border-white/15 bg-white/10 p-3">
-            <div className="flex items-center gap-2">
-              <span className="relative flex h-2.5 w-2.5">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400" />
-              </span>
-              <span className="text-xs font-medium text-slate-200">Elena line</span>
-            </div>
-            <span className="rounded-md bg-white px-2 py-0.5 font-mono text-[10px] font-medium text-slate-900">
-              +1 (305) 555-0199
-            </span>
-          </div>
-        </div>
       </aside>
     </>
   );

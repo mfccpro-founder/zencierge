@@ -6,7 +6,7 @@ import { hostGuideModuleCount } from "@/lib/host-guide-content";
 
 export const metadata: Metadata = {
   title: "User Guide & Docs · Zencierge",
-  description: "Host knowledge base for Properties, Elena, Housekeeping, Guest DNA, NeighborShield, Dispute Dossier, Financials, Voice Concierge, and Settings.",
+  description: "Host knowledge base for Properties, Isabela, Housekeeping, Guest DNA, NeighborShield, Dispute Dossier, Financials, Voice Concierge, and Settings.",
 };
 
 export default function HostGuidePage() {

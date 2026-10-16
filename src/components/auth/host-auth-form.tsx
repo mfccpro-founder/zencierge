@@ -9,14 +9,12 @@ import { allowDevHostSession, shouldFallbackToDevHost } from "@/lib/dev-host-ses
 import { PlanFeatureList } from "@/components/pricing/pricing-cards";
 import { savePendingSignup } from "@/lib/pending-signup";
 import {
-  buildTrialMetadata,
-  isPaidSubscriptionStatus,
-  isTrialWindowOpen,
   parsePlanId,
   ZENCIERGE_PLAN_IDS,
   ZENCIERGE_PLANS,
   type ZenciergePlanId,
 } from "@/lib/zencierge-plans";
+import { PAID_BILLING_CONSENT_VERSION } from "@/lib/paid-billing-consent";
 
 export function HostAuthForm({
   mode,
@@ -35,6 +33,7 @@ export function HostAuthForm({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [acceptedPaidTerms, setAcceptedPaidTerms] = useState(false);
   const isSignup = mode === "signup";
   const selectedPlan = ZENCIERGE_PLANS[planId];
   const allowDevNext =
@@ -59,6 +58,9 @@ export function HostAuthForm({
       const buyerName = fullName.trim();
       if (!buyerName || !buyerEmail.includes("@")) {
         throw new Error("Enter your name and email to start checkout.");
+      }
+      if (!acceptedPaidTerms) {
+        throw new Error("Accept the displayed paid plan terms before continuing to Checkout.");
       }
       savePendingSignup({ fullName: buyerName, email: buyerEmail, planId });
       try {
@@ -88,6 +90,8 @@ export function HostAuthForm({
           billing: "monthly",
           email: buyerEmail,
           name: buyerName,
+          acceptedPaidTerms: true,
+          consentVersion: PAID_BILLING_CONSENT_VERSION,
         }),
       });
       const data = (await response.json().catch(() => ({}))) as {
@@ -132,32 +136,34 @@ export function HostAuthForm({
     setNotice(null);
     setBusy(true);
     try {
+      // A stale local-preview or pre-checkout identity must never shadow a
+      // newly verified Supabase Auth session on server-rendered routes.
+      await Promise.allSettled([
+        fetch("/api/auth/dev-session", { method: "DELETE" }),
+        fetch("/api/auth/pending-host", { method: "DELETE" }),
+      ]);
+
       if (supabaseEnvIssue() && allowDevHostSession()) {
         await enterLocalPreview();
         return;
       }
 
-      const supabase = createAuthBrowserClient();
-      const { data, error: cause } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
+      const response = await fetch("/api/auth/password-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), password, planId }),
       });
-      if (cause) throw cause;
-      if (!data.session?.user) throw new Error("Could not start a host session. Please try again.");
-      const meta = (data.user.user_metadata ?? {}) as Record<string, unknown>;
-      const paid = isPaidSubscriptionStatus(String(meta.subscription_status ?? ""));
-      if (!paid && !isTrialWindowOpen(meta.trial_ends_at) && !meta.trial_ends_at) {
-        await supabase.auth.updateUser({
-          data: buildTrialMetadata(parsePlanId(meta.plan) ?? planId, {
-            full_name: meta.full_name,
-            first_name: meta.first_name,
-          }),
-        });
+      const result = (await response.json().catch(() => ({}))) as { error?: string };
+      if (!response.ok) {
+        throw new Error(result.error ?? "Could not start a host session. Please try again.");
       }
-      router.replace(destination);
-      router.refresh();
+      // The route response has committed the Supabase Set-Cookie headers.
+      window.location.assign(destination);
     } catch (cause) {
-      if (shouldFallbackToDevHost(cause) || shouldFallbackToDevHost(describeAuthFailure(cause))) {
+      if (
+        supabaseEnvIssue() &&
+        (shouldFallbackToDevHost(cause) || shouldFallbackToDevHost(describeAuthFailure(cause)))
+      ) {
         try {
           setNotice("Supabase rejected the API key. Opening a local host preview…");
           await enterLocalPreview();
@@ -184,7 +190,7 @@ export function HostAuthForm({
     "mt-1.5 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-emerald-500/50";
 
   const localPreviewButton =
-    allowDevHostSession() && !isSignup ? (
+    allowDevHostSession() && Boolean(supabaseEnvIssue()) && !isSignup ? (
       <button
         type="button"
         disabled={busy}
@@ -249,10 +255,16 @@ export function HostAuthForm({
       </label>
       {error ? <p className="text-xs text-rose-400">{error}</p> : null}
       {notice ? <p className="text-xs text-emerald-300">{notice}</p> : null}
+      {isSignup ? (
+        <label className="flex items-start gap-2 text-xs leading-relaxed text-slate-300">
+          <input type="checkbox" checked={acceptedPaidTerms} onChange={(event) => setAcceptedPaidTerms(event.target.checked)} className="mt-0.5" />
+          <span>I accept the displayed monthly price and choose to continue to Square Checkout. No subscription is created until Checkout is completed.</span>
+        </label>
+      ) : null}
       <button
         type="submit"
         form={isSignup ? "signup-checkout-form" : undefined}
-        disabled={busy}
+        disabled={busy || (isSignup && !acceptedPaidTerms)}
         className="w-full rounded-xl bg-emerald-500 py-2.5 text-sm font-bold text-slate-950 hover:bg-emerald-400 disabled:opacity-60"
       >
         {busy ? "Please wait…" : isSignup ? "Subscribe / Start Plan" : "Sign In to Dashboard"}

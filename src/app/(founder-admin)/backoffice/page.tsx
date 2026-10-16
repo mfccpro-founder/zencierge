@@ -2,7 +2,13 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { CreditCard, TriangleAlert, Users, XCircle } from "lucide-react";
 import { formatDate, getAdminBillingSnapshot } from "@/lib/admin-billing";
-import { getAiUsageMonthSnapshot } from "@/lib/ai-usage";
+import {
+  AI_USAGE_UNAVAILABLE_LABEL,
+  getAiUsageMonthSnapshot,
+  presentAiUsageCount,
+  presentAiUsageTariff,
+} from "@/lib/ai-usage";
+import { PROFIT_UNAVAILABLE_LABEL } from "@/lib/admin-profit-shared";
 import {
   formatSystemHealthStatus,
   getAdminSystemHealthSnapshot,
@@ -98,7 +104,7 @@ export default async function BackOfficeOverviewPage() {
             <CreditCard className="h-5 w-5" />
           </div>
           <p className="mt-3 text-4xl font-extrabold text-slate-900">
-            ${metrics.mrr.toLocaleString("en-US")}
+            {metrics.mrr == null ? PROFIT_UNAVAILABLE_LABEL : `$${metrics.mrr.toLocaleString("en-US")}`}
           </p>
           <p className="mt-2 text-sm text-slate-700">Catalog monthly USD from paying hosts only</p>
         </div>
@@ -116,23 +122,40 @@ export default async function BackOfficeOverviewPage() {
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <h2 className="text-base font-bold text-slate-900">Isabela Usage</h2>
-          {usage.error ? (
-            <p className="mt-2 text-sm text-amber-900">{usage.error}</p>
-          ) : (
-            <>
-              <p className="mt-2 text-3xl font-extrabold text-slate-900">
-                {usage.ttsSuccessful.toLocaleString("en-US")}
-              </p>
-              <p className="mt-1 text-sm text-slate-700">
-                Successful TTS · {usage.monthLabel} ({usage.timeZone})
-              </p>
-              <p className="mt-2 text-sm text-slate-600">
-                {usage.charactersSynthesized.toLocaleString("en-US")} characters · Exact cost:{" "}
-                {usage.exactTrackedCostLabel}
-                {usage.totalsArePartial ? " · totals partial (OpenAI pending)" : ""}
-              </p>
-            </>
-          )}
+          {usage.error ? <p className="mt-2 text-sm text-amber-900">{usage.error}</p> : null}
+          {usage.readUnavailable && usage.readUnavailableNote ? (
+            <p className="mt-2 text-sm text-amber-900">{usage.readUnavailableNote}</p>
+          ) : null}
+          {usage.readIncomplete && usage.readIncompleteNote ? (
+            <p className="mt-2 text-sm text-amber-900">{usage.readIncompleteNote}</p>
+          ) : null}
+          <p className="mt-2 text-3xl font-extrabold text-slate-900">
+            {presentAiUsageCount(usage.ttsSuccessful, usage.readUnavailable)}
+          </p>
+          <p className="mt-1 text-sm text-slate-700">
+            {usage.readUnavailable
+              ? "TTS usage is unavailable"
+              : `Successful TTS · ${usage.monthLabel} (${usage.timeZone})`}
+            {usage.readIncomplete ? " · incomplete read" : ""}
+          </p>
+          <p className="mt-2 text-sm text-slate-600">
+            {usage.readUnavailable ? (
+              AI_USAGE_UNAVAILABLE_LABEL
+            ) : (
+              <>
+                {presentAiUsageCount(usage.charactersSynthesized, false)} characters · Estimated tariff:{" "}
+                {presentAiUsageTariff({
+                  unavailable: false,
+                  label: usage.exactTrackedCostLabel,
+                  requests: usage.ttsRequests,
+                  readIncomplete: usage.readIncomplete,
+                  totalsArePartial: usage.totalsArePartial,
+                })}
+                {usage.readIncomplete ? " · incomplete read, not a full-month total" : ""}
+                {usage.totalsArePartial ? " · some costs unknown (not $0)" : ""}
+              </>
+            )}
+          </p>
           <Link
             href="/backoffice/isabela-usage"
             className="mt-3 inline-block text-sm font-semibold text-slate-800 underline"

@@ -1,5 +1,4 @@
-import { calls, type Property, type Reservation } from "@/lib/dashboard-data";
-import { inferLockVendor, lockBrandLabel } from "@/lib/smart-locks";
+import { type Property, type Reservation } from "@/lib/dashboard-data";
 
 export type ShieldCoverage = "complete" | "partial" | "gap";
 
@@ -22,7 +21,7 @@ export type ChargebackDossier = {
   nights: number;
   stayStatus: Reservation["status"];
   coverage: ShieldCoverage;
-  coveragePct: number;
+  coveragePct: number | null;
   exhibitId: string;
   signatures: ShieldLogLine[];
   lockLogs: ShieldLogLine[];
@@ -38,36 +37,8 @@ function exhibitId(reservationId: string) {
   return `ZC-CB-${hash.toString(16).toUpperCase().padStart(8, "0")}`;
 }
 
-function signatureHash(reservationId: string) {
-  let hash = 0;
-  for (let i = 0; i < reservationId.length; i += 1) {
-    hash = (hash * 33 + reservationId.charCodeAt(i)) >>> 0;
-  }
-  return `sig_${hash.toString(16).padStart(8, "0")}`;
-}
-
-function maskCode(code: unknown): string {
-  if (typeof code !== "string") return "****";
-  const trimmed = code.trim();
-  if (!trimmed || trimmed.length < 3) return "****";
-  return `${trimmed.slice(0, 1)}•••${trimmed.slice(-1)}`;
-}
-
-function reservationNotes(reservation: Reservation): string {
-  const notes = (reservation as { aiNotes?: unknown }).aiNotes;
-  return typeof notes === "string" ? notes : "";
-}
-
 function asText(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
-}
-
-function coverageOf(parts: { ok: boolean }[]): { coverage: ShieldCoverage; coveragePct: number } {
-  const hit = parts.filter((part) => part.ok).length;
-  const coveragePct = Math.round((hit / Math.max(parts.length, 1)) * 100);
-  if (coveragePct >= 100) return { coverage: "complete", coveragePct };
-  if (coveragePct >= 50) return { coverage: "partial", coveragePct };
-  return { coverage: "gap", coveragePct };
 }
 
 export function compileChargebackDossiers(
@@ -91,124 +62,11 @@ export function compileChargebackDossiers(
       const checkOutTime = asText(reservation.checkOutTime);
       const property = propertyById.get(propertyId);
       const propertyName = asText(property?.name, propertyId);
-      const smartlock = asText(property?.smartlock);
-      const checkedIn = reservation.status === "staying" || reservation.status === "departed" || reservation.status === "arriving";
-      const departed = reservation.status === "departed";
-      const upcoming = reservation.status === "upcoming";
-
-      const signatures: ShieldLogLine[] = upcoming
-        ? [
-            {
-              at: "Pending",
-              title: "House rules acceptance",
-              detail: "Guest has not completed the check-in gate. Signature will attach when they accept house rules.",
-            },
-          ]
-        : [
-            {
-              at: `${checkIn} ${checkInTime}`,
-              title: "House rules accepted",
-              detail:
-                "Guest acknowledged: no parties, quiet hours 10:00 PM–8:00 AM, licensed STR / anti-squatting, $250 hold, lock codes not to be shared.",
-            },
-            {
-              at: `${checkIn} ${checkInTime}`,
-              title: "Digital signature on file",
-              detail: `Typed/drawn signature captured at guest portal. Record ${signatureHash(reservationId)}. Identity lock for this reservation.`,
-            },
-          ];
-
-      const brand = property ? lockBrandLabel(smartlock) : "Smart lock";
-      const vendor = property ? inferLockVendor(smartlock) : "yale";
-      const lockLogs: ShieldLogLine[] = [
-        {
-          at: `${checkIn} 09:00 AM`,
-          title: "Guest PIN issued",
-          detail: `${brand} (${vendor}) provisioned access code ${maskCode(reservation.accessCode)} for this booking window only.`,
-        },
-      ];
-      if (checkedIn && !upcoming) {
-        lockLogs.push({
-          at: `${checkIn} ${checkInTime}`,
-          title: "First unlock / check-in",
-          detail: `Seam audit: door unlocked with reservation PIN. Property ${propertyName}.`,
-        });
-      }
-      if (reservation.status === "staying") {
-        lockLogs.push({
-          at: `${checkIn} 10:14 PM`,
-          title: "In-stay access",
-          detail: "Secondary unlock logged (same PIN). No shared-code events detected.",
-        });
-      }
-      if (departed) {
-        lockLogs.push({
-          at: `${checkOut} ${checkOutTime}`,
-          title: "PIN revoked at checkout",
-          detail: "Seam revoked the guest credential. Subsequent unlocks require a new code.",
-        });
-      }
-
-      const matchedCalls = calls.filter(
-        (call) =>
-          call.guest.toLowerCase() === guest.toLowerCase() ||
-          call.property.toLowerCase() === propertyName.toLowerCase(),
-      );
-      const communications: ShieldLogLine[] = matchedCalls.map((call) => ({
-        at: call.time,
-        title: `Voice · ${call.status.replaceAll("_", " ")}`,
-        detail: `${call.summary} Duration ${call.duration}. Transcript turns: ${call.transcript.length}.`,
-      }));
-      const aiNotes = reservationNotes(reservation).trim();
-      if (aiNotes) {
-        communications.push({
-          at: "Elena session notes",
-          title: "Voice assistant record",
-          detail: aiNotes,
-        });
-      }
-      if (communications.length === 0) {
-        communications.push({
-          at: "—",
-          title: "No guest messages yet",
-          detail: "Chat and Elena transcripts will attach when the guest contacts the listing line.",
-        });
-      }
-
-      const housekeeping: ShieldLogLine[] = [];
-      if (!upcoming) {
-        housekeeping.push({
-          at: `${checkIn} 11:40 AM`,
-          title: "Pre-arrival / post-previous-guest inspection",
-          detail: "Housekeeping uploaded checkout-condition photos with UTC stamp. Ready-for-check-in recorded.",
-        });
-      }
-      if (departed || reservation.status === "staying") {
-        housekeeping.push({
-          at:
-            departed
-              ? `${checkOut} 12:20 PM`
-              : "In stay",
-          title: departed ? "Turnover complete" : "Mid-stay condition log",
-          detail: departed
-            ? "Post-clean photos (beds, baths, kitchen) stored. Completeness signed by assigned cleaner."
-            : "Unit occupied. Next turnover photos will attach at checkout.",
-        });
-      }
-      if (upcoming) {
-        housekeeping.push({
-          at: "Scheduled",
-          title: "Turnover not started",
-          detail: "Pre-check-in photos will attach after the previous guest departs.",
-        });
-      }
-
-      const { coverage, coveragePct } = coverageOf([
-        { ok: !upcoming && signatures.length >= 2 },
-        { ok: lockLogs.some((line) => /check-in|PIN revoked/i.test(line.title)) },
-        { ok: communications.some((line) => line.title !== "No guest messages yet") },
-        { ok: housekeeping.some((line) => /inspection|Turnover complete/i.test(line.title)) },
-      ]);
+      const notRecorded = (category: string): ShieldLogLine[] => [{
+        at: "No registrado",
+        title: "No registrado",
+        detail: `No hay evidencia persistida y verificable de ${category} para esta reserva.`,
+      }];
 
       return {
         id: `cb-${reservationId}`,
@@ -222,13 +80,13 @@ export function compileChargebackDossiers(
         checkOut: `${checkOut} · ${checkOutTime}`,
         nights: reservation.nights,
         stayStatus: reservation.status,
-        coverage,
-        coveragePct,
+        coverage: "gap",
+        coveragePct: null,
         exhibitId: exhibitId(reservationId),
-        signatures,
-        lockLogs,
-        communications,
-        housekeeping,
+        signatures: notRecorded("aceptación o firma de reglas"),
+        lockLogs: notRecorded("eventos de cerradura"),
+        communications: notRecorded("comunicaciones"),
+        housekeeping: notRecorded("inspecciones o fotografías vinculadas"),
       };
     });
 }
@@ -247,7 +105,7 @@ export function formatChargebackDossierText(dossier: ChargebackDossier) {
     "=".repeat(72),
     `Exhibit ID: ${dossier.exhibitId}`,
     `Generated (UTC): ${new Date().toISOString()}`,
-    `Coverage: ${dossier.coverage} (${dossier.coveragePct}%)`,
+    "Evidence coverage: No registrado",
     "",
     "RESERVATION",
     `- Guest: ${dossier.guest} · ${dossier.phone}`,
@@ -260,10 +118,10 @@ export function formatChargebackDossierText(dossier: ChargebackDossier) {
     block("B. SMART LOCK AUDIT LOG", dossier.lockLogs),
     block("C. COMMUNICATION HISTORY (CHAT / VOICE)", dossier.communications),
     block("D. HOUSEKEEPING & CONDITION PROOFS", dossier.housekeeping),
-    "E. REQUESTED CARD-NETWORK / OTA ACTION",
-    "- Uphold the stay as a licensed short-term rental with accepted house rules.",
-    "- Deny fraudulent chargebacks where lock, signature, and condition logs contradict the claim.",
+    "E. CLAIM PREPARATION STATUS",
+    "- Draft only. No platform claim has been filed by Zencierge.",
+    "- Eligibility, legal compliance, responsibility, and reimbursement outcome are not determined here.",
     "",
-    "Certification: Assembled automatically by Zencierge Chargeback Shield from host OS records for this reservation.",
+    "Notice: Include only source evidence that has been independently recorded and verified.",
   ].join("\n");
 }

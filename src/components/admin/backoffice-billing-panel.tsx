@@ -42,7 +42,11 @@ export function BackOfficeBillingPanel({ customers, metrics, plans, generatedAt 
   return (
     <div className="space-y-6">
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Billing totals">
-        <Kpi label="Paying MRR" value={formatBillingUsd(metrics.mrr)} detail={`${metrics.alDia} paying subscribers`} />
+        <Kpi
+          label="Paying MRR"
+          value={metrics.mrr == null ? "— / No disponible" : formatBillingUsd(metrics.mrr)}
+          detail={metrics.mrr == null ? "Host subscriptions are unavailable" : `${metrics.alDia} paying subscribers`}
+        />
         <Kpi label="Past due" value={metrics.morosos.toLocaleString("en-US")} detail="Square/local status requiring review" />
         <Kpi label="Failed payments" value={metrics.failedPayments30d.toLocaleString("en-US")} detail="Last 30 days" />
         <Kpi

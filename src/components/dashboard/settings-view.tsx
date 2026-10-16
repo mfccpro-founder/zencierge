@@ -300,7 +300,7 @@ function SettingsViewInner() {
           <Header
             icon={Bell}
             title="Alert rules & notifications"
-            subtitle="Instant SMS and call routing for noise, turnovers, damage, and Elena emergencies."
+            subtitle="Instant SMS and call routing for noise, turnovers, damage, and Isabela emergencies."
           />
           <div className="mt-6 space-y-3">
             <ToggleRow
@@ -323,7 +323,7 @@ function SettingsViewInner() {
             />
             <ToggleRow
               title="Voice Concierge emergency call escalation"
-              description="Ring the emergency phone when Elena detects a leak, lockout, or safety event."
+              description="Ring the emergency phone when Isabela detects a leak, lockout, or safety event."
               checked={voiceEscalation}
               onChange={setVoiceEscalation}
             />

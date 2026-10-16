@@ -5,7 +5,7 @@ import { ChargebackShieldView } from "@/components/dashboard/chargeback-shield-v
 export const metadata: Metadata = {
   title: "Chargeback Shield · Zencierge",
   description:
-    "Auto-generated dispute dossiers per reservation: signatures, lock logs, Elena communications, and housekeeping proofs.",
+    "Auto-generated dispute dossiers per reservation: signatures, lock logs, Isabela communications, and housekeeping proofs.",
 };
 
 export default function ChargebackShieldPage() {

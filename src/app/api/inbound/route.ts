@@ -1,34 +1,45 @@
 import { NextRequest, NextResponse } from "next/server";
 import { localTimeLabel, voiceIdFromAvatarName } from "@/lib/property-agent";
-import { loadInboundProperty } from "@/lib/supabase-listings";
+import { tryCreateSupabaseAdminClient } from "@/lib/supabase-admin";
+import { loadInboundPropertyByNumber } from "@/lib/host-listings-server";
+import { validateTwilioFormSignature } from "@/lib/twilio-webhook";
 
 export const runtime = "nodejs";
 
 async function inboundFromRequest(req: NextRequest) {
   const contentType = req.headers.get("content-type") ?? "";
-  if (contentType.includes("application/json")) {
-    const body = (await req.json()) as Record<string, unknown>;
-    return {
-      propertyId: String(body.propertyId ?? body.property_id ?? ""),
-      to: String(body.to ?? body.To ?? ""),
-      calledNumber: String(body.called ?? body.Called ?? ""),
-    };
-  }
-  const form = await req.formData();
+  if (!contentType.includes("application/x-www-form-urlencoded")) return null;
+  const raw = await req.text();
+  const form = new URLSearchParams(raw);
   return {
-    propertyId: String(form.get("propertyId") ?? form.get("property_id") ?? ""),
-    to: String(form.get("To") ?? form.get("to") ?? ""),
-    calledNumber: String(form.get("Called") ?? form.get("called") ?? ""),
+    form,
+    to: form.get("To") ?? form.get("to") ?? "",
+    calledNumber: form.get("Called") ?? form.get("called") ?? "",
   };
 }
 
 export async function POST(req: NextRequest) {
   try {
     const input = await inboundFromRequest(req);
-    const property = await loadInboundProperty(input);
-    if (!property) {
+    if (!input) return NextResponse.json({ error: "Unsupported webhook payload" }, { status: 415 });
+    const authorized = validateTwilioFormSignature({
+      authToken: process.env.TWILIO_AUTH_TOKEN?.trim() ?? "",
+      signature: req.headers.get("x-twilio-signature")?.trim() ?? "",
+      url: process.env.TWILIO_INBOUND_WEBHOOK_URL?.trim() || req.url,
+      params: input.form,
+    });
+    if (!authorized) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const dialed = input.to.trim() || input.calledNumber.trim();
+    const admin = tryCreateSupabaseAdminClient();
+    if (!admin) return NextResponse.json({ error: "Service unavailable" }, { status: 503 });
+    const resolved = await loadInboundPropertyByNumber(admin, dialed);
+    if (resolved.kind === "unavailable") {
+      return NextResponse.json({ error: "Service unavailable" }, { status: 503 });
+    }
+    if (resolved.kind === "missing") {
       return NextResponse.json({ error: "No property matched this number or id" }, { status: 404 });
     }
+    const property = resolved.property;
     return NextResponse.json({
       propertyId: property.id,
       listing: property.name,

@@ -5,6 +5,7 @@ import { hasLifetimeVipAccess } from "@/lib/lifetime-vip";
 import { betaPartnerTrial, isBetaFounderPartner } from "@/lib/beta-partner";
 import { publicOriginFromRequest } from "@/lib/public-app-url";
 import { isComplimentaryWindowOpen } from "@/lib/complimentary-access-core";
+import { hasExplicitPaidBillingConsent, paidBillingConsentRequiredResponse } from "@/lib/paid-billing-consent";
 
 export const dynamic = "force-dynamic";
 
@@ -26,6 +27,7 @@ export async function POST(request: Request) {
   } catch {
     return Response.json({ error: "Invalid JSON" }, { status: 400 });
   }
+  if (!hasExplicitPaidBillingConsent(body)) return paidBillingConsentRequiredResponse();
 
   const kind = body.kind === "guest_addon" ? "guest_addon" : "host_subscription";
   if (kind === "host_subscription" && hasLifetimeVipAccess(user)) {

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import {
   aggregateIncomePayments,
   formatIncomeUsd,
+  resolveBackOfficeIncomeRead,
   incomeCalendarMonthUtcBounds,
   incomeTrendMonthBounds,
   incomeYtdUtcBounds,
@@ -142,6 +143,36 @@ export function runAdminIncomeTests() {
 
   assert(formatIncomeUsd(99) === "$99.00", "USD format");
 
+  const emptyCash = resolveBackOfficeIncomeRead({
+    paymentsReadFailed: false,
+    collectedThisMonthUsd: 0,
+    collectedYtdUsd: 0,
+    mrrUsd: 49,
+  });
+  assert(emptyCash.paymentsReadUnavailable === false, "a successful empty payments read stays available");
+  assert(emptyCash.collectedThisMonthUsd === 0, "a successful empty payments read is a real zero");
+  assert(emptyCash.mrrUsd === 49, "a valid subscription read keeps MRR beside an empty cash month");
+
+  const failedCash = resolveBackOfficeIncomeRead({
+    paymentsReadFailed: true,
+    collectedThisMonthUsd: 0,
+    collectedYtdUsd: 0,
+    mrrUsd: 49,
+  });
+  assert(failedCash.paymentsReadUnavailable === true, "a failed payments read is unavailable");
+  assert(failedCash.collectedThisMonthUsd == null, "a failed payments read does not become zero cash");
+  assert(failedCash.collectedYtdUsd == null, "a failed payments read does not become zero YTD");
+  assert(failedCash.mrrUsd === 49, "a failed payments read keeps a valid MRR");
+
+  const failedSubscriptions = resolveBackOfficeIncomeRead({
+    paymentsReadFailed: false,
+    collectedThisMonthUsd: 12,
+    collectedYtdUsd: 12,
+    mrrUsd: null,
+  });
+  assert(failedSubscriptions.collectedThisMonthUsd === 12, "collected cash stays when only subscriptions fail");
+  assert(failedSubscriptions.mrrUsd == null, "a failed subscription read leaves MRR null");
+
   const incomeLib = readFileSync(join(process.cwd(), "src/lib/admin-income.ts"), "utf8");
   const incomePage = readFileSync(
     join(process.cwd(), "src/app/(founder-admin)/backoffice/income/page.tsx"),
@@ -155,10 +186,19 @@ export function runAdminIncomeTests() {
   assert(incomeLib.includes("getAdminBillingSnapshot"), "MRR reused from admin-billing");
   assert(incomeLib.includes("Recurring run-rate — not cash collected"), "MRR kept distinct from cash");
   assert(
-    incomeLib.includes(
-      "amount_usd, amount_paid, plan_id, status, payment_status, provider_payment_id, gateway_payment_id, created_at, paid_at",
-    ),
-    "income loader requests both payment column families for row-level fallback",
+    incomeLib.includes("readFounderSubscriptionPaymentPages"),
+    "income loader reads payments through the founder page function",
+  );
+  const paymentReadSql = readFileSync(
+    join(process.cwd(), "supabase/migrations/20260926140000_founder_backoffice_billing_read.sql"),
+    "utf8",
+  );
+  assert(
+    paymentReadSql.includes("amount_usd") &&
+      paymentReadSql.includes("amount_paid") &&
+      paymentReadSql.includes("provider_payment_id") &&
+      paymentReadSql.includes("gateway_payment_id"),
+    "founder payment page returns both payment column families",
   );
   assert(
     incomeLib.includes("normalizeIncomeProviderPaymentId(row)"),

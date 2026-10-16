@@ -22,6 +22,11 @@ export async function sendGuestHouseRulesSms(to: string | null, body: string): P
     return { delivered: false, simulated: true, to: null };
   }
 
+  if (["1", "true", "yes", "on"].includes((process.env.ZENCIERGE_PRIVATE_PILOT_SAFE_MODE ?? "").trim().toLowerCase())) {
+    console.info("[NeighborShield] SMS simulation — private pilot safe mode.");
+    return { delivered: false, simulated: true, to };
+  }
+
   const twilio = twilioConfigured();
   if (!twilio.ready) {
     console.info("[NeighborShield] SMS simulation — Twilio is not configured.");

@@ -20,7 +20,12 @@ export async function notifyHostOfHousekeepingReport(report: HousekeepingReport)
 
   const to = (process.env.HOST_NOTIFY_EMAIL || process.env.HOST_ALERT_EMAIL || "").trim();
   const resendKey = (process.env.RESEND_API_KEY || "").trim();
-  if (to && resendKey) {
+  const demoSafeMode = ["1", "true", "yes", "on"].includes(
+    (process.env.ZENCIERGE_PRIVATE_PILOT_SAFE_MODE ?? "").trim().toLowerCase(),
+  );
+  if (demoSafeMode) {
+    console.info("[housekeeping] email suppressed — private pilot safe mode", title);
+  } else if (to && resendKey) {
     try {
       await fetch("https://api.resend.com/emails", {
         method: "POST",

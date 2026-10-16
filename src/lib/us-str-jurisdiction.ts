@@ -22,7 +22,7 @@ function platforms(city: string, licenseNote: string): StrTopic {
   return {
     id: "platforms",
     title: "Cumplimiento en Airbnb, Vrbo y reservas directas",
-    summary: `En ${city}, el anuncio debe coincidir con el registro local, las reglas del edificio y lo que Elena dice a los huéspedes.`,
+    summary: `En ${city}, el anuncio debe coincidir con el registro local, las reglas del edificio y lo que Isabela dice a los huéspedes.`,
     bullets: [
       licenseNote,
       "Reglas de la casa: silencio, ocupación, estacionamiento y fiestas. El manual y el anuncio deben citar las mismas horas.",
@@ -46,7 +46,7 @@ function safety(city: string, extra: string): StrTopic {
   };
 }
 
-function inferState(input: { city: string; address: string; timezone?: string }): string {
+function inferState(input: { city: string; address: string; timezone?: string }): string | null {
   const text = haystack([input.city, input.address, input.timezone ?? ""]);
   if (includesAny(text, ["austin", "dallas", "houston", "san antonio", "texas", "america/chicago"])) {
     if (includesAny(text, ["miami", "broward", "orlando", "tampa", "florida", "america/new_york"])) {
@@ -60,13 +60,19 @@ function inferState(input: { city: string; address: string; timezone?: string })
   if (includesAny(text, ["new york", "brooklyn", "manhattan", "america/new_york"]) && includesAny(text, ["nyc", "brooklyn", "manhattan", "queens"])) {
     return "NY";
   }
-  if (includesAny(text, ["florida", "miami", "orlando", "tampa", "jacksonville", "fort lauderdale", "sunny isles", "brickell"])) {
+  if (includesAny(text, [
+    "florida", "miami", "orlando", "tampa", "jacksonville", "tallahassee",
+    "fort lauderdale", "sunny isles", "brickell", "coral gables", "doral",
+    "aventura", "kendall", "homestead", "hialeah", "hollywood", "pompano",
+    "davie", "weston", "plantation", "coral springs", "deerfield", "broward",
+    "west palm", "palm beach", "boca raton", "delray", "boynton",
+  ])) {
     return "FL";
   }
   if (input.timezone === "America/Chicago" && includesAny(text, ["austin", "dallas", "houston"])) return "TX";
   if (input.timezone === "America/Los_Angeles") return "CA";
   if (input.timezone === "America/Denver") return "CO";
-  return "FL";
+  return null;
 }
 
 function texas(city: string): StrJurisdiction {
@@ -215,11 +221,11 @@ export function resolveUsStrJurisdiction(input: {
   city: string;
   address: string;
   timezone?: string;
-}): StrJurisdiction {
+}): StrJurisdiction | null {
   const state = inferState(input);
   if (state === "FL") return resolveFloridaStrJurisdiction({ city: input.city, address: input.address });
   if (state === "TX") return texas(input.city.trim() || "Texas");
   if (state === "CA") return california(input.city.trim() || "California");
   const labels: Record<string, string> = { CO: "Colorado", NY: "Nueva York" };
-  return genericUs(input.city.trim(), state, labels[state] ?? state);
+  return state ? genericUs(input.city.trim(), state, labels[state] ?? state) : null;
 }

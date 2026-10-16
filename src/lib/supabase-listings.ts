@@ -1,49 +1,14 @@
 import {
-  guestStayFallback,
   properties as seedProperties,
-  reservations as seedReservations,
-  propertyCities,
   type BookingPlatform,
   type OccupancyStatus,
   type Property,
   type PropertyCity,
   type Reservation,
 } from "@/lib/dashboard-data";
-import { supabase } from "@/lib/supabase";
-import { hasSupabaseEnv } from "@/lib/supabase-config";
-import {
-  defaultAgentConfig,
-  parseAvatarName,
-  resolvePropertyForInbound,
-  withAgentDefaults,
-} from "@/lib/property-agent";
+import { defaultAgentConfig, parseAvatarName, withAgentDefaults } from "@/lib/property-agent";
 
-export { guestStayFallback };
-
-const miamiBeachLoft =
-  seedProperties.find((property) => property.id === "prop-1") ?? seedProperties[0];
-
-const LISTING_FETCH_MS = 4000;
-
-function abortAfter(ms: number) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), ms);
-  return { signal: controller.signal, cancel: () => clearTimeout(timer) };
-}
-
-async function raceTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<T>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("listing-timeout")), ms);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
+// Mapping only. Database reads and writes belong in server-only modules.
 
 export type PropertyRow = {
   id: string;
@@ -68,7 +33,6 @@ export type PropertyRow = {
   assigned_phone_number?: string;
   avatar_system_prompt?: string;
   timezone?: string;
-  /** Set only from trusted server auth — never from client request bodies. */
   host_id?: string | null;
 };
 
@@ -89,9 +53,7 @@ export type ReservationRow = {
 };
 
 function asCity(value: string): PropertyCity {
-  return propertyCities.includes(value as PropertyCity)
-    ? (value as PropertyCity)
-    : "Miami Beach";
+  return value.trim();
 }
 
 function asOccupancy(value: string): OccupancyStatus {
@@ -99,40 +61,28 @@ function asOccupancy(value: string): OccupancyStatus {
 }
 
 function asPlatform(value: string): BookingPlatform {
-  if (value === "Vrbo" || value === "Direct") return value;
-  return "Airbnb";
+  return value === "Vrbo" || value === "Direct" ? value : "Airbnb";
 }
 
 function asStayStatus(value: string): Reservation["status"] {
-  if (
-    value === "staying" ||
-    value === "arriving" ||
-    value === "departed" ||
-    value === "upcoming"
-  ) {
-    return value;
-  }
-  return "upcoming";
+  return value === "staying" || value === "arriving" || value === "departed" || value === "upcoming"
+    ? value
+    : "upcoming";
 }
 
 function fillHouseRulesFromSeed(mapped: Property): Property {
   const seed = seedProperties.find((property) => property.id === mapped.id);
   const index = Math.max(0, seedProperties.findIndex((property) => property.id === mapped.id));
   const defaults = defaultAgentConfig(mapped.city, index);
-  const merged: Property = {
+  return withAgentDefaults({
     ...mapped,
     trash: mapped.trash.trim() || seed?.trash || "",
     handbook: mapped.handbook.trim() || seed?.handbook || "",
-    assignedAvatarName: parseAvatarName(
-      mapped.assignedAvatarName || seed?.assignedAvatarName || defaults.assignedAvatarName,
-    ),
-    assignedPhoneNumber:
-      mapped.assignedPhoneNumber?.trim() || seed?.assignedPhoneNumber || defaults.assignedPhoneNumber,
-    avatarSystemPrompt:
-      mapped.avatarSystemPrompt?.trim() || seed?.avatarSystemPrompt || defaults.avatarSystemPrompt,
+    assignedAvatarName: parseAvatarName(mapped.assignedAvatarName || seed?.assignedAvatarName || defaults.assignedAvatarName),
+    assignedPhoneNumber: mapped.assignedPhoneNumber?.trim() || seed?.assignedPhoneNumber || defaults.assignedPhoneNumber,
+    avatarSystemPrompt: mapped.avatarSystemPrompt?.trim() || seed?.avatarSystemPrompt || defaults.avatarSystemPrompt,
     timezone: mapped.timezone?.trim() || seed?.timezone || defaults.timezone,
-  };
-  return withAgentDefaults(merged, index);
+  }, index);
 }
 
 export function propertyFromRow(row: PropertyRow): Property {
@@ -161,11 +111,8 @@ export function propertyFromRow(row: PropertyRow): Property {
   });
 }
 
-export function propertyToRow(
-  property: Property,
-  options?: { hostId?: string },
-): PropertyRow {
-  const row: PropertyRow = {
+export function propertyToRow(property: Property): PropertyRow {
+  return {
     id: property.id,
     name: property.name,
     city: property.city,
@@ -188,39 +135,6 @@ export function propertyToRow(
     avatar_system_prompt: property.avatarSystemPrompt,
     timezone: property.timezone,
   };
-  // Only attach host_id when the server passes a trusted auth id (create path).
-  // Updates omit host_id so existing ownership is never wiped or reassigned.
-  if (options?.hostId) {
-    row.host_id = options.hostId;
-  }
-  return row;
-}
-
-/** True when Supabase rejected a write because the column is not in the schema yet. */
-function isMissingColumnError(message: string) {
-  return /column|schema cache/i.test(message);
-}
-
-/** Row without the house-rules columns, for projects that have not run supabase/schema.sql yet. */
-function rowWithoutTrash(row: PropertyRow): PropertyRow {
-  const { trash: _trash, ...rest } = row;
-  void _trash;
-  return rest as PropertyRow;
-}
-
-function rowWithoutAgent(row: PropertyRow): PropertyRow {
-  const {
-    assigned_avatar_name: _avatar,
-    assigned_phone_number: _phone,
-    avatar_system_prompt: _prompt,
-    timezone: _tz,
-    ...rest
-  } = row;
-  void _avatar;
-  void _phone;
-  void _prompt;
-  void _tz;
-  return rest as PropertyRow;
 }
 
 export function reservationFromRow(row: ReservationRow): Reservation {
@@ -257,233 +171,4 @@ export function reservationToRow(reservation: Reservation): ReservationRow {
     nights: reservation.nights,
     status: reservation.status,
   };
-}
-
-async function selectProperties() {
-  return supabase.from("properties").select("*").order("name");
-}
-
-async function ensureMiamiBeachLoft() {
-  // Never upsert over an existing prop-1 — that could wipe/ignore host_id ownership.
-  const existing = await supabase.from("properties").select("*").eq("id", "prop-1").maybeSingle();
-  if (!existing.error && existing.data) {
-    const all = await selectProperties();
-    if (!all.error && all.data?.length) return all.data as PropertyRow[];
-    return [existing.data as PropertyRow];
-  }
-
-  const row = propertyToRow(miamiBeachLoft);
-  // Insert-only fallback for empty DBs. Do not include host_id (unknown owner).
-  // Prefer insert over upsert so a concurrent owned row cannot be overwritten.
-  const full = await supabase.from("properties").insert(row).select("*");
-  if (!full.error && full.data?.length) return full.data as PropertyRow[];
-
-  const withoutTrash = await supabase.from("properties").insert(rowWithoutTrash(row)).select("*");
-  if (!withoutTrash.error && withoutTrash.data?.length) return withoutTrash.data as PropertyRow[];
-
-  const minimal = await supabase
-    .from("properties")
-    .insert({
-      id: "prop-1",
-      name: "Miami Beach Loft",
-      city: "Miami Beach",
-      ai_handbook: miamiBeachLoft.handbook,
-    })
-    .select("*");
-  if (!minimal.error && minimal.data?.length) return minimal.data as PropertyRow[];
-
-  // Race: another writer created prop-1 — re-read without overwriting ownership.
-  const raced = await supabase.from("properties").select("*").eq("id", "prop-1").maybeSingle();
-  if (!raced.error && raced.data) return [raced.data as PropertyRow];
-
-  return [row];
-}
-
-export async function fetchListings(): Promise<{
-  properties: Property[];
-  reservations: Reservation[];
-}> {
-  if (!hasSupabaseEnv()) {
-    console.error(
-      "[listings] Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY in .env.local — using seed listings.",
-    );
-    return { properties: seedProperties, reservations: seedReservations };
-  }
-  try {
-    let propertyRows: PropertyRow[] = [];
-
-    const first = await selectProperties();
-    if (first.error || !first.data?.length) {
-      propertyRows = await ensureMiamiBeachLoft();
-    } else {
-      propertyRows = first.data as PropertyRow[];
-    }
-
-    const { data: reservationRows } = await supabase
-      .from("reservations")
-      .select("*")
-      .order("check_in");
-
-    const properties = propertyRows.map(propertyFromRow);
-    return {
-      properties: properties.length ? properties : [miamiBeachLoft],
-      reservations: ((reservationRows ?? []) as ReservationRow[]).map(reservationFromRow),
-    };
-  } catch {
-    return { properties: [miamiBeachLoft], reservations: [] };
-  }
-}
-
-export async function updateAiHandbook(propertyId: string, aiHandbook: string) {
-  const patches: Record<string, string>[] = [{ ai_handbook: aiHandbook }, { handbook: aiHandbook }];
-
-  for (const patch of patches) {
-    const { data, error } = await supabase
-      .from("properties")
-      .update(patch)
-      .eq("id", propertyId)
-      .select("id");
-
-    if (!error && data?.length) return;
-    if (error && !/column|schema cache/i.test(error.message)) {
-      throw new Error(error.message);
-    }
-  }
-
-  const base = seedProperties.find((property) => property.id === propertyId) ?? miamiBeachLoft;
-  const { error: upsertError, data: upserted } = await supabase
-    .from("properties")
-    .upsert(propertyToRow({ ...base, id: propertyId, handbook: aiHandbook }))
-    .select("id");
-  if (upsertError) throw new Error(upsertError.message);
-  if (!upserted?.length) {
-    throw new Error("No property row was updated. Check the id and RLS policies.");
-  }
-}
-
-export async function fetchPropertyById(id: string): Promise<Property | null> {
-  const seed = seedProperties.find((property) => property.id === id) ?? null;
-  if (!hasSupabaseEnv()) return seed;
-
-  const { signal, cancel } = abortAfter(LISTING_FETCH_MS);
-  try {
-    const query = supabase
-      .from("properties")
-      .select("*")
-      .eq("id", id)
-      .abortSignal(signal)
-      .maybeSingle();
-    const { data, error } = await raceTimeout(Promise.resolve(query), LISTING_FETCH_MS);
-    if (!error && data) return propertyFromRow(data as PropertyRow);
-  } catch (cause) {
-    console.error("[listings] fetchPropertyById timed out or failed; using seed", cause);
-  } finally {
-    cancel();
-  }
-  return seed;
-}
-
-/** Guest portal: seed immediately if Supabase is slow, missing, or unknown id. */
-export async function fetchGuestStay(id: string): Promise<Property> {
-  try {
-    const row = await fetchPropertyById(id);
-    if (row) return row;
-  } catch (cause) {
-    console.error("[listings] fetchGuestStay failed; using Miami Beach Loft seed", cause);
-  }
-  return guestStayFallback(id);
-}
-
-export async function fetchReservationById(id: string): Promise<Reservation | null> {
-  if (hasSupabaseEnv()) {
-    const { data, error } = await supabase.from("reservations").select("*").eq("id", id).maybeSingle();
-    if (!error && data) return reservationFromRow(data as ReservationRow);
-  }
-  return seedReservations.find((reservation) => reservation.id === id) ?? null;
-}
-
-export type UpsertPropertyOptions =
-  | { mode: "create"; hostId: string }
-  | { mode: "update" };
-
-/**
- * Persist a listing. Ownership (`host_id`) is set only on create from trusted
- * server auth. Update payloads omit `host_id` so ownership cannot be reassigned
- * or wiped by client fields.
- */
-export async function upsertProperty(property: Property, options: UpsertPropertyOptions) {
-  if (options.mode === "create" && !options.hostId.trim()) {
-    throw new Error("host_id is required when creating a property");
-  }
-  const row =
-    options.mode === "create"
-      ? propertyToRow(property, { hostId: options.hostId.trim() })
-      : propertyToRow(property);
-  if (options.mode === "update" && "host_id" in row) {
-    delete row.host_id;
-  }
-  const attempts = [
-    row,
-    rowWithoutAgent(row),
-    rowWithoutTrash(row),
-    rowWithoutTrash(rowWithoutAgent(row)),
-  ];
-  let lastMessage = "";
-  for (const attempt of attempts) {
-    const { error } = await supabase.from("properties").upsert(attempt);
-    if (!error) return;
-    lastMessage = error.message;
-    if (!isMissingColumnError(error.message)) throw new Error(error.message);
-  }
-  throw new Error(lastMessage || "Could not save property");
-}
-
-export async function loadInboundProperty(input: {
-  property?: Property | null;
-  propertyId?: string | null;
-  to?: string | null;
-  calledNumber?: string | null;
-}): Promise<Property | null> {
-  const { properties } = await fetchListings();
-  const dialed = (input.to ?? input.calledNumber ?? "").trim();
-  if (dialed) {
-    return resolvePropertyForInbound(properties, {
-      to: input.to,
-      calledNumber: input.calledNumber,
-    });
-  }
-  const propertyId = (input.propertyId ?? input.property?.id ?? "").trim();
-  if (propertyId) {
-    const live = resolvePropertyForInbound(properties, { propertyId });
-    if (live) {
-      if (input.property?.name && input.property.id === live.id) {
-        return withAgentDefaults(
-          {
-            ...live,
-            ...input.property,
-            assignedAvatarName: live.assignedAvatarName,
-            assignedPhoneNumber: live.assignedPhoneNumber,
-            avatarSystemPrompt: live.avatarSystemPrompt,
-            timezone: live.timezone,
-            handbook: input.property.handbook?.trim() || live.handbook,
-          },
-          properties.findIndex((item) => item.id === live.id),
-        );
-      }
-      return live;
-    }
-  }
-  if (input.property?.name && input.property.city) {
-    const index = Math.max(
-      0,
-      properties.findIndex((item) => item.id === input.property?.id),
-    );
-    return withAgentDefaults(input.property, index);
-  }
-  return resolvePropertyForInbound(properties, {});
-}
-
-export async function upsertReservation(reservation: Reservation) {
-  const { error } = await supabase.from("reservations").upsert(reservationToRow(reservation));
-  if (error) throw new Error(error.message);
 }

@@ -29,11 +29,7 @@ export type Call = {
 
 export type OccupancyStatus = "Occupied" | "Vacant";
 
-export type PropertyCity =
-  | "Miami Beach"
-  | "Brickell"
-  | "Fort Lauderdale"
-  | "Sunny Isles";
+export type PropertyCity = string;
 
 export const propertyCities: PropertyCity[] = [
   "Miami Beach",

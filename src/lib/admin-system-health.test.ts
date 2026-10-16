@@ -5,6 +5,7 @@ import {
   buildSystemHealthHeader,
   countSquarePaymentsFromRows,
   evaluateSquareHealth,
+  resolveSquareSubscriptionCounts,
   evaluateTtsHealth,
   normalizeSquarePaymentAt,
   normalizeSquarePaymentState,
@@ -105,6 +106,61 @@ export function runAdminSystemHealthTests() {
   });
   assert(noSquareTraffic.status === "unknown", "missing Square traffic → unknown honestly");
 
+  const failedSubscriptions = resolveSquareSubscriptionCounts({
+    readFailed: true,
+    rows: [{ status: "past_due" }, { status: "canceled" }],
+  });
+  assert(failedSubscriptions.pastDueSubscriptions == null, "a failed subscription read is not zero past due");
+  assert(failedSubscriptions.canceledSubscriptions == null, "a failed subscription read is not zero canceled");
+  assert(failedSubscriptions.subscriptionsUnavailable === true, "a failed subscription read is unavailable");
+  const paymentsWithFailedSubscriptions = evaluateSquareHealth({
+    windowDays: 30,
+    succeeded: 4,
+    failed: 0,
+    refunded: 2,
+    pastDueSubscriptions: failedSubscriptions.pastDueSubscriptions,
+    canceledSubscriptions: failedSubscriptions.canceledSubscriptions,
+    subscriptionsUnavailable: failedSubscriptions.subscriptionsUnavailable,
+    latestPaymentAt: "2026-09-06T15:00:00.000Z",
+    credentialsConfigured: true,
+    mockCheckout: false,
+  });
+  assert(paymentsWithFailedSubscriptions.status === "degraded", "unavailable subscriptions degrade Square health");
+  assert(
+    paymentsWithFailedSubscriptions.detailLines.some((line) => line === "Succeeded: 4"),
+    "valid payment successes stay visible",
+  );
+  assert(
+    paymentsWithFailedSubscriptions.detailLines.some((line) => line === "Failed cards/charges: 0"),
+    "valid payment failure count stays visible",
+  );
+  assert(
+    paymentsWithFailedSubscriptions.detailLines.some((line) => line === "Refunded: 2"),
+    "valid refunds stay visible",
+  );
+  assert(
+    paymentsWithFailedSubscriptions.detailLines.some((line) => line.includes("— / No disponible")),
+    "unavailable subscription counts use the unavailable label",
+  );
+  assert(
+    !paymentsWithFailedSubscriptions.detailLines.some((line) => /subscriptions: 0/.test(line)),
+    "unavailable subscription counts are not shown as zero",
+  );
+  assert(
+    /subscription status is degraded/i.test(
+      paymentsWithFailedSubscriptions.reason + paymentsWithFailedSubscriptions.detailLines.join(" "),
+    ),
+    "subscription read failure is marked degraded",
+  );
+  const countedSubscriptions = resolveSquareSubscriptionCounts({
+    readFailed: false,
+    rows: [],
+  });
+  assert(
+    countedSubscriptions.pastDueSubscriptions === 0 && countedSubscriptions.canceledSubscriptions === 0,
+    "a valid empty subscription read remains zero",
+  );
+
   // Tolerant payment_status path (live schema)
   const fromPaymentStatus = countSquarePaymentsFromRows([
     { payment_status: "succeeded", paid_at: "2026-09-01T12:00:00.000Z" },
@@ -194,16 +250,21 @@ export function runAdminSystemHealthTests() {
   // Health logic module must remain the source of truth (UI-only change).
   const domain = readFileSync(join(root, "src/lib/admin-system-health.ts"), "utf8");
   assert(domain.includes("getAdminSystemHealthSnapshot"), "snapshot export");
-  assert(domain.includes("payment_status"), "tolerant live payment_status read");
-  assert(domain.includes("paid_at"), "tolerant live paid_at read");
-  assert(domain.includes("loadSubscriptionPaymentsTolerant") || domain.includes("SQUARE_PAYMENT_READ_ATTEMPTS") || domain.includes("payment_status, amount_paid, paid_at"), "multi-attempt Square payment select");
-  assert(
-    domain.includes(
-      "status, payment_status, amount_usd, amount_paid, created_at, paid_at",
-    ),
-    "coexistence read requests both payment column families first",
+  assert(domain.includes("readFounderSubscriptionPaymentPages"), "Square payments use the founder page");
+  assert(domain.includes("readFounderHostSubscriptionPages"), "Square subscriptions use the founder page");
+  assert(domain.includes("newestFirst: true"), "Square payment sample stays newest-first");
+  assert(domain.includes("pageSize: 500") && domain.includes("maxRows: 500"), "Square payment sample keeps the 500-row limit");
+  assert(domain.includes("SYSTEM_HEALTH_SQUARE_WINDOW_DAYS"), "Square window length is unchanged");
+  assert(!/\.from\(\s*["']host_subscriptions["']\s*\)/.test(domain), "no direct host_subscriptions select");
+  assert(!/\.from\(\s*["']subscription_payments["']\s*\)/.test(domain), "no direct subscription_payments select");
+  const paymentReadSql = readFileSync(
+    join(root, "supabase/migrations/20260926140000_founder_backoffice_billing_read.sql"),
+    "utf8",
   );
-  assert(!domain.includes('.select("status, created_at, paid_at")'), "no hard-coded status-only Square select");
+  assert(
+    paymentReadSql.includes("payment_status") && paymentReadSql.includes("paid_at"),
+    "founder payment page still returns legacy payment columns",
+  );
   assert(domain.includes("Could not read Square payment records") || domain.includes("paymentsLoad.error"), "true query failure surfaces unhealthy Square card");
   assert(domain.includes('method: "GET"') && domain.includes("/api/tts"), "safe TTS GET probe");
   assert(!domain.includes("streamElenaSpeech"), "does not synthesize speech");

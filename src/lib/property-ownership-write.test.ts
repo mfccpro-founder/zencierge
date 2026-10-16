@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { propertyToRow } from "./supabase-listings";
+import { propertyFromRow, propertyToRow } from "./supabase-listings";
 import type { Property } from "./dashboard-data";
 import {
   formatBackOfficePropertyCount,
@@ -39,6 +39,7 @@ function runPropertyOwnershipWriteTests() {
   const root = process.cwd();
   const listings = readFileSync(join(root, "src/lib/supabase-listings.ts"), "utf8");
   const route = readFileSync(join(root, "src/app/api/properties/route.ts"), "utf8");
+  const serverStore = readFileSync(join(root, "src/lib/host-listings-server.ts"), "utf8");
   const customersPage = readFileSync(
     join(root, "src/app/(founder-admin)/backoffice/customers/page.tsx"),
     "utf8",
@@ -48,24 +49,27 @@ function runPropertyOwnershipWriteTests() {
     "utf8",
   );
 
-  const createRow = propertyToRow(sampleProperty, { hostId: "334119a5-1111-2222-3333-444444444444" });
-  assert(createRow.host_id === "334119a5-1111-2222-3333-444444444444", "create mapping sets trusted host_id");
-
   const updateRow = propertyToRow(sampleProperty);
   assert(!("host_id" in updateRow) || updateRow.host_id === undefined, "update mapping omits host_id");
+  assert(
+    propertyFromRow({ ...updateRow, city: "Savannah" }).city === "Savannah",
+    "DAL preserves a free-form city instead of replacing it with Miami Beach",
+  );
 
-  assert(listings.includes('mode: "create"') || listings.includes("UpsertPropertyOptions"), "upsert options exist");
-  assert(listings.includes("Never upsert over an existing prop-1"), "ensureMiamiBeachLoft preserves ownership");
-  assert(listings.includes(".insert(row)"), "seed uses insert not upsert overwrite");
-  assert(!/ensureMiamiBeachLoft[\s\S]*\.upsert\(row\)/.test(listings), "ensureMiamiBeachLoft no longer upserts full seed row");
+  assert(!listings.includes('@/lib/supabase"'), "mapping module has no anonymous database client");
+  assert(!/\.from\(|\.insert\(|\.upsert\(|\.update\(/.test(listings), "mapping module performs no database operations");
 
-  assert(route.includes('mode: "create", hostId: auth.user.id'), "create uses authenticated host_id");
-  assert(route.includes('mode: "update"'), "update mode wired");
+  assert(route.includes("createHostPropertyAtomically"), "create uses the atomic server-only operation");
+  assert(route.includes("hostId: auth.user.id"), "create uses authenticated host_id");
+  assert(route.includes("updateHostProperty"), "update uses the server-only operation");
+  assert(serverStore.includes("create_host_property_with_limit"), "create delegates limit enforcement to database RPC");
   assert(route.includes("host_id: _ignoredHostId") || route.includes("_ignoredHostId"), "client host_id stripped");
   assert(route.includes("hostOwnsProperty"), "update checks ownership");
   assert(route.includes("listOwnedPropertyIds"), "create plan limit uses owned ids");
   assert(route.includes("isSuperAdmin"), "founder update path preserved");
   assert(!route.includes("fetchListings"), "create/update no longer trusts global listings for ownership");
+  assert(route.includes("validatePropertyWriteIdentity"), "server validates free-form city input");
+  assert(route.includes("property.city = identity.value.city"), "server accepts the normalized free-form city");
 
   assert(customersPage.includes("loadPropertyCountsByHostId"), "customers load live property counts");
   assert(table.includes("formatBackOfficePropertyCount") || table.includes("propertyCountForHost"), "table shows real counts");

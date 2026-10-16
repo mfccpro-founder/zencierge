@@ -240,8 +240,8 @@ export function DisputeDossierPanel() {
         </p>
         {shieldPrefill ? (
           <p className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
-            Chargeback Shield dossier attached for reservation {shieldPrefill}. Evidence notes include signatures, lock
-            logs, communications, and housekeeping proofs.
+            Draft evidence inventory attached for reservation {shieldPrefill}. Missing signatures, lock logs,
+            communications, inspections, and photos are shown as “No registrado” and are not inferred.
           </p>
         ) : null}
 

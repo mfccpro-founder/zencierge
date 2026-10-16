@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import {
   aggregateManualExpensesForMonth,
+  resolveManualExpenseTotals,
   BUSINESS_EXPENSE_CATEGORIES,
   expenseMonthDateBounds,
   formatExpenseUsd,
@@ -91,6 +92,17 @@ export function runAdminExpensesTests() {
   assert(totals.payrollThisMonthUsd === 2000, "payroll total");
   assert(totals.contractorsThisMonthUsd === 500, "contractor total");
   assert(totals.otherOperatingThisMonthUsd === 100, "other OpEx excludes payroll and contractors");
+
+  const emptyLedger = resolveManualExpenseTotals({ readFailed: false, rows: [] });
+  assert(emptyLedger.expensesReadUnavailable === false, "a successful empty ledger stays available");
+  assert(emptyLedger.payrollThisMonthUsd === 0, "a successful empty ledger is a real zero");
+  assert(emptyLedger.manualExpensesThisMonthUsd === 0, "empty manual total is zero");
+
+  const failedLedger = resolveManualExpenseTotals({ readFailed: true, rows: [] });
+  assert(failedLedger.expensesReadUnavailable === true, "a failed ledger read is unavailable");
+  assert(failedLedger.payrollThisMonthUsd == null, "a failed ledger read is not zero payroll");
+  assert(failedLedger.contractorsThisMonthUsd == null, "a failed ledger read is not zero contractors");
+  assert(failedLedger.otherOperatingThisMonthUsd == null, "a failed ledger read is not zero other OpEx");
   assert(formatExpenseUsd(2600) === "$2,600.00", "USD format");
 
   const migrationNames = existsSync(join(root, "supabase/migrations"))

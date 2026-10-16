@@ -15,6 +15,7 @@ import {
 import { readPendingSignup } from "@/lib/pending-signup";
 import { useHostShell } from "@/components/dashboard/host-shell-context";
 import type { HostAlert } from "@/lib/housekeeping-photos";
+import { usePrivatePilotMode } from "@/components/pilot/private-pilot-context";
 
 const NOTICES = [
   { id: "n1", href: "/dashboard/neighbor-shield", title: "Quiet hours", body: "NeighborShield: noise alert on Miami Beach Loft." },
@@ -23,6 +24,7 @@ const NOTICES = [
 ];
 
 export function HostShellHeader() {
+  const privatePilot = usePrivatePilotMode();
   const { mobileNavOpen, setMobileNavOpen } = useHostShell();
   const [hostName, setHostName] = useState(DEFAULT_HOST_PROFILE_NAME);
   const [bellOpen, setBellOpen] = useState(false);
@@ -104,7 +106,7 @@ export function HostShellHeader() {
   const initials = hostInitials(hostName || DEFAULT_HOST_PROFILE_NAME);
 
   return (
-    <header className="sticky top-0 z-30 border-b border-slate-200 bg-white">
+    <header className="sticky top-0 z-50 overflow-visible border-b border-slate-200 bg-white">
       <div className="flex items-center justify-between gap-3 px-4 py-3 lg:px-8">
         <div className="flex min-w-0 items-center gap-3">
           <button
@@ -119,6 +121,11 @@ export function HostShellHeader() {
           <div className="flex items-center gap-2" data-tour="host-os">
             <ZenciergeLogo className="h-8 w-auto brightness-0" />
             <p className="truncate text-sm font-semibold text-slate-900">Zencierge Host OS</p>
+            {privatePilot ? (
+              <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-900">
+                Private pilot · no payments or external actions
+              </span>
+            ) : null}
           </div>
         </div>
 

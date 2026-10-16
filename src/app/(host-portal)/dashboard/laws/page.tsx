@@ -3,9 +3,8 @@ import { HostOpsPage } from "@/components/dashboard/host-ops-page";
 import { LawsRegulationsView } from "@/components/dashboard/laws-regulations-view";
 
 export const metadata: Metadata = {
-  title: "Leyes y regulaciones de Airbnb · Zencierge",
-  description:
-    "Guía de zonificación, impuestos turísticos y cumplimiento de plataformas según la ubicación de cada propiedad en Florida.",
+  title: "Airbnb Regulations & Laws · Zencierge",
+  description: "Location-specific zoning, lodging-tax, and platform-compliance guidance for each property.",
 };
 
 export default function HostLawsPage() {

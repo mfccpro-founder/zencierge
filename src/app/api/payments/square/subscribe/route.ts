@@ -6,6 +6,7 @@ import {
   mapEnrollErrorToHttpStatus,
   type SquareEnrollClient,
 } from "@/lib/square-subscription-enroll";
+import { hasExplicitPaidBillingConsent, paidBillingConsentRequiredResponse } from "@/lib/paid-billing-consent";
 
 export const dynamic = "force-dynamic";
 
@@ -140,6 +141,7 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
+  if (!hasExplicitPaidBillingConsent(body)) return paidBillingConsentRequiredResponse();
 
   const record = body as Record<string, unknown>;
   const intentId = asOptionalString(record.intentId);

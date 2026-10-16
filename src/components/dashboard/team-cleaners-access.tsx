@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { Plus, Trash2, Users } from "lucide-react";
-import { HousekeepingStaffLinkCard } from "@/components/dashboard/housekeeping-staff-link-card";
 
 type TeamRole = "cleaner" | "cohost" | "inspector";
 
@@ -80,7 +79,6 @@ export function TeamCleanersAccessPanel() {
 
   return (
     <div className="space-y-4">
-      <HousekeepingStaffLinkCard />
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="border-b border-slate-200 pb-4">
           <div className="flex items-center gap-2">
@@ -88,8 +86,8 @@ export function TeamCleanersAccessPanel() {
             <h2 className="text-lg font-bold text-slate-900">Team &amp; cleaners access</h2>
           </div>
           <p className="mt-1 text-sm font-medium text-slate-800">
-            Invite cleaning crew or co-hosts with role-based permissions. Share the public upload link above for phone
-            turnovers.
+            Invite cleaning crew or co-hosts with role-based permissions. Cleaner links are created per property and stay
+            from the Inspections tab; a generic upload link is never shared.
           </p>
         </div>
         {toast ? (

@@ -49,7 +49,7 @@ export const HOST_NAV_SECTIONS: HostNavSection[] = [
     id: "elena",
     label: "AI Assistant",
     items: [
-      { id: "elena-voice", href: "/dashboard/voice-agent", label: "Elena Voice", match: "prefix" },
+      { id: "elena-voice", href: "/dashboard/voice-agent", label: "Isabela Voice", match: "prefix" },
       { id: "guest-qr", href: "/dashboard/voice-agent?tab=guest-qr", label: "Guest QR", match: "prefix", tab: "guest-qr" },
     ],
   },

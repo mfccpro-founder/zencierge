@@ -15,6 +15,16 @@ if (typeof window !== "undefined") {
 }
 
 export const AI_USAGE_BACKOFFICE_TIMEZONE = "America/New_York";
+export const AI_USAGE_MONTH_PAGE_SIZE = 1000;
+export const AI_USAGE_MONTH_MAX_ROWS = 50_000;
+
+export const AI_USAGE_UNAVAILABLE_LABEL = "— / No disponible";
+export const AI_USAGE_READ_UNAVAILABLE_NOTE =
+  "TTS usage is unavailable. Counts and costs are not an empty month.";
+export const AI_USAGE_READ_INCOMPLETE_CAP_NOTE =
+  "Monthly TTS read stopped at the safety cap. Totals are incomplete and are not the full month.";
+export const AI_USAGE_READ_INCOMPLETE_ERROR_NOTE =
+  "A later page of TTS usage failed to load. Totals are incomplete and are not the full month.";
 
 export const AI_USAGE_SOURCES = [
   "guest_stay_tts",
@@ -276,6 +286,12 @@ export type AiUsageMonthSnapshot = {
   pendingExactPricingCharacters: number;
   totalsArePartial: boolean;
   partialTotalsNote: string | null;
+  /** True when a later page or the safety cap stopped the read. Distinct from an unavailable first page. */
+  readIncomplete: boolean;
+  readIncompleteNote: string | null;
+  /** True when the first page failed. Counts are not a valid zero. */
+  readUnavailable: boolean;
+  readUnavailableNote: string | null;
   costPerCustomer: AiUsageExactAttributionRow[];
   costPerStay: AiUsageExactAttributionRow[];
   openaiSpendReconciliation: string;
@@ -296,15 +312,29 @@ type UsageRow = {
   property_id: string | null;
 };
 
-function providerCostLabel(provider: string, pendingEvents: number, exactCents: number | null): string {
+function tariffProviderName(provider: string): string {
   const p = provider.toLowerCase();
-  if (p === "elevenlabs") {
-    return exactCents != null || pendingEvents === 0 ? "ElevenLabs — exact" : "ElevenLabs — exact (partial)";
+  if (p === "elevenlabs") return "ElevenLabs";
+  if (p === "openai") return "OpenAI";
+  return provider;
+}
+
+/** Local-tariff rows, including historical cost_class "exact", are estimates. Unknown stays unlabeled as money. */
+export function presentTariffCost(input: {
+  provider: string;
+  tariffCents: number;
+  hasTariff: boolean;
+  unknownEvents: number;
+}): { exactCostCents: number | null; costClassLabel: string } {
+  const name = tariffProviderName(input.provider);
+  if (!input.hasTariff) {
+    return { exactCostCents: null, costClassLabel: `${name} — cost unknown` };
   }
-  if (p === "openai") {
-    return "OpenAI — cost pending exact metering";
-  }
-  return pendingEvents > 0 ? `${provider} — cost pending exact metering` : `${provider} — exact`;
+  const estimated = `${name} — estimated from configured tariff`;
+  return {
+    exactCostCents: input.tariffCents,
+    costClassLabel: input.unknownEvents > 0 ? `${estimated} · some costs unknown` : estimated,
+  };
 }
 
 function emptySnapshot(
@@ -331,10 +361,15 @@ function emptySnapshot(
     pendingExactPricingCharacters: 0,
     totalsArePartial: false,
     partialTotalsNote: null,
+    readIncomplete: false,
+    readIncompleteNote: null,
+    readUnavailable: false,
+    readUnavailableNote: null,
     costPerCustomer: [],
     costPerStay: [],
     openaiSpendReconciliation: openai.label,
-    costNote: "Exact ElevenLabs costs only. OpenAI TTS awaits exact metering.",
+    costNote:
+      "Tariff amounts are estimates from configured local rates, including historical rows stored as exact. Unknown costs stay unknown and are not $0. This is not a reconciled provider invoice.",
     ...extra,
   };
 }
@@ -358,7 +393,14 @@ export function aggregateAiUsageRows(rows: UsageRow[]): Pick<
 > {
   const providerMap = new Map<
     string,
-    { requests: number; characters: number; exactCostCents: number; pendingEvents: number }
+    {
+      requests: number;
+      characters: number;
+      tariffCents: number;
+      hasTariff: boolean;
+      pendingEvents: number;
+      unknownEvents: number;
+    }
   >();
   const modelMap = new Map<
     string,
@@ -367,8 +409,10 @@ export function aggregateAiUsageRows(rows: UsageRow[]): Pick<
       model: string;
       requests: number;
       characters: number;
-      exactCostCents: number;
+      tariffCents: number;
+      hasTariff: boolean;
       pendingEvents: number;
+      unknownEvents: number;
     }
   >();
   const hostMap = new Map<string, { exactCostCents: number; exactEvents: number; characters: number }>();
@@ -415,15 +459,23 @@ export function aggregateAiUsageRows(rows: UsageRow[]): Pick<
       ttsFailed += 1;
     }
 
+    const priced = exactCents != null;
+    const unknown = !priced;
     const p = providerMap.get(provider) ?? {
       requests: 0,
       characters: 0,
-      exactCostCents: 0,
+      tariffCents: 0,
+      hasTariff: false,
       pendingEvents: 0,
+      unknownEvents: 0,
     };
     p.requests += 1;
     if (row.status === "success") p.characters += chars;
-    if (exactCents != null) p.exactCostCents += exactCents;
+    if (priced && exactCents != null) {
+      p.tariffCents += exactCents;
+      p.hasTariff = true;
+    }
+    if (unknown) p.unknownEvents += 1;
     if (row.status === "success" && (costClass === "pending" || (exactCents == null && provider.toLowerCase() === "openai"))) {
       p.pendingEvents += 1;
     }
@@ -435,12 +487,18 @@ export function aggregateAiUsageRows(rows: UsageRow[]): Pick<
       model,
       requests: 0,
       characters: 0,
-      exactCostCents: 0,
+      tariffCents: 0,
+      hasTariff: false,
       pendingEvents: 0,
+      unknownEvents: 0,
     };
     m.requests += 1;
     if (row.status === "success") m.characters += chars;
-    if (exactCents != null) m.exactCostCents += exactCents;
+    if (priced && exactCents != null) {
+      m.tariffCents += exactCents;
+      m.hasTariff = true;
+    }
+    if (unknown) m.unknownEvents += 1;
     if (row.status === "success" && (costClass === "pending" || (exactCents == null && provider.toLowerCase() === "openai"))) {
       m.pendingEvents += 1;
     }
@@ -479,7 +537,7 @@ export function aggregateAiUsageRows(rows: UsageRow[]): Pick<
     pendingExactPricingCharacters,
     totalsArePartial,
     partialTotalsNote: totalsArePartial
-      ? "Totals are partial — OpenAI (and any other pending) TTS awaits exact metering and is not shown as $0."
+      ? "Some TTS costs are unknown. They are excluded from the tariff estimate and are not shown as $0."
       : null,
     byProvider: [...providerMap.entries()]
       .map(([provider, value]) => ({
@@ -487,51 +545,28 @@ export function aggregateAiUsageRows(rows: UsageRow[]): Pick<
         requests: value.requests,
         characters: value.characters,
         pendingEvents: value.pendingEvents,
-        exactCostCents: value.exactCostCents > 0 || provider.toLowerCase() === "elevenlabs" ? value.exactCostCents : null,
-        costClassLabel: providerCostLabel(
+        ...presentTariffCost({
           provider,
-          value.pendingEvents,
-          value.exactCostCents > 0 ? value.exactCostCents : provider.toLowerCase() === "elevenlabs" ? value.exactCostCents : null,
-        ),
+          tariffCents: value.tariffCents,
+          hasTariff: value.hasTariff,
+          unknownEvents: value.unknownEvents,
+        }),
       }))
-      .map((row) => {
-        if (row.provider.toLowerCase() === "openai") {
-          return {
-            ...row,
-            exactCostCents: null,
-            costClassLabel: "OpenAI — cost pending exact metering",
-          };
-        }
-        if (row.provider.toLowerCase() === "elevenlabs") {
-          return {
-            ...row,
-            exactCostCents: row.exactCostCents ?? 0,
-            costClassLabel: "ElevenLabs — exact",
-          };
-        }
-        return row;
-      })
       .sort((a, b) => b.requests - a.requests || a.provider.localeCompare(b.provider)),
     byModel: [...modelMap.values()]
-      .map((row) => {
-        const isOpenAi = row.provider.toLowerCase() === "openai";
-        const isEleven = row.provider.toLowerCase() === "elevenlabs";
-        return {
+      .map((row) => ({
+        provider: row.provider,
+        model: row.model,
+        requests: row.requests,
+        characters: row.characters,
+        pendingEvents: row.pendingEvents,
+        ...presentTariffCost({
           provider: row.provider,
-          model: row.model,
-          requests: row.requests,
-          characters: row.characters,
-          pendingEvents: row.pendingEvents,
-          exactCostCents: isOpenAi ? null : isEleven ? row.exactCostCents : row.exactCostCents > 0 ? row.exactCostCents : null,
-          costClassLabel: isOpenAi
-            ? "OpenAI — cost pending exact metering"
-            : isEleven
-              ? "ElevenLabs — exact"
-              : row.pendingEvents > 0
-                ? `${row.provider} — cost pending exact metering`
-                : `${row.provider} — exact`,
-        };
-      })
+          tariffCents: row.tariffCents,
+          hasTariff: row.hasTariff,
+          unknownEvents: row.unknownEvents,
+        }),
+      }))
       .sort(
         (a, b) => b.requests - a.requests || a.provider.localeCompare(b.provider) || a.model.localeCompare(b.model),
       ),
@@ -544,6 +579,394 @@ export function aggregateAiUsageRows(rows: UsageRow[]): Pick<
   };
 }
 
+export type HostTtsMeterMonth = {
+  logicalRequests: number;
+  completedRequests: number;
+  failedRequests: number;
+  /** Attempts with response_observed_at set, including those whose result later became uncertain. */
+  observedAttempts: number;
+  characters: number;
+  pendingCostAttempts: number;
+  pendingCharacters: number;
+  estimatedCostCents: number | null;
+  totalsPartial: boolean;
+};
+
+export const HOST_TTS_METER_BACKOFFICE_RPC = "summarize_host_tts_meter_backoffice";
+export const HOST_TTS_METER_READ_INCOMPLETE_NOTE =
+  "Host TTS meter could not be read. Totals are incomplete and are not the full month.";
+
+type UsageAggregate = ReturnType<typeof aggregateAiUsageRows>;
+
+/**
+ * Adds host_tts meter totals to an events aggregate.
+ * Metered host playback is not also written to ai_usage_events, so this adds each playback once.
+ * Guest usage stays in the events aggregate. A null estimated total is not added as zero.
+ * The write flag does not decide this merge. Recorded meter rows stay visible when new writes return to events.
+ */
+export function mergeHostTtsMeterMonth(aggregate: UsageAggregate, meter: HostTtsMeterMonth): UsageAggregate {
+  const exact =
+    meter.estimatedCostCents == null
+      ? aggregate.exactTrackedCostCents
+      : (aggregate.exactTrackedCostCents ?? 0) + meter.estimatedCostCents;
+  const pendingEvents = aggregate.pendingExactPricingEvents + meter.pendingCostAttempts;
+  const totalsArePartial = aggregate.totalsArePartial || meter.totalsPartial || meter.pendingCostAttempts > 0;
+  return {
+    ...aggregate,
+    ttsRequests: aggregate.ttsRequests + meter.logicalRequests,
+    ttsSuccessful: aggregate.ttsSuccessful + meter.completedRequests,
+    ttsFailed: aggregate.ttsFailed + meter.failedRequests,
+    charactersSynthesized: aggregate.charactersSynthesized + meter.characters,
+    exactTrackedCostCents: exact,
+    exactTrackedCostLabel: exact == null ? "—" : formatUsdFromCents(exact),
+    pendingExactPricingEvents: pendingEvents,
+    pendingExactPricingCharacters: aggregate.pendingExactPricingCharacters + meter.pendingCharacters,
+    totalsArePartial,
+    partialTotalsNote: totalsArePartial
+      ? (aggregate.partialTotalsNote ??
+        "Some TTS costs are unknown. They are excluded from the tariff estimate and are not shown as $0.")
+      : null,
+    byProvider: addHostTtsMeterBucket(aggregate.byProvider, meter, (row) => row.provider.toLowerCase() === "openai", {
+      provider: "OpenAI",
+    }),
+    byModel: addHostTtsMeterBucket(
+      aggregate.byModel,
+      meter,
+      (row) => row.provider.toLowerCase() === "openai" && row.model === "gpt-4o-mini-tts",
+      { provider: "OpenAI", model: "gpt-4o-mini-tts" },
+    ),
+  };
+}
+
+function addHostTtsMeterBucket<T extends UsageAggregate["byProvider"][number]>(
+  rows: readonly T[],
+  meter: HostTtsMeterMonth,
+  match: (row: T) => boolean,
+  seed: Partial<T> & { provider: string },
+): T[] {
+  if (meter.logicalRequests === 0 && meter.pendingCostAttempts === 0 && meter.estimatedCostCents == null && meter.characters === 0) {
+    return [...rows];
+  }
+  const next = rows.map((row) => ({ ...row }));
+  let row = next.find(match);
+  if (!row) {
+    row = {
+      requests: 0,
+      characters: 0,
+      pendingEvents: 0,
+      exactCostCents: null,
+      costClassLabel: "OpenAI — cost unknown",
+      ...seed,
+    } as T;
+    next.push(row);
+  }
+  const previousExact = row.exactCostCents;
+  const previousUnknown = previousExact == null ? row.requests : row.costClassLabel.includes("unknown") ? row.requests : 0;
+  row.requests += meter.logicalRequests;
+  row.characters += meter.characters;
+  row.pendingEvents += meter.pendingCostAttempts;
+  const hasTariff = previousExact != null || meter.estimatedCostCents != null;
+  const tariffCents = (previousExact ?? 0) + (meter.estimatedCostCents ?? 0);
+  const priced = presentTariffCost({
+    provider: row.provider,
+    tariffCents,
+    hasTariff,
+    unknownEvents: previousUnknown + (meter.estimatedCostCents == null ? meter.logicalRequests : 0),
+  });
+  row.exactCostCents = priced.exactCostCents;
+  row.costClassLabel = priced.costClassLabel;
+  return next.sort((a, b) => b.requests - a.requests || a.provider.localeCompare(b.provider));
+}
+
+function meterCount(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
+  if (typeof value === "string" && /^-?\d+$/.test(value.trim())) return Number(value.trim());
+  return null;
+}
+
+export async function readHostTtsMeterMonth(
+  admin: { rpc: AiUsageMeterRpc },
+  from: Date,
+  to: Date,
+): Promise<{ ok: true; summary: HostTtsMeterMonth } | { ok: false; error: string }> {
+  const { data, error } = await admin.rpc(HOST_TTS_METER_BACKOFFICE_RPC, {
+    p_from: from.toISOString(),
+    p_to: to.toISOString(),
+  });
+  if (error) return { ok: false, error: "Could not read the host TTS meter." };
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row || typeof row !== "object") return { ok: false, error: "Could not read the host TTS meter." };
+  const record = row as Record<string, unknown>;
+  const logicalRequests = meterCount(record.logical_requests);
+  const completedRequests = meterCount(record.completed_requests);
+  const failedRequests = meterCount(record.failed_requests);
+  const observedAttempts = meterCount(record.observed_attempts);
+  const characters = meterCount(record.characters);
+  const pendingCostAttempts = meterCount(record.pending_cost_attempts);
+  const pendingCharacters = meterCount(record.pending_characters);
+  if (
+    logicalRequests == null ||
+    completedRequests == null ||
+    failedRequests == null ||
+    observedAttempts == null ||
+    characters == null ||
+    pendingCostAttempts == null ||
+    pendingCharacters == null
+  ) {
+    return { ok: false, error: "Could not read the host TTS meter." };
+  }
+  const estimated = record.estimated_cost_cents;
+  const estimatedCostCents = estimated == null ? null : meterCount(estimated);
+  if (estimated != null && estimatedCostCents == null) {
+    return { ok: false, error: "Could not read the host TTS meter." };
+  }
+  return {
+    ok: true,
+    summary: {
+      logicalRequests,
+      completedRequests,
+      failedRequests,
+      observedAttempts,
+      characters,
+      pendingCostAttempts,
+      pendingCharacters,
+      estimatedCostCents,
+      totalsPartial: record.totals_partial === true || record.totals_partial === "t" || record.totals_partial === "true",
+    },
+  };
+}
+
+/**
+ * Fold a host meter read into an events snapshot.
+ * A failed read stays explicit and keeps the event totals. It does not replace them with zero.
+ */
+export function applyHostTtsMeterHistory(
+  snapshot: AiUsageMonthSnapshot,
+  aggregated: UsageAggregate,
+  meter: { ok: true; summary: HostTtsMeterMonth } | { ok: false; error: string },
+): AiUsageMonthSnapshot {
+  if (!meter.ok) {
+    return {
+      ...snapshot,
+      readIncomplete: true,
+      readIncompleteNote: snapshot.readIncompleteNote
+        ? `${snapshot.readIncompleteNote} ${HOST_TTS_METER_READ_INCOMPLETE_NOTE}`
+        : HOST_TTS_METER_READ_INCOMPLETE_NOTE,
+      error: snapshot.error ?? meter.error,
+    };
+  }
+  const merged = mergeHostTtsMeterMonth(aggregated, meter.summary);
+  return {
+    ...snapshot,
+    ...merged,
+    exactTrackedCostLabel: merged.exactTrackedCostLabel,
+  };
+}
+
+type AiUsageMeterRpc = (
+  fn: string,
+  args: Record<string, string>,
+) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
+
+export type AiUsageReadCursor = {
+  created_at: string;
+  id: string;
+};
+
+export type AiUsageStoredRow = UsageRow & {
+  id: string;
+  created_at: string;
+};
+
+export type AiUsagePageFetch =
+  | { ok: true; rows: AiUsageStoredRow[] }
+  | { ok: false; error: string };
+
+export type AiUsageReadAvailability = "complete" | "unavailable" | "partial";
+
+export type AiUsageMonthRead = {
+  rows: AiUsageStoredRow[];
+  readAvailability: AiUsageReadAvailability;
+  readIncomplete: boolean;
+  readIncompleteNote: string | null;
+  readUnavailable: boolean;
+  readUnavailableNote: string | null;
+  error: string | null;
+};
+
+function completeUsageRead(rows: AiUsageStoredRow[]): AiUsageMonthRead {
+  return {
+    rows,
+    readAvailability: "complete",
+    readIncomplete: false,
+    readIncompleteNote: null,
+    readUnavailable: false,
+    readUnavailableNote: null,
+    error: null,
+  };
+}
+
+function unavailableUsageRead(error: string): AiUsageMonthRead {
+  return {
+    rows: [],
+    readAvailability: "unavailable",
+    readIncomplete: false,
+    readIncompleteNote: null,
+    readUnavailable: true,
+    readUnavailableNote: AI_USAGE_READ_UNAVAILABLE_NOTE,
+    error,
+  };
+}
+
+function partialUsageRead(
+  rows: AiUsageStoredRow[],
+  note: string,
+  error: string | null,
+): AiUsageMonthRead {
+  return {
+    rows,
+    readAvailability: "partial",
+    readIncomplete: true,
+    readIncompleteNote: note,
+    readUnavailable: false,
+    readUnavailableNote: null,
+    error,
+  };
+}
+
+/** Counters and tariff labels. A failed first page is never a numeric zero. */
+export function presentAiUsageMeasure(valueLabel: string, unavailable: boolean): string {
+  return unavailable ? AI_USAGE_UNAVAILABLE_LABEL : valueLabel;
+}
+
+export function presentAiUsageCount(value: number, unavailable: boolean): string {
+  return presentAiUsageMeasure(value.toLocaleString("en-US"), unavailable);
+}
+
+/** A finished read with no events keeps a real zero. Unknown tariff stays "—". */
+export function presentAiUsageTariff(input: {
+  unavailable: boolean;
+  label: string;
+  requests: number;
+  readIncomplete: boolean;
+  totalsArePartial: boolean;
+}): string {
+  if (input.unavailable) return AI_USAGE_UNAVAILABLE_LABEL;
+  if (!input.readIncomplete && !input.totalsArePartial && input.requests === 0 && input.label === "—") {
+    return formatUsdFromCents(0);
+  }
+  return input.label;
+}
+
+/** Ascending (created_at, id). Equal timestamps stay ordered by id. */
+export function compareAiUsageReadKey(
+  a: { created_at: string; id: string },
+  b: { created_at: string; id: string },
+): number {
+  if (a.created_at < b.created_at) return -1;
+  if (a.created_at > b.created_at) return 1;
+  if (a.id < b.id) return -1;
+  if (a.id > b.id) return 1;
+  return 0;
+}
+
+export function quoteAiUsageFilterValue(value: string): string {
+  return `"${value.replace(/["(),]/g, "")}"`;
+}
+
+/** PostgREST `or` filter: rows strictly after the cursor, including same created_at with a greater id. */
+export function aiUsageMonthKeysetOrFilter(cursor: AiUsageReadCursor): string {
+  const createdAt = quoteAiUsageFilterValue(cursor.created_at);
+  const id = quoteAiUsageFilterValue(cursor.id);
+  return `created_at.gt.${createdAt},and(created_at.eq.${createdAt},id.gt.${id})`;
+}
+
+export function sliceAiUsageReadPage<T extends AiUsageReadCursor>(
+  rows: readonly T[],
+  cursor: AiUsageReadCursor | null,
+  pageSize: number,
+): T[] {
+  const sorted = [...rows].sort(compareAiUsageReadKey);
+  const after = cursor ? sorted.filter((row) => compareAiUsageReadKey(row, cursor) > 0) : sorted;
+  return after.slice(0, Math.max(0, pageSize));
+}
+
+export function aiUsageMonthReadIsComplete(read: {
+  readIncomplete: boolean;
+  readUnavailable?: boolean;
+  error: string | null;
+}): boolean {
+  return !read.readIncomplete && read.readUnavailable !== true && read.error == null;
+}
+
+/**
+ * Keyset pages until a short page. A full page at the safety cap, or an error
+ * after earlier pages, stays incomplete so a partial sum is not a full month.
+ */
+export async function collectAiUsageMonthPages(input: {
+  pageSize: number;
+  maxRows: number;
+  fetchPage: (cursor: AiUsageReadCursor | null) => Promise<AiUsagePageFetch>;
+}): Promise<AiUsageMonthRead> {
+  const pageSize = Math.max(1, Math.trunc(input.pageSize));
+  const maxRows = Math.max(pageSize, Math.trunc(input.maxRows));
+  const rows: AiUsageStoredRow[] = [];
+  let cursor: AiUsageReadCursor | null = null;
+
+  while (rows.length < maxRows) {
+    const page = await input.fetchPage(cursor);
+    if (!page.ok) {
+      if (rows.length === 0) return unavailableUsageRead(page.error);
+      return partialUsageRead(rows, AI_USAGE_READ_INCOMPLETE_ERROR_NOTE, page.error);
+    }
+    const batch = page.rows.slice(0, pageSize);
+    if (batch.length === 0) return completeUsageRead(rows);
+    const last = batch[batch.length - 1];
+    if (!last || (cursor && compareAiUsageReadKey(last, cursor) <= 0)) {
+      if (rows.length === 0) return unavailableUsageRead("Could not read ai_usage_events.");
+      return partialUsageRead(rows, AI_USAGE_READ_INCOMPLETE_ERROR_NOTE, "Could not read ai_usage_events.");
+    }
+    rows.push(...batch);
+    if (batch.length < pageSize) return completeUsageRead(rows);
+    cursor = { created_at: last.created_at, id: last.id };
+    if (rows.length >= maxRows) {
+      return partialUsageRead(rows.slice(0, maxRows), AI_USAGE_READ_INCOMPLETE_CAP_NOTE, null);
+    }
+  }
+
+  return partialUsageRead(rows.slice(0, maxRows), AI_USAGE_READ_INCOMPLETE_CAP_NOTE, null);
+}
+
+function usageReadErrorMessage(message: string): string {
+  return message.includes("ai_usage_events")
+    ? "ai_usage_events table is missing. Apply the Phase 1 migration."
+    : "Could not read ai_usage_events.";
+}
+
+function mapUsageReadRow(raw: Record<string, unknown>): AiUsageStoredRow | null {
+  const id = typeof raw.id === "string" ? raw.id.trim() : "";
+  const created_at = typeof raw.created_at === "string" ? raw.created_at.trim() : "";
+  if (!id || !created_at) return null;
+  return {
+    id,
+    created_at,
+    provider: typeof raw.provider === "string" ? raw.provider : null,
+    model: typeof raw.model === "string" ? raw.model : null,
+    status: typeof raw.status === "string" ? raw.status : null,
+    input_characters: typeof raw.input_characters === "number" ? raw.input_characters : null,
+    calculated_cost_cents: typeof raw.calculated_cost_cents === "number" ? raw.calculated_cost_cents : null,
+    pricing_rule_id: typeof raw.pricing_rule_id === "string" ? raw.pricing_rule_id : null,
+    cost_class: typeof raw.cost_class === "string" ? raw.cost_class : null,
+    operation: typeof raw.operation === "string" ? raw.operation : null,
+    host_id: typeof raw.host_id === "string" ? raw.host_id : null,
+    reservation_id: typeof raw.reservation_id === "string" ? raw.reservation_id : null,
+    property_id: typeof raw.property_id === "string" ? raw.property_id : null,
+  };
+}
+
+const AI_USAGE_MONTH_SELECT =
+  "id, created_at, provider, model, status, input_characters, calculated_cost_cents, pricing_rule_id, cost_class, operation, host_id, reservation_id, property_id";
+
 /** SuperAdmin Back Office read path — service role only. */
 export async function getAiUsageMonthSnapshot(now = new Date()): Promise<AiUsageMonthSnapshot> {
   const bounds = aiUsageCalendarMonthUtcBounds(now, AI_USAGE_BACKOFFICE_TIMEZONE);
@@ -551,37 +974,71 @@ export async function getAiUsageMonthSnapshot(now = new Date()): Promise<AiUsage
   if (!admin) {
     return emptySnapshot(bounds, {
       error: "SUPABASE_SERVICE_ROLE_KEY is not configured. Cannot read ai_usage_events.",
+      readUnavailable: true,
+      readUnavailableNote: AI_USAGE_READ_UNAVAILABLE_NOTE,
+      exactTrackedCostLabel: AI_USAGE_UNAVAILABLE_LABEL,
     });
   }
 
   try {
-    const { data, error } = await admin
-      .from("ai_usage_events")
-      .select(
-        "provider, model, status, input_characters, calculated_cost_cents, pricing_rule_id, cost_class, operation, host_id, reservation_id, property_id",
-      )
-      .eq("operation", "tts")
-      .gte("created_at", bounds.startUtc.toISOString())
-      .lt("created_at", bounds.endUtc.toISOString());
+    const read = await collectAiUsageMonthPages({
+      pageSize: AI_USAGE_MONTH_PAGE_SIZE,
+      maxRows: AI_USAGE_MONTH_MAX_ROWS,
+      fetchPage: async (cursor) => {
+        let query = admin
+          .from("ai_usage_events")
+          .select(AI_USAGE_MONTH_SELECT)
+          .eq("operation", "tts")
+          .gte("created_at", bounds.startUtc.toISOString())
+          .lt("created_at", bounds.endUtc.toISOString())
+          .order("created_at", { ascending: true })
+          .order("id", { ascending: true })
+          .limit(AI_USAGE_MONTH_PAGE_SIZE);
+        if (cursor) query = query.or(aiUsageMonthKeysetOrFilter(cursor));
+        const { data, error } = await query;
+        if (error) return { ok: false, error: usageReadErrorMessage(error.message) };
+        const mapped: AiUsageStoredRow[] = [];
+        for (const raw of (data ?? []) as Record<string, unknown>[]) {
+          const row = mapUsageReadRow(raw);
+          if (!row) return { ok: false, error: "Could not read ai_usage_events." };
+          mapped.push(row);
+        }
+        return { ok: true, rows: mapped };
+      },
+    });
 
-    if (error) {
-      return emptySnapshot(bounds, {
+    const aggregated = aggregateAiUsageRows(read.rows);
+    let snapshot: AiUsageMonthSnapshot = {
+      ...emptySnapshot(bounds, {
         serviceRoleReady: true,
-        error: error.message.includes("ai_usage_events")
-          ? "ai_usage_events table is missing. Apply the Phase 1 migration."
-          : "Could not read ai_usage_events.",
-      });
-    }
-
-    const rows = (data ?? []) as UsageRow[];
-    return {
-      ...emptySnapshot(bounds, { serviceRoleReady: true, error: null }),
-      ...aggregateAiUsageRows(rows),
+        error: read.error,
+        readIncomplete: read.readIncomplete,
+        readIncompleteNote: read.readIncompleteNote,
+        readUnavailable: read.readUnavailable,
+        readUnavailableNote: read.readUnavailableNote,
+      }),
+      ...aggregated,
+      readIncomplete: read.readIncomplete,
+      readIncompleteNote: read.readIncompleteNote,
+      readUnavailable: read.readUnavailable,
+      readUnavailableNote: read.readUnavailableNote,
+      error: read.error,
+      exactTrackedCostLabel: read.readUnavailable
+        ? AI_USAGE_UNAVAILABLE_LABEL
+        : aggregated.exactTrackedCostLabel,
     };
+    if (!read.readUnavailable) {
+      const meter = await readHostTtsMeterMonth(admin, bounds.startUtc, bounds.endUtc);
+      snapshot = applyHostTtsMeterHistory(snapshot, aggregated, meter);
+    }
+    return snapshot;
   } catch {
     return emptySnapshot(bounds, {
       serviceRoleReady: true,
       error: "Could not read ai_usage_events.",
+      readUnavailable: true,
+      readUnavailableNote: AI_USAGE_READ_UNAVAILABLE_NOTE,
+      exactTrackedCostLabel: AI_USAGE_UNAVAILABLE_LABEL,
     });
   }
 }

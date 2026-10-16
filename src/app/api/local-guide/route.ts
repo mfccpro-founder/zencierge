@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireHostUser } from "@/lib/supabase-route";
-import { fetchListings } from "@/lib/supabase-listings";
+import { createSupabaseHostOwnershipStore, listOwnedPropertyIds } from "@/lib/host-property-ownership";
+import { tryCreateSupabaseAdminClient } from "@/lib/supabase-admin";
 import {
   deleteLocalGuide,
   insertLocalGuide,
@@ -33,9 +34,14 @@ function rateLimited(key: string) {
   return false;
 }
 
-async function ownedPropertyIds() {
-  const { properties } = await fetchListings();
-  return properties.map((item) => item.id);
+async function ownedPropertyIds(userId: string) {
+  const admin = tryCreateSupabaseAdminClient();
+  if (!admin) return null;
+  const result = await listOwnedPropertyIds({
+    auth: { userId, source: "supabase-auth" },
+    store: createSupabaseHostOwnershipStore(admin),
+  });
+  return result.kind === "ids" ? result.ids : null;
 }
 
 export async function GET(request: NextRequest) {
@@ -43,7 +49,8 @@ export async function GET(request: NextRequest) {
   if (auth.error) return auth.error;
   const propertyId = sanitizeGuideText(request.nextUrl.searchParams.get("propertyId") ?? "", 80);
   if (!propertyId) return Response.json({ error: "invalid" }, { status: 400 });
-  const owned = await ownedPropertyIds();
+  const owned = await ownedPropertyIds(auth.user.id);
+  if (!owned) return Response.json({ error: "unavailable" }, { status: 503 });
   const access = authorizeLocalGuideWrite(auth.user?.id, owned, propertyId);
   if (access === "unauthorized") return Response.json({ error: "Unauthorized" }, { status: 401 });
   if (access === "forbidden") return Response.json({ error: "forbidden" }, { status: 403 });
@@ -66,7 +73,8 @@ export async function POST(request: NextRequest) {
   if (hasUnknownGuideKeys(body)) return Response.json({ error: "invalid" }, { status: 400 });
   const parsed = sanitizeLocalGuideWrite(body);
   if (parsed.error || !parsed.value) return Response.json({ error: parsed.error ?? "invalid" }, { status: 400 });
-  const owned = await ownedPropertyIds();
+  const owned = await ownedPropertyIds(auth.user.id);
+  if (!owned) return Response.json({ error: "unavailable" }, { status: 503 });
   const access = authorizeLocalGuideWrite(auth.user?.id, owned, parsed.value.propertyId);
   if (access === "unauthorized") return Response.json({ error: "Unauthorized" }, { status: 401 });
   if (access === "forbidden") return Response.json({ error: "forbidden" }, { status: 403 });
@@ -92,7 +100,8 @@ export async function PATCH(request: NextRequest) {
   const id = typeof body.id === "string" ? body.id.trim() : "";
   const parsed = sanitizeLocalGuideWrite(body);
   if (!id || parsed.error || !parsed.value) return Response.json({ error: parsed.error ?? "invalid" }, { status: 400 });
-  const owned = await ownedPropertyIds();
+  const owned = await ownedPropertyIds(auth.user.id);
+  if (!owned) return Response.json({ error: "unavailable" }, { status: 503 });
   const access = authorizeLocalGuideWrite(auth.user?.id, owned, parsed.value.propertyId);
   if (access === "unauthorized") return Response.json({ error: "Unauthorized" }, { status: 401 });
   if (access === "forbidden") return Response.json({ error: "forbidden" }, { status: 403 });
@@ -121,7 +130,8 @@ export async function DELETE(request: NextRequest) {
   const id = typeof body.id === "string" ? body.id.trim() : "";
   const propertyId = sanitizeGuideText(body.propertyId, 80);
   if (!id || !propertyId) return Response.json({ error: "invalid" }, { status: 400 });
-  const owned = await ownedPropertyIds();
+  const owned = await ownedPropertyIds(auth.user.id);
+  if (!owned) return Response.json({ error: "unavailable" }, { status: 503 });
   const access = authorizeLocalGuideWrite(auth.user?.id, owned, propertyId);
   if (access === "unauthorized") return Response.json({ error: "Unauthorized" }, { status: 401 });
   if (access === "forbidden") return Response.json({ error: "forbidden" }, { status: 403 });

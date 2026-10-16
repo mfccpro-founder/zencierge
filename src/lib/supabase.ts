@@ -17,6 +17,9 @@ export const supabase = createClient(url, key, {
     persistSession: false,
     autoRefreshToken: false,
     detectSessionInUrl: false,
+    // This client is for unauthenticated data access only. Keep its GoTrue
+    // storage namespace separate from the cookie-backed browser auth client.
+    storageKey: "zencierge-data-client-no-session",
   },
 });
 

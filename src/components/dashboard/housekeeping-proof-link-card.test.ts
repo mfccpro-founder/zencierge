@@ -48,6 +48,12 @@ export function runHousekeepingProofLinkCardTests() {
   assert(card.includes("executeHousekeepingProofShare"), "native share helper");
   assert(card.includes("navigator.share"), "user-gesture share");
   assert(card.includes("copyHeldUrl"), "copy uses held URL");
+  assert(card.includes("QRCodeSVG") && card.includes("value={shareUrl}"), "QR encodes the exact held URL");
+  assert(card.includes("navigator.clipboard.writeText(url)"), "Copy link copies the exact held URL");
+  assert(card.includes("href={shareUrl}"), "open action uses the same held URL");
+  assert(card.includes("selectedProperty?.name"), "property is confirmed before sharing");
+  assert(card.includes("selectedStay.checkIn") && card.includes("selectedStay.checkOut"), "stay is confirmed before sharing");
+  assert(card.includes("formatHousekeepingProofReceivedAt(expiresAt)"), "link validity is shown before sharing");
   assert(card.includes("HOUSEKEEPING_PROOF_HOST_PHOTO_STATUS_PATH"), "polls photo status");
   assert(card.includes("housekeepingProofHostPhotoPollIntervalMs"), "adaptive poll interval helper");
   assert(card.includes("housekeepingProofHostPhotoPollIntervalMs(photoCount)"), "poll interval follows photoCount");
@@ -222,7 +228,8 @@ export function runHousekeepingProofLinkCardTests() {
   assert(card.includes("HOUSEKEEPING_PROOF_HOST_COPY.title.en"), "bilingual title");
   assert(card.includes("{property.name}"), "property name displayed");
   assert(card.includes("stay.checkIn") && card.includes("stay.checkOut") && card.includes("stay.status"), "stay dates and status displayed");
-  assert(!card.includes("{path}") && !card.includes("{url}") && !card.includes("urlRef.current}"), "path/url not rendered");
+  assert(!card.includes("{path}") && !card.includes("urlRef.current}"), "unvalidated ref/path is not rendered");
+  assert(card.includes("{shareUrl}"), "validated exact share URL is rendered for host verification");
   assert(!card.includes("stay.guest") && !card.includes("property.city"), "no guest or city fields rendered");
 
   assert(!/localStorage|sessionStorage|document\.cookie/.test(combined), "no browser storage");

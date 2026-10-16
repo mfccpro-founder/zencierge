@@ -31,7 +31,7 @@ export const HOST_GUIDE_UI = {
     steps: "Step by step",
     tips: "Pro tips",
     openModule: "Open module",
-    emptySearch: "No guide sections match that search. Try a module name such as Housekeeping or Elena Voice.",
+    emptySearch: "No guide sections match that search. Try a module name such as Housekeeping or Isabela Voice.",
     langLabel: "Guide language",
     english: "English",
     spanish: "Español",
@@ -46,7 +46,7 @@ export const HOST_GUIDE_UI = {
     steps: "Paso a paso",
     tips: "Consejos",
     openModule: "Abrir módulo",
-    emptySearch: "Ninguna sección coincide con esa búsqueda. Prueba un nombre como Housekeeping o Elena Voice.",
+    emptySearch: "Ninguna sección coincide con esa búsqueda. Prueba un nombre como Housekeeping o Isabela Voice.",
     langLabel: "Idioma de la guía",
     english: "English",
     spanish: "Español",
@@ -70,7 +70,7 @@ export const HOST_GUIDE_CONTENT: Record<string, HostGuideArticle> = {
       lifecycle: [
         "Sign in and open Overview from Command Center.",
         "Scan occupancy, calls, and turnover status across listings.",
-        "Use cards and shortcuts to open Calendar, Housekeeping, or Elena Voice.",
+        "Use cards and shortcuts to open Calendar, Housekeeping, or Isabela Voice.",
         "Return here after a busy day to confirm nothing is still red.",
       ],
       steps: [
@@ -99,7 +99,7 @@ export const HOST_GUIDE_CONTENT: Record<string, HostGuideArticle> = {
       lifecycle: [
         "Inicia sesión y abre Vista general en Command Center.",
         "Revisa ocupación, llamadas y estado de turnover en tus anuncios.",
-        "Usa las tarjetas o el menú para abrir Calendar, Housekeeping o Elena Voice.",
+        "Usa las tarjetas o el menú para abrir Calendar, Housekeeping o Isabela Voice.",
         "Vuelve al final del día para confirmar que no quedó nada urgente.",
       ],
       steps: [
@@ -260,7 +260,7 @@ export const HOST_GUIDE_CONTENT: Record<string, HostGuideArticle> = {
         },
         {
           title: "Review the evidence blocks",
-          body: "Confirm house-rules acceptance, first-unlock timing, Elena/chat history, and housekeeping photos before a guest files a chargeback.",
+          body: "Confirm house-rules acceptance, first-unlock timing, Isabela/chat history, and housekeeping photos before a guest files a chargeback.",
         },
         {
           title: "Export or file the claim",
@@ -289,7 +289,7 @@ export const HOST_GUIDE_CONTENT: Record<string, HostGuideArticle> = {
         },
         {
           title: "Revisa los bloques de evidencia",
-          body: "Confirma aceptación de reglas de la casa, horario del primer desbloqueo, historial de Elena/chat y fotos de Housekeeping antes de un chargeback.",
+          body: "Confirma aceptación de reglas de la casa, horario del primer desbloqueo, historial de Isabela/chat y fotos de Housekeeping antes de un chargeback.",
         },
         {
           title: "Exporta o presenta el reclamo",
@@ -366,11 +366,11 @@ export const HOST_GUIDE_CONTENT: Record<string, HostGuideArticle> = {
     en: {
       title: "Properties & access",
       summary:
-        "Listing command center. Keep occupancy, parking, handbook notes, and verified access information current so Elena and the guest portal stay accurate.",
+        "Listing command center. Keep occupancy, parking, handbook notes, and verified access information current so Isabela and the guest portal stay accurate.",
       lifecycle: [
         "Add or open a listing and confirm check-in and check-out times.",
         "Manage verified access information, smart-lock vendor, parking, and trash instructions in the listing record.",
-        "Write the AI handbook in plain language. Elena uses this on guest calls — do not paste secrets into this User Guide.",
+        "Write the AI handbook in plain language. Isabela uses this on guest calls — do not paste secrets into this User Guide.",
         "Share the guest portal from Properties when you want arrivals to self-serve without texting you.",
       ],
       steps: [
@@ -389,17 +389,17 @@ export const HOST_GUIDE_CONTENT: Record<string, HostGuideArticle> = {
       ],
       tips: [
         "If a guest reports a lockout, confirm verified access information in Properties before you call them back.",
-        "Use Request a Feature if you need a field Elena cannot see yet (for example, EV charger instructions).",
+        "Use Request a Feature if you need a field Isabela cannot see yet (for example, EV charger instructions).",
       ],
     },
     es: {
       title: "Propiedades y acceso",
       summary:
-        "Centro de mando del anuncio. Mantén ocupación, estacionamiento, notas del handbook e información de acceso verificada al día para que Elena y el portal del huésped coincidan.",
+        "Centro de mando del anuncio. Mantén ocupación, estacionamiento, notas del handbook e información de acceso verificada al día para que Isabela y el portal del huésped coincidan.",
       lifecycle: [
         "Agrega o abre un anuncio y confirma horarios de check-in y check-out.",
         "Gestiona información de acceso verificada, proveedor de cerradura, estacionamiento e instrucciones de basura en el registro del anuncio.",
-        "Escribe el handbook de IA en lenguaje claro. Elena lo usa en llamadas — no pegues secretos en esta guía.",
+        "Escribe el handbook de IA en lenguaje claro. Isabela lo usa en llamadas — no pegues secretos en esta guía.",
         "Comparte el portal del huésped desde Properties si quieres que las llegadas se autoatiendan sin escribirte.",
       ],
       steps: [
@@ -418,28 +418,28 @@ export const HOST_GUIDE_CONTENT: Record<string, HostGuideArticle> = {
       ],
       tips: [
         "Si un huésped reporta un cierre afuera, confirma la información de acceso verificada en Properties antes de devolver la llamada.",
-        "Usa Request a Feature si necesitas un campo que Elena aún no ve (por ejemplo, instrucciones de cargador EV).",
+        "Usa Request a Feature si necesitas un campo que Isabela aún no ve (por ejemplo, instrucciones de cargador EV).",
       ],
     },
   },
   "elena-voice": {
     en: {
-      title: "Elena Voice",
+      title: "Isabela Voice",
       summary:
-        "Elena, your AI receptionist: studio tools, Test Call, and listing grounding so guests get house rules in the language they spoke.",
+        "Isabela, your AI receptionist: studio tools, Test Call, and listing grounding so guests get house rules in the language they spoke.",
       lifecycle: [
         "A guest calls your published voice line.",
-        "Elena answers from the listing handbook and verified access policy — not from this User Guide.",
+        "Isabela answers from the listing handbook and verified access policy — not from this User Guide.",
         "Lockouts, leaks, and emergencies escalate to you per Settings.",
-        "Open Elena Voice to watch the studio, run a Test Call, and confirm the line shown in the sidebar.",
+        "Open Isabela Voice to watch the studio, run a Test Call, and confirm the line shown in the sidebar.",
       ],
       steps: [
         {
-          title: "Open Elena Voice",
-          body: "Under AI Assistant, choose Elena Voice. This is the main Voice Concierge studio, not the Guest QR tab.",
+          title: "Open Isabela Voice",
+          body: "Under AI Assistant, choose Isabela Voice. This is the main Voice Concierge studio, not the Guest QR tab.",
         },
         {
-          title: "Ground Elena in the listing",
+          title: "Ground Isabela in the listing",
           body: "If answers are wrong, update the listing handbook or verified access fields in Properties & access first. Do not only rotate vendor credentials in Settings.",
         },
         {
@@ -449,26 +449,26 @@ export const HOST_GUIDE_CONTENT: Record<string, HostGuideArticle> = {
       ],
       tips: [
         "Quiet hours in Settings should match NeighborShield and the printed house rules.",
-        "Never put your personal mobile number in the handbook. Elena should escalate, not publish your cell.",
+        "Never put your personal mobile number in the handbook. Isabela should escalate, not publish your cell.",
       ],
     },
     es: {
-      title: "Elena Voice",
+      title: "Isabela Voice",
       summary:
-        "Elena, tu recepcionista de IA: estudio, Test Call y contexto del anuncio para que el huésped reciba las reglas de la casa en el idioma que habló.",
+        "Isabela, tu recepcionista de IA: estudio, Test Call y contexto del anuncio para que el huésped reciba las reglas de la casa en el idioma que habló.",
       lifecycle: [
         "Un huésped llama a tu línea de voz publicada.",
-        "Elena responde con el handbook del anuncio y la política de acceso verificado — no con esta guía.",
+        "Isabela responde con el handbook del anuncio y la política de acceso verificado — no con esta guía.",
         "Cierres afuera, fugas y emergencias escalan a ti según Settings.",
-        "Abre Elena Voice para ver el estudio, hacer un Test Call y confirmar la línea que muestra la barra lateral.",
+        "Abre Isabela Voice para ver el estudio, hacer un Test Call y confirmar la línea que muestra la barra lateral.",
       ],
       steps: [
         {
-          title: "Abrir Elena Voice",
-          body: "Bajo AI Assistant, elige Elena Voice. Es el estudio principal de Voice Concierge, no la pestaña Guest QR.",
+          title: "Abrir Isabela Voice",
+          body: "Bajo AI Assistant, elige Isabela Voice. Es el estudio principal de Voice Concierge, no la pestaña Guest QR.",
         },
         {
-          title: "Ancla a Elena en el anuncio",
+          title: "Ancla a Isabela en el anuncio",
           body: "Si las respuestas fallan, actualiza primero el handbook o los campos de acceso verificado en Properties & access. No te limites a rotar credenciales en Settings.",
         },
         {
@@ -478,7 +478,7 @@ export const HOST_GUIDE_CONTENT: Record<string, HostGuideArticle> = {
       ],
       tips: [
         "El horario de silencio en Settings debe coincidir con NeighborShield y las reglas impresas.",
-        "Nunca pongas tu celular personal en el handbook. Elena debe escalar, no publicar tu número.",
+        "Nunca pongas tu celular personal en el handbook. Isabela debe escalar, no publicar tu número.",
       ],
     },
   },
@@ -488,7 +488,7 @@ export const HOST_GUIDE_CONTENT: Record<string, HostGuideArticle> = {
       summary:
         "Guest QR cards for the public guest portal. Print or share the card so arrivals open the right listing without seeing Host OS.",
       lifecycle: [
-        "Pick the listing in Elena Voice.",
+        "Pick the listing in Isabela Voice.",
         "Open the Guest QR row in the sidebar (or the matching tab on the voice page).",
         "Generate or refresh the card for that listing only.",
         "Print or send the card. Guests use the public portal, not the host sidebar.",
@@ -496,7 +496,7 @@ export const HOST_GUIDE_CONTENT: Record<string, HostGuideArticle> = {
       steps: [
         {
           title: "Open Guest QR",
-          body: "Under AI Assistant, choose Guest QR. It is a different sidebar row from Elena Voice, on the same voice page.",
+          body: "Under AI Assistant, choose Guest QR. It is a different sidebar row from Isabela Voice, on the same voice page.",
         },
         {
           title: "Select the listing",
@@ -517,7 +517,7 @@ export const HOST_GUIDE_CONTENT: Record<string, HostGuideArticle> = {
       summary:
         "Tarjetas Guest QR para el portal público del huésped. Imprímelas o envíalas para que la llegada abra el anuncio correcto sin ver Host OS.",
       lifecycle: [
-        "Elige el anuncio en Elena Voice.",
+        "Elige el anuncio en Isabela Voice.",
         "Abre la fila Guest QR en la barra lateral (o la pestaña equivalente en la página de voz).",
         "Genera o actualiza la tarjeta solo para ese anuncio.",
         "Imprime o envía la tarjeta. El huésped usa el portal público, no el menú de anfitrión.",
@@ -525,7 +525,7 @@ export const HOST_GUIDE_CONTENT: Record<string, HostGuideArticle> = {
       steps: [
         {
           title: "Abrir Guest QR",
-          body: "Bajo AI Assistant, elige Guest QR. Es una fila distinta de Elena Voice, en la misma página de voz.",
+          body: "Bajo AI Assistant, elige Guest QR. Es una fila distinta de Isabela Voice, en la misma página de voz.",
         },
         {
           title: "Selecciona el anuncio",
@@ -944,15 +944,15 @@ export const HOST_GUIDE_CONTENT: Record<string, HostGuideArticle> = {
       summary:
         "Notas de regulaciones de Airbnb y normas locales para anfitriones. Lee la guía publicada aquí; no sustituye asesoría legal.",
       lifecycle: [
-        "Abre Airbnb Regulations & Laws desde Legal.",
+        "Abre Regulaciones y leyes de Airbnb desde Legal.",
         "Lee la sección que corresponde a tu pregunta (alquiler de corta estancia, impuestos, horario de silencio).",
         "Alinea el handbook del anuncio y el silencio de Settings con lo que debes cumplir.",
         "Consulta a un abogado si la norma no está clara — esta pestaña no presenta trámites por ti.",
       ],
       steps: [
         {
-          title: "Abrir Airbnb Regulations & Laws",
-          body: "Bajo Legal, elige Airbnb Regulations & Laws. User Guide es otro ítem de la barra y no es esta página.",
+          title: "Abrir Regulaciones y leyes de Airbnb",
+          body: "Bajo Legal, elige Regulaciones y leyes de Airbnb. Guía del usuario es otro ítem de la barra y no es esta página.",
         },
         {
           title: "Alinea el anuncio con la norma",
@@ -964,7 +964,7 @@ export const HOST_GUIDE_CONTENT: Record<string, HostGuideArticle> = {
         },
       ],
       tips: [
-        "Usa Request a Feature (sigue bajo Legal) si necesitas una jurisdicción que esta página no cubre.",
+        "Usa Solicitar una función (sigue bajo Legal) si necesitas una jurisdicción que esta página no cubre.",
         "Este módulo no sustituye a un abogado.",
       ],
     },
@@ -978,7 +978,7 @@ export const HOST_GUIDE_CONTENT: Record<string, HostGuideArticle> = {
         "Confirm account identity and subscription status on the Account and Plan tabs.",
         "Set the voice line and vendor credentials under Voice & Phone (show/hide secrets).",
         "Turn on SMS or WhatsApp alerts and your emergency callback number.",
-        "Enable quiet hours so Elena and alerts respect the window you configure.",
+        "Enable quiet hours so Isabela and alerts respect the window you configure.",
       ],
       steps: [
         {
@@ -995,7 +995,7 @@ export const HOST_GUIDE_CONTENT: Record<string, HostGuideArticle> = {
         },
       ],
       tips: [
-        "After changing quiet hours, update the listing handbook so Elena and printed house rules match.",
+        "After changing quiet hours, update the listing handbook so Isabela and printed house rules match.",
         "Use Request a Feature for billing or alert channels Zencierge does not support yet.",
       ],
     },
@@ -1007,7 +1007,7 @@ export const HOST_GUIDE_CONTENT: Record<string, HostGuideArticle> = {
         "Confirma identidad de cuenta y estado de suscripción en las pestañas Account y Plan.",
         "Configura la línea y las credenciales del proveedor en Voice & Phone (mostrar/ocultar secretos).",
         "Activa alertas SMS o WhatsApp y tu número de callback de emergencia.",
-        "Activa horario de silencio para que Elena y las alertas respeten la ventana que configures.",
+        "Activa horario de silencio para que Isabela y las alertas respeten la ventana que configures.",
       ],
       steps: [
         {
@@ -1024,7 +1024,7 @@ export const HOST_GUIDE_CONTENT: Record<string, HostGuideArticle> = {
         },
       ],
       tips: [
-        "Si cambias el horario de silencio, actualiza el handbook del anuncio para que Elena y las reglas impresas coincidan.",
+        "Si cambias el horario de silencio, actualiza el handbook del anuncio para que Isabela y las reglas impresas coincidan.",
         "Usa Request a Feature para facturación o canales de alerta que Zencierge aún no soporta.",
       ],
     },

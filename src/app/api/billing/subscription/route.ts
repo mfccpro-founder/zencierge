@@ -1,6 +1,7 @@
 import { requireHostUser } from "@/lib/supabase-route";
-import { fetchListings } from "@/lib/supabase-listings";
 import { hasLifetimeVipAccess } from "@/lib/lifetime-vip";
+import { countHostProperties } from "@/lib/host-listings-server";
+import { tryCreateSupabaseAdminClient } from "@/lib/supabase-admin";
 import {
   isHostAccessGranted,
   isPaidSubscriptionStatus,
@@ -9,6 +10,7 @@ import {
   planFromMetadata,
   ZENCIERGE_PLANS,
 } from "@/lib/zencierge-plans";
+import { resolveConfiguredStripeSandboxAccess } from "@/lib/stripe-sandbox-access";
 
 export const dynamic = "force-dynamic";
 
@@ -16,8 +18,13 @@ export async function GET() {
   const auth = await requireHostUser();
   if (auth.error) return auth.error;
 
-  const listings = await fetchListings();
-  const propertyCount = listings.properties.length;
+  const admin = tryCreateSupabaseAdminClient();
+  if (!admin) return Response.json({ error: "Service unavailable" }, { status: 503 });
+  const propertyCountResult = await countHostProperties(admin, auth.user.id);
+  if (propertyCountResult.kind === "unavailable") {
+    return Response.json({ error: "Service unavailable" }, { status: 503 });
+  }
+  const propertyCount = propertyCountResult.count;
   const meta = auth.user.user_metadata as Record<string, unknown> | undefined;
   const metaPlan = planFromMetadata(meta);
 
@@ -32,17 +39,27 @@ export async function GET() {
   const tableMissing = Boolean(
     subError?.message && /schema cache|does not exist|host_subscriptions/i.test(subError.message),
   );
-  const planId = parsePlanId(sub?.plan_id) ?? metaPlan;
+  const stripeSandboxAccess = await resolveConfiguredStripeSandboxAccess({
+    authenticated: auth.source === "supabase-auth",
+    userId: auth.user.id,
+    squareSubscriptionId: (sub?.square_subscription_id as string | null | undefined) ?? null,
+  });
+  const planId = stripeSandboxAccess.granted
+    ? stripeSandboxAccess.planId
+    : (parsePlanId(sub?.plan_id) ?? metaPlan);
   const plan = ZENCIERGE_PLANS[planId];
   const trialEndsAt = typeof meta?.trial_ends_at === "string" ? meta.trial_ends_at : null;
-  const trialActive = isTrialWindowOpen(trialEndsAt);
+  const metadataTrialActive = isTrialWindowOpen(trialEndsAt);
+  // A verified Stripe sandbox payment is the effective access source. Keep the
+  // untouched metadata trial visible separately, but do not describe paid access as a trial.
+  const trialActive = !stripeSandboxAccess.granted && metadataTrialActive;
   const complimentaryEndsAt =
     typeof sub?.complimentary_ends_at === "string" ? sub.complimentary_ends_at : null;
   const compOpen =
     typeof complimentaryEndsAt === "string" &&
     Number.isFinite(Date.parse(complimentaryEndsAt)) &&
     Date.parse(complimentaryEndsAt) > Date.now();
-  const access = isHostAccessGranted({
+  const standardAccess = isHostAccessGranted({
     subscriptionStatus: (sub?.status as string | undefined) ?? (meta?.subscription_status as string | undefined),
     metadata: meta,
     complimentaryEndsAt,
@@ -51,7 +68,10 @@ export async function GET() {
     squareSubscriptionId: (sub?.square_subscription_id as string | null | undefined) ?? null,
     squareSubscriptionStatus: (sub?.square_subscription_status as string | null | undefined) ?? null,
   });
-  const status = isPaidSubscriptionStatus(sub?.status as string | undefined)
+  const access = standardAccess || stripeSandboxAccess.granted;
+  const status = stripeSandboxAccess.granted
+    ? "active"
+    : isPaidSubscriptionStatus(sub?.status as string | undefined)
     ? "active"
     : compOpen
       ? "complimentary"
@@ -72,7 +92,9 @@ export async function GET() {
   return Response.json({
     planId,
     planName: plan.name,
-    monthlyUsd: Number(sub?.monthly_usd ?? plan.monthlyUsd),
+    monthlyUsd: stripeSandboxAccess.granted
+      ? plan.monthlyUsd
+      : Number(sub?.monthly_usd ?? plan.monthlyUsd),
     status,
     isActive,
     maxProperties: plan.maxProperties,
@@ -81,12 +103,17 @@ export async function GET() {
     canUseOvernightCoverage: planId !== "starter",
     canUseAgencyTools: planId === "agency",
     lastPaymentAt: sub?.last_payment_at ?? null,
-    currentPeriodEnd: complimentaryEndsAt ?? trialEndsAt ?? sub?.current_period_end ?? null,
+    currentPeriodEnd: stripeSandboxAccess.granted
+      ? stripeSandboxAccess.currentPeriodEnd
+      : (complimentaryEndsAt ?? trialEndsAt ?? sub?.current_period_end ?? null),
+    accessSource: stripeSandboxAccess.granted ? "stripe_sandbox" : "standard",
+    billingCycle: stripeSandboxAccess.granted ? stripeSandboxAccess.billingCycle : null,
     squareCustomerId: sub?.square_customer_id ?? null,
     tableReady: !tableMissing,
     payments: payments ?? [],
     trialEndsAt,
     trialActive,
+    metadataTrialActive,
     complimentaryEndsAt,
     complimentaryStartsAt: sub?.complimentary_starts_at ?? null,
     complimentaryActive: compOpen,
